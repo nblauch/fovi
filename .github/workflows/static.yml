@@ -38,6 +38,10 @@ jobs:
           pip install -r requirements-docs.txt
 
       - name: Build Sphinx documentation
+        env:
+          FOVI_SAVE_DIR: /tmp/fovi_save
+          FOVI_DATASETS_DIR: /tmp/fovi_datasets
+
         run: |
           bash scripts/clean_docs.sh
           python scripts/generate_docs.py
