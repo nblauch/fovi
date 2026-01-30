@@ -7,8 +7,8 @@ Welcome to the `fovi` codebase, a PyTorch library for implementing foveated visi
 
 First, create a fresh conda environment:
 ```
-   conda create -n fovi python=3.9
-   conda activate fovi
+conda create -n fovi python=3.9 # 3.9 is only necessary if using ffcv, see below
+conda activate fovi
 ```
 
 To download pretrained models from our repo, you will need `git lfs`, which is used for "large file storage". Then clone the repo and enter it:
