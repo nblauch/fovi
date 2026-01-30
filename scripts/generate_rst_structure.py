@@ -93,7 +93,7 @@ def generate_main_index_rst(output_dir, project_root):
     utility_modules = []
     
     # Core modules (top-level important modules)
-    core_module_names = ['fovi.saccadenet', 'fovi.trainer']
+    core_module_names = ['fovi.fovinet', 'fovi.trainer']
     for module_name, _ in modules:
         if module_name in core_module_names:
             core_modules.append(module_name)
@@ -220,7 +220,7 @@ def generate_api_index_rst(output_dir, project_root):
     subpackage_modules = []
     
     # Core modules (top-level important modules)
-    core_module_names = ['fovi.saccadenet', 'fovi.trainer']
+    core_module_names = ['fovi.fovinet', 'fovi.trainer']
     for module_name, _ in modules:
         if module_name in core_module_names:
             core_modules.append(module_name)
