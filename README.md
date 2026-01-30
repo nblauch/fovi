@@ -55,9 +55,9 @@ pip install flash-attn --no-build-isolation
 
 ## 📚 Documentation
 
-The docs are hosted at: https://nblauch.github.io/fovi_docs/index.html
+The docs are hosted at: https://nblauch.github.io/fovi/index.html
 
-We can automatically generate comprehensive documentation from the source code and docstrings. The documentation includes:
+You can also build locally. Docs are generated semi-automatically from source code and docstrings. The documentation includes:
 
 - **API Reference**: Complete documentation of all functions, classes, and modules
 - **User Guide**: Installation, quickstart, and usage examples
