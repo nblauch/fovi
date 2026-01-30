@@ -33,7 +33,7 @@ jobs:
 
       - name: Build Sphinx documentation
         run: |
-          bash scripts/cleanup_docs.sh
+          bash scripts/clean_docs.sh
           python scripts/generate_docs.py
 
       - name: Setup Pages
