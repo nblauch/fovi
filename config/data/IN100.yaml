@@ -1,0 +1,3 @@
+  train_dataset: ${oc.env:FOVI_DATASETS_DIR}/ffcv/100objects/train_256_raw.ffcv
+  val_dataset: ${oc.env:FOVI_DATASETS_DIR}/ffcv/100objects/val_256_raw.ffcv
+  num_classes: 100

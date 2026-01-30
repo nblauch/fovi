@@ -1,0 +1,16 @@
+name: dinov3
+variant: vits16
+path: facebook/dinov3-vits16-pretrain-lvd1689m
+patch_size: 16
+image_size: 224
+use_patch_weights: 1
+freeze_backbone: 1
+unfreeze_patch_embed: 0
+unfreeze_all_norms: 0
+unfreeze_layers: null
+unfreeze_norm: 1
+lora:
+  layers: [-1, 0, 1, 2, 3, 4, 5]
+  sublayers: ['attention.k_proj', 'attention.v_proj', 'attention.q_proj', 'attention.o_proj', 'mlp.up_proj', 'mlp.down_proj']
+  r: 64
+  alpha: 64

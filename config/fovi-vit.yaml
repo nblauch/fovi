@@ -1,0 +1,20 @@
+
+defaults:
+  - fovi_alexnet
+  - override data: IN1000 # ViT doesn't work well with IN100 (overfitting), so we change the default
+  - _self_
+
+model:
+  arch: fovi_vit_tiny # note: this handles num_heads and embed_dim
+
+  vit:
+    patch_size: 8 # note: standard is 16, but this is for low-res inputs, so that would probably be too big (only 4x4 num patches). this gives us 8x8 num patches
+    patch_overlap_factor: 1.5
+    num_layers: 12 # note: standard is 12, but this is for low-res inputs and we care about training speed
+    mlp_ratio: 4.0
+    dropout: 0.2
+    pos_emb_type: rope
+    force_patches_less_than_matched: false
+
+training:
+  batch_size: 256

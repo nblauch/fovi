@@ -1,0 +1,9 @@
+defaults:
+  - fovi_alexnet
+  - _self_
+
+model:
+  arch: alexnet2023_baseline
+  
+saccades:
+  mode: logpolar_as_grid

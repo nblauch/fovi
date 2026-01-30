@@ -1,0 +1,7 @@
+defaults:
+  - fovi-dinov3
+  - _self_
+
+saccades:
+  cmf_a: null
+  mode: uniform_as_grid

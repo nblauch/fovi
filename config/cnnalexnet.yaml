@@ -1,0 +1,14 @@
+# cnnalexnet specific configuration
+# This imports the default configuration and overrides specific parameters
+# it is designed to be well matched to the knn
+
+defaults:
+  - fovi_alexnet
+  - _self_
+
+model:
+  arch: alexnet2023_baseline
+  
+saccades:
+  mode: uniform_as_grid
+  cmf_a: null

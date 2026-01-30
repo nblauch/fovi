@@ -1,0 +1,14 @@
+name: dinov3
+variant: vits16
+path: facebook/dinov3-vits16-pretrain-lvd1689m
+patch_size: 16
+image_size: 224
+load_weights: false
+use_patch_weights: 0
+freeze_backbone: 0
+unfreeze_patch_embed: null
+unfreeze_all_norms: null
+unfreeze_layers: null
+unfreeze_norm: null
+lora:
+  layers: null

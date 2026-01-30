@@ -1,0 +1,6 @@
+defaults:
+  - fovi_alexnet
+  - _self_
+  
+saccades:
+  mode: logpolar

@@ -1,0 +1,123 @@
+defaults:
+  - data: IN1000
+  - pretrained_model: dinov3_lora_layers-1012345
+  - _self_
+
+model:
+  arch: fovi_dinov3
+  arch_spec: base_lowres
+  arch_flag: ''
+  mlp: '1024'
+  norm_mlp: 1
+  norm: force_batch
+  out_grid_size: null
+  channel_mult: null
+  k_mult: null
+  dropout: 0.5
+  dropout_all: 1
+  dropout_probes: 0.0
+  vit:
+    patch_size: 8
+    num_layers: 12
+    mlp_ratio: 4.0
+    dropout: 0.2
+    pos_emb_type: rope
+    patch_overlap_factor: null
+    force_patches_less_than_matched: false
+    new_parameterization: null
+    partitioning_patches: 'KNN'
+
+saccades:
+  color_sigma: null
+  fixation_size: 256
+  fixation_size_min_frac: 1
+  fixation_size_max_frac: 1
+  fixation_size_frac_val: 1
+  resize_size: 64
+  auto_match_cart_resources: 1
+  ssl_policy: none
+  sup_policy: multi_random_nearcenter
+  nearcenter_dist: 0.25
+  mode: isotropic
+  sample_cortex: geodesic
+  sampler: grid_nn
+  circular: 1
+  fov: 16.0
+  rescale_fov: 1
+  cmf_a: 2.785765
+  fixation_noise: 0
+  fix_agg: mean
+  fix_temp: 1
+  fix_ior_width: 20
+  add_aspect_variation: 0
+  n_fixations: 4
+  n_fixations_val: 20
+  branches: 1
+  nonrandom_val: 0
+transforms:
+  where: pre_warp
+  flip: 1
+  color_jitter: 1
+  gray: 1
+  blur: 0
+  foveal_color: 0
+logging:
+  folder: ''
+  log_level: 2
+  checkpoint_freq: 5
+  use_wandb: 1
+  base_fn: ''
+  wandb:
+    project: knnconv
+    entity: nblauch
+    experiment: null
+    note: null
+validation:
+  batch_size: 128
+  do_roc: 0
+  no_color: 0
+  repeats: 1
+  val_every: 1
+  no_fov_color_val: 0
+training:
+  from_checkpoint: 0
+  eval_only: 0
+  eval_freq: 1.0
+  batch_size: 512
+  resolution: 256
+  optimizer: adamw
+  momentum: 0.9
+  weight_decay: 0.0001
+  epochs: 100
+  base_lr: 0.0001
+  end_lr_ratio: 0.001
+  patience_epochs: 5
+  warmup_epochs: 0
+  lr_schedule: 1
+  lr_scheduler: cosine_decay_with_warmup
+  lr_decay_factor: 0.1
+  standard_probe_optim: 1
+  label_smoothing: 0.0
+  distributed: 0
+  clip_grad: 0.0
+  loss: supervised
+  train_probes_only: 0
+  no_probes: 1
+  last_layer_probes_only: 0
+  stop_early_epoch: 0
+  use_amp: true
+  amp_dtype: bfloat16
+  eps: 0.0001
+  load_cpu: 0
+  grad_accum_steps: 1
+  balance_loss: 0
+  seed: 1
+  allow_nans: 0
+  subset: 1.0
+  knn_only: false
+dist:
+  world_size: 1
+  ngpus: 1
+  nodes: 1
+  port: '58492'
+  dist_url: null

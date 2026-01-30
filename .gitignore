@@ -1,0 +1,17 @@
+docs/.github/
+docs/.nojekyll
+local_scripts
+*.egg-info
+foveation/__pycache__
+__pycache__
+notebooks/__pycache__
+**/*.pyc
+log
+docs/_build
+docs/.doctrees/
+docs/_autosummary/
+outputs
+wandb
+.vscode
+scripts/experiments
+pyrightconfig.json

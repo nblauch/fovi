@@ -1,0 +1,45 @@
+/* Custom styles for KNNConv documentation */
+
+/* Improve code block styling */
+.highlight {
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    padding: 1em;
+}
+
+/* Style for important notes */
+.admonition-important {
+    border-left: 4px solid #007bff;
+    background-color: #f8f9fa;
+}
+
+/* Style for warnings */
+.admonition-warning {
+    border-left: 4px solid #ffc107;
+    background-color: #fff3cd;
+}
+
+/* Style for tips */
+.admonition-tip {
+    border-left: 4px solid #28a745;
+    background-color: #d4edda;
+}
+
+/* Improve table styling */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+    white-space: normal;
+}
+
+/* Better spacing for API documentation */
+.wy-nav-content {
+    max-width: 1200px;
+}
+
+/* Style for function signatures */
+.sig {
+    font-family: 'Courier New', monospace;
+    background-color: #f8f9fa;
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+} 

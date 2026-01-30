@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fovi"
+version = "0.0.0"
+description = "A foveated interface for deep vision models"
+requires-python = ">=3.9"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["fovi/requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fovi*"] 

@@ -1,0 +1,155 @@
+# Default configuration 
+
+model:
+  arch: 'fovi_alexnet2023'
+  arch_spec: '0'
+  arch_flag: null
+  mlp: '1024-1024'
+  norm_mlp: 0
+  norm: 'batch'
+  out_grid_size: 6
+  channel_mult: 1
+  k_mult: 1
+  dropout: 0.5
+  dropout_all: 0
+  dropout_probes: null
+
+saccades:
+  color_sigma: 0.1
+  fixation_size: 256
+  fixation_size_min_frac: 1.0
+  fixation_size_max_frac: 1.0
+  fixation_size_frac_val: 1.0
+  resize_size: 224
+  auto_match_cart_resources: 0
+  ssl_policy: 'random'
+  sup_policy: 'multi_random_nearcenter'
+  nearcenter_dist: 0.25
+  mode: 'isotropic'
+  sample_cortex: True
+  sampler: 'grid_nn'
+  circular: 1
+  fov: 16
+  rescale_fov: 1
+  cmf_a: 0.5
+  fixation_noise: 0
+  fix_agg: 'mean'
+  fix_temp: 1
+  fix_ior_width: 20
+  add_aspect_variation: 0
+  n_fixations: 1
+  n_fixations_val: 1
+
+transforms:
+  where: 'loader'  # ['loader', 'pre_warp', 'post_warp']
+  flip: 1
+  color_jitter: 1
+  gray: 1
+  blur: 0
+  foveal_color: 0
+
+data:
+  train_dataset: ''
+  val_dataset: ''
+  num_classes: 1000
+  num_workers: 6  # Will be set dynamically based on NUMBA_NUM_THREADS
+  in_memory: 1
+  subset: null
+
+vicreg:
+  sim_coeff: 25
+  std_coeff: 25
+  cov_coeff: 1
+
+simclr:
+  temperature: 0.5
+
+barlow:
+  lambd: 0.0051
+
+logging:
+  folder: ''
+  log_level: 2
+  checkpoint_freq: 5
+  use_wandb: 0
+  base_fn: ''
+  wandb:
+    project: 'knnconv'
+    entity: ${oc.env:WANDB_ENTITY,'nblauch'}
+    experiment: null
+    note: null
+
+validation:
+  batch_size: 256
+  do_roc: 0
+  no_color: 0
+  repeats: 1
+  val_every: 1
+
+training:
+  from_checkpoint: 0
+  eval_only: 0
+  eval_freq: 1
+  batch_size: 512
+  resolution: 224
+  optimizer: 'adamw'
+  momentum: 0.9
+  weight_decay: 4e-5
+  epochs: 200
+  base_lr: 0.0005
+  end_lr_ratio: 0.001
+  patience_epochs: 5
+  warmup_epochs: 50
+  lr_schedule: 1
+  lr_scheduler: 'cosine_decay_with_warmup'
+  lr_decay_factor: 0.1
+  standard_probe_optim: 1
+  label_smoothing: 0.1
+  distributed: 0
+  clip_grad: 0
+  loss: 'supervised'
+  train_probes_only: 0
+  no_probes: 0
+  last_layer_probes_only: 0
+  stop_early_epoch: 0
+  use_amp: True
+  amp_dtype: 'float16'
+  eps: 1e-4
+  load_cpu: 0
+  grad_accum_steps: 1
+  balance_loss: 0
+  seed: 1
+  allow_nans: 0
+  freeze_backbone: 0
+
+dist:
+  world_size: 1
+  ngpus: 1
+  nodes: 1
+  port: '58492' 
+  dist_url: null
+
+pretrained_model:
+  name: null
+  variant: null
+  path: null
+  patch_size: null
+  image_size: null
+  use_patch_weights: null
+  freeze_backbone: null
+  freeze_patch_embed: null
+  unfreeze_all_norms: null
+  unfreeze_layers: null
+  unfreeze_norm: null
+  lora:
+    layers: null
+    sublayers: null
+    r: null
+    alpha: null
+
+# hydra:
+#   run:
+#     dir: ${logging.folder}  # Use the same folder as logging.folder
+#   sweep:
+#     dir: ${logging.folder}
+#   output_subdir: .  # Don't create subdirectories

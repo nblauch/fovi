@@ -1,0 +1,110 @@
+# knnalexnet specific configuration
+# This imports the default configuration and overrides specific parameters
+
+defaults:
+  - default
+  - data: IN1000
+  - _self_
+
+model:
+  arch: fovi_alexnet2023
+  arch_spec: base_lowres
+  arch_flag: ''
+  mlp: 1024-1024
+  norm_mlp: 1
+  norm: force_batch
+  out_grid_size: 1
+  channel_mult: 1.0
+  k_mult: 1.0
+  dropout: 0.5
+  dropout_all: 1
+  dropout_probes: 0.0
+  ref_frame_mult: 2
+
+saccades:
+  color_sigma: null
+  fixation_size: 256
+  fixation_size_min_frac: 1.0
+  fixation_size_max_frac: 1.0
+  fixation_size_frac_val: 1.0
+  resize_size: 64
+  auto_match_cart_resources: 1
+  ssl_policy: none
+  sup_policy: multi_random_nearcenter
+  nearcenter_dist: 0.25
+  mode: isotropic
+  sample_cortex: True
+  sampler: grid_nn
+  circular: 1
+  fov: 16.0
+  rescale_fov: 1
+  cmf_a: 0.5
+  fix_agg: mean
+  add_aspect_variation: 0
+  n_fixations: 4
+  n_fixations_val: 20
+
+transforms:
+  where: pre_warp
+  flip: 1
+  color_jitter: 1
+  gray: 1
+  blur: 0
+  foveal_color: 0
+
+data:
+  in_memory: 1
+
+logging:
+  log_level: 2
+  checkpoint_freq: 5
+  use_wandb: 1
+  wandb:
+    project: knnconv
+    entity: nblauch
+
+validation:
+  batch_size: 128
+  no_color: 0
+  no_fov_color_val: 0
+  repeats: 1
+  val_every: 1
+
+training:
+  eval_only: 0
+  eval_freq: 1.0
+  batch_size: 512
+  resolution: 256
+  num_crops: 1
+  optimizer: adamw
+  momentum: 0.9
+  weight_decay: 0.0001
+  epochs: 200
+  base_lr: 0.001
+  end_lr_ratio: 0.001
+  warmup_epochs: 50
+  lr_schedule: 1
+  lr_scheduler: cosine_decay_with_warmup
+  lr_decay_factor: 0.1
+  patience_epochs: 5
+  standard_probe_optim: 1
+  label_smoothing: 0.0
+  distributed: 0
+  clip_grad: 0.0
+  loss: supervised
+  no_probes: 1
+  stop_early_epoch: 0
+  use_amp: True
+  amp_dtype: float16
+  subset: 1.0
+  eps: 0.0001
+  load_cpu: 0
+  grad_accum_steps: 1
+  balance_loss: 0
+  seed: 1
+  allow_nans: 1
+
+dist:
+  world_size: 1
+  ngpus: 1
+  nodes: 1

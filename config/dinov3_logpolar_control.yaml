@@ -1,0 +1,6 @@
+defaults:
+  - fovi-dinov3
+  - _self_
+
+saccades:
+  mode: logpolar_as_grid
