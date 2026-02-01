@@ -1539,7 +1539,7 @@ def find_config(base_fn, load, model_dirs=['../models', SAVE_DIR + '/logs', SLOW
     """Search for and load model configuration from multiple directories.
     
     Attempts to load the configuration from each directory in order until
-    one succeeds.
+    one succeeds. If not found locally, attempts to download from HuggingFace Hub.
     
     Args:
         base_fn (str): Base filename/directory name to search for.
@@ -1552,23 +1552,34 @@ def find_config(base_fn, load, model_dirs=['../models', SAVE_DIR + '/logs', SLOW
         tuple: (cfg, state_dict, model_key) from load_config.
         
     Raises:
-        ValueError: If model is not found in any of the directories.
+        ValueError: If model is not found in any of the directories or on HuggingFace Hub.
     """
     cfg = None
     model_key = None
+    
+    # First, try local directories
     for folder in model_dirs:
         try:
             cfg, state_dict, model_key = load_config(base_fn, load, folder, device=device)
             print(f'Model with base_fn {base_fn} found in {folder}')
-            break
+            return cfg, state_dict, model_key
         except Exception as e:
-            print(e)
             print(f'Model with base_fn {base_fn} not found in {folder}')
             continue
-    if cfg is None:
-        raise ValueError(f'Model with base_fn {base_fn} not found in any of the model directories')
-
-    return cfg, state_dict, model_key
+    
+    # If not found locally, try HuggingFace Hub
+    try:
+        from .hub import download_model
+        print(f'Attempting to download {base_fn} from HuggingFace Hub...')
+        local_path = download_model(base_fn)
+        parent_dir = os.path.dirname(local_path)
+        cfg, state_dict, model_key = load_config(base_fn, load, parent_dir, device=device)
+        print(f'Model with base_fn {base_fn} downloaded from HuggingFace Hub to {local_path}')
+        return cfg, state_dict, model_key
+    except Exception as e:
+        print(f'Failed to download {base_fn} from HuggingFace Hub: {e}')
+    
+    raise ValueError(f'Model with base_fn {base_fn} not found locally or on HuggingFace Hub')
 
 def get_relative_path(absolute_path):
     """Convert an absolute path to a relative path from this script's location.

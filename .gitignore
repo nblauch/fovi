@@ -14,4 +14,8 @@ outputs
 wandb
 .vscode
 scripts/experiments
+scripts/upload_to_hf.py
 pyrightconfig.json
+
+# Pretrained models (now hosted on HuggingFace Hub)
+models/
