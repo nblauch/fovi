@@ -11,10 +11,8 @@ conda create -n fovi python=3.9 # 3.9 is only necessary if using ffcv, see below
 conda activate fovi
 ```
 
-To download pretrained models from our repo, you will need `git lfs`, which is used for "large file storage". Then clone the repo and enter it:
+Clone the repo and enter it:
 ```
-conda install git-lfs
-git lfs install
 git clone https://github.com/nblauch/fovi.git
 cd fovi
 ```
@@ -40,6 +38,24 @@ To use flash attention, install per the typical approach:
 pip install packaging ninja
 pip install flash-attn --no-build-isolation
 ```
+
+## 🤗 Pretrained Models
+
+Pretrained models are hosted on [HuggingFace Hub](https://huggingface.co/nblauch) and are automatically downloaded on first use:
+
+| Model | Size | Description |
+|-------|------|-------------|
+| [`fovi-dinov3-hplus_a-2.78_res-64_in1k`](https://huggingface.co/nblauch/fovi-dinov3-hplus_a-2.78_res-64_in1k) | ~3.4 GB | ViT-H/16+ backbone, high foveation (a=2.78) |
+| [`fovi-dinov3-splus_a-2.78_res-64_in1k`](https://huggingface.co/nblauch/fovi-dinov3-splus_a-2.78_res-64_in1k) | ~131 MB | ViT-S/16+ backbone, high foveation (a=2.78) |
+| [`fovi-dinov3-splus_a-60.94_res-64_in1k`](https://huggingface.co/nblauch/fovi-dinov3-splus_a-60.94_res-64_in1k) | ~131 MB | ViT-S/16+ backbone, low foveation (a=60.94) |
+
+```python
+from fovi import get_model_from_base_fn
+
+# Models are automatically downloaded from HuggingFace Hub on first use
+model = get_model_from_base_fn('fovi-dinov3-splus_a-2.78_res-64_in1k')
+```
+
 
 ## 📝 Example notebooks
 

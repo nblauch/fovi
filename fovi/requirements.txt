@@ -1,5 +1,6 @@
 einops
 fastcore
+huggingface_hub
 hydra-core
 ipython
 matplotlib
