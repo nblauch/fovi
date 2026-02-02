@@ -41,15 +41,15 @@ pip install flash-attn --no-build-isolation
 
 ## 🤗 Pretrained Models
 
-Pretrained models are hosted on [HuggingFace Hub](https://huggingface.co/nblauch) and are automatically downloaded on first use:
+Pretrained models are hosted on [HuggingFace Hub](https://huggingface.co/fovi-pytorch) and are automatically downloaded on first use:
 
 | Model | Size | Description |
 |-------|------|-------------|
-| [`fovi-dinov3-hplus_a-2.78_res-64_in1k`](https://huggingface.co/nblauch/fovi-dinov3-hplus_a-2.78_res-64_in1k) | ~3.4 GB | ViT-H/16+ backbone, high foveation (a=2.78) |
-| [`fovi-dinov3-splus_a-2.78_res-64_in1k`](https://huggingface.co/nblauch/fovi-dinov3-splus_a-2.78_res-64_in1k) | ~131 MB | ViT-S/16+ backbone, high foveation (a=2.78) |
-| [`fovi-dinov3-splus_a-60.94_res-64_in1k`](https://huggingface.co/nblauch/fovi-dinov3-splus_a-60.94_res-64_in1k) | ~131 MB | ViT-S/16+ backbone, low foveation (a=60.94) |
-| [`fovi-alexnet_a-1_res-64_rfmult-1_in1k`](https://huggingface.co/nblauch/fovi-alexnet_a-1_res-64_rfmult-1_in1k) | ~24 MB | AlexNet, high foveation (a=1), rfmult=1 (matched resolution kernel reference frame) |
-| [`fovi-alexnet_a-1_res-64_rfmult-2_in1k`](https://huggingface.co/nblauch/fovi-alexnet_a-1_res-64_rfmult-2_in1k) | ~69 MB | AlexNet, high foveation (a=1), rfmult=2 (default higher-resolution kernel reference frame) |
+| [`fovi-dinov3-hplus_a-2.78_res-64_in1k`](https://huggingface.co/fovi-pytorch/fovi-dinov3-hplus_a-2.78_res-64_in1k) | ~3.4 GB | ViT-H/16+ backbone, high foveation (a=2.78) |
+| [`fovi-dinov3-splus_a-2.78_res-64_in1k`](https://huggingface.co/fovi-pytorch/fovi-dinov3-splus_a-2.78_res-64_in1k) | ~131 MB | ViT-S/16+ backbone, high foveation (a=2.78) |
+| [`fovi-dinov3-splus_a-60.94_res-64_in1k`](https://huggingface.co/fovi-pytorch/fovi-dinov3-splus_a-60.94_res-64_in1k) | ~131 MB | ViT-S/16+ backbone, low foveation (a=60.94) |
+| [`fovi-alexnet_a-1_res-64_rfmult-1_in1k`](https://huggingface.co/fovi-pytorch/fovi-alexnet_a-1_res-64_rfmult-1_in1k) | ~24 MB | AlexNet, high foveation (a=1), rfmult=1 (matched resolution kernel reference frame) |
+| [`fovi-alexnet_a-1_res-64_rfmult-2_in1k`](https://huggingface.co/fovi-pytorch/fovi-alexnet_a-1_res-64_rfmult-2_in1k) | ~69 MB | AlexNet, high foveation (a=1), rfmult=2 (default higher-resolution kernel reference frame) |
 
 ```python
 from fovi import get_model_from_base_fn
