@@ -1,0 +1,140 @@
+model:
+  arch: fovi_alexnet2023
+  arch_spec: base_lowres
+  arch_flag: ''
+  mlp: 1024-1024
+  norm_mlp: 1
+  norm: force_batch
+  out_grid_size: 1
+  channel_mult: 1.0
+  k_mult: 1.0
+  dropout: 0.5
+  dropout_all: 1
+  dropout_probes: 0.0
+  ref_frame_mult: 2
+saccades:
+  color_sigma: null
+  fixation_size: 256
+  fixation_size_min_frac: 1.0
+  fixation_size_max_frac: 1.0
+  fixation_size_frac_val: 1.0
+  resize_size: 64
+  auto_match_cart_resources: 1
+  ssl_policy: none
+  sup_policy: multi_random_nearcenter
+  nearcenter_dist: 0.25
+  mode: isotropic
+  sample_cortex: true
+  sampler: grid_nn
+  circular: 1
+  fov: 16.0
+  rescale_fov: 1
+  cmf_a: 0.5
+  fixation_noise: 0
+  fix_agg: mean
+  fix_temp: 1
+  fix_ior_width: 20
+  add_aspect_variation: 0
+  n_fixations: 4
+  n_fixations_val: 20
+transforms:
+  where: pre_warp
+  flip: 1
+  color_jitter: 1
+  gray: 1
+  blur: 0
+  foveal_color: 0
+data:
+  train_dataset: ${oc.env:FOVI_DATASETS_DIR}/ffcv/imagenet/train_compressed.ffcv
+  val_dataset: ${oc.env:FOVI_DATASETS_DIR}/ffcv/imagenet/val_compressed.ffcv
+  num_classes: 1000
+  num_workers: null
+  in_memory: 1
+  subset: null
+vicreg:
+  sim_coeff: 25
+  std_coeff: 25
+  cov_coeff: 1
+simclr:
+  temperature: 0.5
+barlow:
+  lambd: 0.0051
+logging:
+  folder: ''
+  log_level: 2
+  checkpoint_freq: 5
+  use_wandb: 1
+  base_fn: null
+  wandb:
+    project: null
+    entity: null
+    experiment: null
+    note: null
+validation:
+  batch_size: 128
+  do_roc: 0
+  no_color: 0
+  repeats: 1
+  val_every: 1
+  no_fov_color_val: 0
+training:
+  from_checkpoint: 0
+  eval_only: 0
+  eval_freq: 1.0
+  batch_size: 128
+  resolution: 256
+  optimizer: adamw
+  momentum: 0.9
+  weight_decay: 0.0001
+  epochs: 200
+  base_lr: 0.001
+  end_lr_ratio: 0.001
+  patience_epochs: 5
+  warmup_epochs: 50
+  lr_schedule: 1
+  lr_scheduler: cosine_decay_with_warmup
+  lr_decay_factor: 0.1
+  standard_probe_optim: 1
+  label_smoothing: 0.0
+  distributed: 1
+  clip_grad: 0.0
+  loss: supervised
+  train_probes_only: 0
+  no_probes: 1
+  last_layer_probes_only: 0
+  stop_early_epoch: 0
+  use_amp: true
+  amp_dtype: float16
+  eps: 0.0001
+  load_cpu: 0
+  grad_accum_steps: 1
+  balance_loss: 0
+  seed: 1
+  allow_nans: 1
+  freeze_backbone: 0
+  num_crops: 1
+  subset: 1.0
+dist:
+  world_size: 1
+  ngpus: 1
+  nodes: 1
+  port: null
+  dist_url: null
+  distributed: 0
+pretrained_model:
+  name: null
+  variant: null
+  path: null
+  patch_size: null
+  image_size: null
+  use_patch_weights: null
+  freeze_backbone: null
+  freeze_patch_embed: null
+  unfreeze_all_norms: null
+  unfreeze_layers: null
+  unfreeze_norm: null
+  lora:
+    layers: null
+    sublayers: null
+    r: null
+    alpha: null

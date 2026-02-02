@@ -12,7 +12,7 @@ from huggingface_hub import snapshot_download
 __all__ = ['download_model', 'HF_ORG', 'CACHE_DIR']
 
 # Default HuggingFace organization/username for fovi models
-HF_ORG = "nblauch"
+HF_ORG = "fovi-pytorch"
 
 # Default cache directory for downloaded models
 CACHE_DIR = os.path.expanduser("~/.cache/fovi")
