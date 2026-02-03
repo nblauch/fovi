@@ -100,7 +100,7 @@ def build_fovi_dinov3(cfg, log_in=True, device='cuda'):
         model.embeddings.patch_embeddings = patch_embed.to(device)
 
         # initialize new rope encodings
-        model.rope_embeddings = FoviDinoV3RoPE(model.config.rope_theta, model.config.hidden_size // model.config.num_attention_heads, model.embeddings.patch_embeddings.out_coords.cartesian, device=device)
+        model.rope_embeddings = FoviDinoV3RoPE(model.config.rope_theta, model.config.hidden_size // model.config.num_attention_heads, model.embeddings.patch_embeddings.out_coords.cartesian_rowcol, device=device)
 
          # convenience access to total number of outputs units
         model.total_embed_dim = model.embeddings.patch_embeddings.out_channels * len(model.embeddings.patch_embeddings.out_coords)

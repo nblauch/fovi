@@ -647,12 +647,18 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         return local_rf
 
     def _load_conv_2d_weight(self, conv_weight: torch.Tensor, conv_bias: torch.Tensor, strict: bool = False):
+        """
+        The Conv2d weight is resampled to match the ref_grid_size if necessary.
+        The H and W dimensions are transposed to align the Conv2d weight convention 
+        with the coordinate convention used by this layer (row,col) = (-y, x) -> (x, y)
+        """
         if conv_weight.shape[0] != self.out_channels:
             raise ValueError(f"Conv2d out_channels {conv_weight.shape[0]} != layer out_channels {self.out_channels}")
         if conv_weight.shape[1] != self.in_channels:
             raise ValueError(f"Conv2d in_channels {conv_weight.shape[1]} != layer in_channels {self.in_channels}")
 
-        conv_weight = conv_weight.transpose(-1,-2)
+        # (row,col) = (-y, x) -> (x, y)
+        conv_weight = conv_weight.transpose(-1,-2).flip(-1)
                 
         # Handle size mismatch - resample if needed
         if conv_weight.shape[2] != self.ref_grid_size or conv_weight.shape[3] != self.ref_grid_size:
@@ -687,10 +693,6 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
     def load_conv2d_weights(self, conv2d: nn.Conv2d, strict: bool = False):
         """
         Load weights from a pretrained nn.Conv2d into this layer.
-        
-        The Conv2d kernel is resampled to match the ref_grid_size if necessary.
-        The H and W dimensions are transposed to align the Conv2d weight convention 
-        with the grid_sample coordinate convention used by this layer (row,col) -> (col, row)
         
         Args:
             conv2d: A nn.Conv2d layer to load weights from.
