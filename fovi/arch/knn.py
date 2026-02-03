@@ -652,7 +652,7 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         
         The Conv2d kernel is resampled to match the ref_grid_size if necessary.
         The H and W dimensions are transposed to align the Conv2d weight convention 
-        with the grid_sample coordinate convention used by this layer (row,col) -> (col, row)
+        with the coordinate convention used by this layer (row,col) = (-y, x) -> (x, y)
         
         Args:
             conv2d: A nn.Conv2d layer to load weights from.
@@ -666,7 +666,8 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         if conv_weight.shape[1] != self.in_channels:
             raise ValueError(f"Conv2d in_channels {conv_weight.shape[1]} != layer in_channels {self.in_channels}")
 
-        conv_weight = conv_weight.transpose(-1,-2)
+        # (row,col) = (-y, x) -> (x, y)
+        conv_weight = conv_weight.transpose(-1,-2).flip(-1)
                 
         # Handle size mismatch - resample if needed
         if conv_weight.shape[2] != self.ref_grid_size or conv_weight.shape[3] != self.ref_grid_size:
