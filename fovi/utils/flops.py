@@ -17,29 +17,15 @@ __all__ = []
 
 @torch.no_grad()
 def remove_parametrizations(trainer):
-    """Remove LoRA parametrizations from a model for FLOP counting.
-    
-    LoRA adds trainable low-rank matrices to existing weights. This function
-    folds those parametrizations into the base weights so FLOP counting
-    reflects the effective model without parametrization overhead.
+    """Remove all parametrizations from trainer.model for FLOP counting.
     
     Args:
-        trainer: Trainer object containing the model and config with LoRA settings.
+        trainer: Trainer object containing the model.
     """
-    cfg = trainer.cfg
-    fovinet = trainer.model
-    if cfg.pretrained_model.lora.layers is not None:
-        for ii in cfg.pretrained_model.lora.layers:
-            if ii == -1:
-                # patch embedding -- just has a single weight, no sublayers
-                layer = fovinet.network.backbone.embeddings.patch_embeddings
-                P.remove_parametrizations(layer, 'weight', leave_parametrized=True)
-                continue
-            else:
-                layer = fovinet.network.backbone.layer[ii]
-            for sublayer in cfg.pretrained_model.lora.sublayers:
-                parent, child = sublayer.split('.')
-                P.remove_parametrizations(getattr(getattr(layer, parent), child), 'weight', leave_parametrized=True)
+    for module in trainer.model.modules():
+        if P.is_parametrized(module):
+            for param_name in list(module.parametrizations.keys()):
+                P.remove_parametrizations(module, param_name, leave_parametrized=True)
 
 def _as_value(x):
     # Return the first torch._C.Value whether x is a single Value or a list/tuple of them
