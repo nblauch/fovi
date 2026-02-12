@@ -652,7 +652,8 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         if conv_weight.shape[1] != self.in_channels:
             raise ValueError(f"Conv2d in_channels {conv_weight.shape[1]} != layer in_channels {self.in_channels}")
 
-        conv_weight = conv_weight.transpose(-1,-2)
+        # (row,col) = (-y, x) -> (x, y)
+        conv_weight = conv_weight.transpose(-1,-2).flip(-1)
                 
         # Handle size mismatch - resample if needed
         if conv_weight.shape[2] != self.ref_grid_size or conv_weight.shape[3] != self.ref_grid_size:
