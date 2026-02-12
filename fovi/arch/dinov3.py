@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from huggingface_hub import login
 from transformers import AutoImageProcessor, AutoModel, AutoConfig
 import os
 
@@ -12,22 +11,18 @@ from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioni
 __all__ = []
 
 @add_to_all(__all__)
-def load_dinov3(path, device='cuda', log_in=True, pretrained=True):
+def load_dinov3(path, device='cuda', pretrained=True):
     """Load a DinoV3 model and processor from Hugging Face.
+    
+    Requires HF_TOKEN environment variable to be set for gated models.
     
     Args:
         path (str): Path or model identifier for the DinoV3 model.
         device (str, optional): Device to load the model on. Defaults to 'cuda'.
-        log_in (bool, optional): Whether to log into Hugging Face. Defaults to True.
     
     Returns:
         tuple: A tuple containing (model, processor).
     """
-    if log_in:
-        try:
-            login(os.environ['HUGGINGFACE_TOKEN'])
-        except:
-            raise NameError('HUGGINGFACE_TOKEN not found as an environment variable. Go to https://huggingface.co/settings/tokens and acquire a token, then set the environment variable to the token value, either in the current session or in your startup script (e.g. .bashrc or .bash_profile)')
     processor = AutoImageProcessor.from_pretrained(path)
     if pretrained:
         model = AutoModel.from_pretrained(path, device_map=device)
@@ -38,12 +33,11 @@ def load_dinov3(path, device='cuda', log_in=True, pretrained=True):
 
 
 @add_to_all(__all__)
-def build_fovi_dinov3(cfg, log_in=True, device='cuda'):
+def build_fovi_dinov3(cfg, device='cuda'):
     """Build a foveated DinoV3 model from configuration.
     
     Args:
         cfg: Configuration object containing model and training parameters.
-        log_in (bool, optional): Whether to log into Hugging Face. Defaults to True.
         device (str, optional): Device to build the model on. Defaults to 'cuda'.
     
     Returns:
@@ -51,7 +45,7 @@ def build_fovi_dinov3(cfg, log_in=True, device='cuda'):
     """
 
     load_weights = getattr(cfg.pretrained_model, 'load_weights', True)
-    model, processor = load_dinov3(cfg.pretrained_model.path, log_in=log_in, device=device, pretrained=load_weights)
+    model, processor = load_dinov3(cfg.pretrained_model.path, device=device, pretrained=load_weights)
 
     if 'as_grid' not in cfg.saccades.mode:
         if cfg.model.vit.partitioning_patches == 'KNN':
@@ -130,34 +124,34 @@ def build_fovi_dinov3(cfg, log_in=True, device='cuda'):
 
 
 @add_to_all(__all__)
-def prep_fovi_dinov3_finetuning(model, cfg, device='cuda'):
+def prep_fovi_dinov3_finetuning(model, cfg, device='cuda', key='pretrained_model'):
     """Prepare a DinoV3 model for fine-tuning based on configuration.
     
     Args:
         model: The DinoV3 model to prepare.
         cfg: Configuration object containing fine-tuning parameters.
         device (str, optional): Device to prepare the model on. Defaults to 'cuda'.
-    
+        key (str): which key of the config to look for finetuning strategies 
     Returns:
         torch.nn.Module: The prepared model with appropriate parameters frozen/unfrozen.
     """
 
-    if cfg.pretrained_model.freeze_backbone:
+    if cfg.get(key).freeze_backbone:
         for param in model.parameters():
             param.requires_grad = False
 
-    if cfg.pretrained_model.get('unfreeze_patch_embed', False):
+    if cfg.get(key).get('unfreeze_patch_embed', False):
         for param in model.embeddings.patch_embeddings.param():
             param.requires_grad = False
     
-    if cfg.pretrained_model.get('unfreeze_norm', False):
+    if cfg.get(key).get('unfreeze_norm', False):
         for param in model.norm.parameters():
             param.requires_grad = True
 
-    if cfg.pretrained_model.unfreeze_layers is not None:
-        if isinstance(cfg.pretrained_model.unfreeze_layers, int):
-            cfg.pretrained_model.unfreeze_layers = [cfg.pretrained_model.unfreeze_layers]
-        for layer in cfg.pretrained_model.unfreeze_layers:
+    if cfg.get(key).unfreeze_layers is not None:
+        if isinstance(cfg.get(key).unfreeze_layers, int):
+            cfg.get(key).unfreeze_layers = [cfg.get(key).unfreeze_layers]
+        for layer in cfg.get(key).unfreeze_layers:
             if layer == -1:
                 layer_module = model.embeddings.patch_embeddings
             else:
@@ -165,23 +159,23 @@ def prep_fovi_dinov3_finetuning(model, cfg, device='cuda'):
             for param in layer_module.parameters():
                 param.requires_grad = True       
 
-    if cfg.pretrained_model.unfreeze_all_norms:
+    if cfg.get(key).unfreeze_all_norms:
         for layer in model.layer:
             for ln in [layer.norm1, layer.norm2, layer.layer_scale1, layer.layer_scale2]:
                 for param in ln.parameters():
                     param.requires_grad = True   
 
-    if cfg.pretrained_model.lora.layers is not None:
-        for ii in cfg.pretrained_model.lora.layers:
+    if cfg.get(key).lora is not None and cfg.get(key).lora.layers is not None:
+        for ii in cfg.get(key).lora.layers:
             if ii == -1:
                 # patch embedding -- just has a single weight, no sublayers
                 layer = model.embeddings.patch_embeddings
-                apply_lora(layer, r=cfg.pretrained_model.lora.r, alpha=cfg.pretrained_model.lora.alpha, device=device)
+                apply_lora(layer, r=cfg.get(key).lora.r, alpha=cfg.get(key).lora.alpha, device=device)
                 continue
             else:
                 layer = model.layer[ii]
-            for sublayer in cfg.pretrained_model.lora.sublayers:
+            for sublayer in cfg.get(key).lora.sublayers:
                 parent, child = sublayer.split('.')
-                apply_lora(getattr(getattr(layer, parent), child), r=cfg.pretrained_model.lora.r, alpha=cfg.pretrained_model.lora.alpha, device=device)
+                apply_lora(getattr(getattr(layer, parent), child), r=cfg.get(key).lora.r, alpha=cfg.get(key).lora.alpha, device=device)
 
     return model
