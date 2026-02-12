@@ -19,8 +19,14 @@ radii_by_res = {
     256: np.arange(19,30),
 }
 
+def get_nearest_radii(desired_res, radii_by_res):
+    """Map desired_res to the nearest key in radii_by_res."""
+    keys = np.array(sorted(radii_by_res.keys()))
+    nearest_key = keys[np.argmin(np.abs(keys - desired_res))]
+    return radii_by_res[nearest_key]
+
 desired_res = (args.img_res//args.patch_size)**2
-radii = radii_by_res[desired_res]
+radii = get_nearest_radii(desired_res, radii_by_res)
 
 cmf_a_by_radii = {'radii':[], 'cmf_a':[], 'diff':[]}
 for radii in radii:
@@ -35,5 +41,6 @@ for radii in radii:
     cmf_a_by_radii['cmf_a'].append(cmf_a)
     cmf_a_by_radii['diff'].append(np.min(diffs))
 cmf_a_by_radii = pd.DataFrame(cmf_a_by_radii)
+cmf_a_by_radii = cmf_a_by_radii[cmf_a_by_radii['diff'] == 0]
 
 print(cmf_a_by_radii)
