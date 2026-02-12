@@ -413,7 +413,7 @@ def arch_wrapper(backbone, cfg, device='cuda'):
         BackboneProjectorWrapper: The wrapped model ready for SaccadeNet training.
     """
     
-    mlp_kwargs = dict(mlp=cfg.model.mlp, dropout=partial(nn.Dropout, p=cfg.model.dropout), dropout_all=cfg.model.dropout_all)
+    mlp_kwargs = dict(mlp=cfg.model.mlp, dropout=partial(nn.Dropout, p=cfg.model.dropout) if cfg.model.dropout is not None else None, dropout_all=cfg.model.dropout_all)
     num_groups = 32
     if cfg.model.norm_mlp:
         if cfg.model.norm == 'force_batch':
