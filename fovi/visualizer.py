@@ -564,11 +564,9 @@ def get_first_conv_weights(model):
     """
     # Recursively traverse the model's layers
     for name, layer in model.named_children():
-        if isinstance(layer, nn.Conv2d):
+        if isinstance(layer, nn.Conv2d) or isinstance(layer, KNNConvLayer):
             # Return the weights of the first Conv2d layer found
             return layer, layer.weight
-        elif isinstance(layer, KNNConvLayer):
-            return layer, layer.conv.weight
         else:
             # If the layer is a container (e.g., Sequential, ModuleList), recurse into it
             layer, weights = get_first_conv_weights(layer)
