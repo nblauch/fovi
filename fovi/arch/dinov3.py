@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from huggingface_hub import login
 from transformers import AutoImageProcessor, AutoModel, AutoConfig
 import os
 
@@ -12,22 +11,18 @@ from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioni
 __all__ = []
 
 @add_to_all(__all__)
-def load_dinov3(path, device='cuda', log_in=True, pretrained=True):
+def load_dinov3(path, device='cuda', pretrained=True):
     """Load a DinoV3 model and processor from Hugging Face.
+    
+    Requires HF_TOKEN environment variable to be set for gated models.
     
     Args:
         path (str): Path or model identifier for the DinoV3 model.
         device (str, optional): Device to load the model on. Defaults to 'cuda'.
-        log_in (bool, optional): Whether to log into Hugging Face. Defaults to True.
     
     Returns:
         tuple: A tuple containing (model, processor).
     """
-    if log_in:
-        try:
-            login(os.environ['HUGGINGFACE_TOKEN'])
-        except:
-            raise NameError('HUGGINGFACE_TOKEN not found as an environment variable. Go to https://huggingface.co/settings/tokens and acquire a token, then set the environment variable to the token value, either in the current session or in your startup script (e.g. .bashrc or .bash_profile)')
     processor = AutoImageProcessor.from_pretrained(path)
     if pretrained:
         model = AutoModel.from_pretrained(path, device_map=device)
@@ -38,12 +33,11 @@ def load_dinov3(path, device='cuda', log_in=True, pretrained=True):
 
 
 @add_to_all(__all__)
-def build_fovi_dinov3(cfg, log_in=True, device='cuda'):
+def build_fovi_dinov3(cfg, device='cuda'):
     """Build a foveated DinoV3 model from configuration.
     
     Args:
         cfg: Configuration object containing model and training parameters.
-        log_in (bool, optional): Whether to log into Hugging Face. Defaults to True.
         device (str, optional): Device to build the model on. Defaults to 'cuda'.
     
     Returns:
@@ -51,7 +45,7 @@ def build_fovi_dinov3(cfg, log_in=True, device='cuda'):
     """
 
     load_weights = getattr(cfg.pretrained_model, 'load_weights', True)
-    model, processor = load_dinov3(cfg.pretrained_model.path, log_in=log_in, device=device, pretrained=load_weights)
+    model, processor = load_dinov3(cfg.pretrained_model.path, device=device, pretrained=load_weights)
 
     if 'as_grid' not in cfg.saccades.mode:
         if cfg.model.vit.partitioning_patches == 'KNN':
