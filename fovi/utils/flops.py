@@ -10,7 +10,6 @@ import torch
 from contextlib import nullcontext
 from statistics import mean, median
 
-from .. import get_trainer_from_base_fn
 from . import add_to_all
 
 __all__ = []
@@ -449,6 +448,7 @@ def get_flops_df(runs_df, include_keys, compute_latency=False, compute_memory=Fa
     for key in include_keys:
         short_key = key.split('.')[-1]
         flops_df[short_key] = []
+    from .. import get_trainer_from_base_fn
     for ii, row in runs_df.iterrows():
         base_fn = row['logging.base_fn']
         trainer = get_trainer_from_base_fn(base_fn, quiet=quiet, load=True, **kwargs)
