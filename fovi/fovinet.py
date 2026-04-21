@@ -68,6 +68,7 @@ class FoviNet(nn.Module):
                 post_transforms=self.post_transforms,
                 no_color_val=cfg.validation.no_color, 
                 auto_match_cart_resources=cfg.saccades.auto_match_cart_resources,
+                isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
             )
 
         self.get_repr_sizes()

@@ -56,7 +56,7 @@ class GridSampler(BaseGridSampler):
     to sample from the foveated sampling grid.
     """
     
-    def __init__(self, fov, cmf_a, resolution, device='cuda', dtype=torch.float, mode='nearest', style='isotropic', coords=None):
+    def __init__(self, fov, cmf_a, resolution, device='cuda', dtype=torch.float, mode='nearest', style='isotropic', coords=None, isotropic_plotting_type='v1like'):
         """
         Initialize the GridSampler.
         
@@ -80,7 +80,7 @@ class GridSampler(BaseGridSampler):
         self.style = style
         
         if coords is None:
-            self.coords = SamplingCoords(fov, cmf_a, resolution, device=device, style=style, dtype=dtype)
+            self.coords = SamplingCoords(fov, cmf_a, resolution, device=device, style=style, dtype=dtype, isotropic_plotting_type=isotropic_plotting_type)
         else:
             self.coords = coords
             
@@ -140,7 +140,7 @@ class KNNGridSampler(BaseGridSampler):
     - coords: akin to retinal ganglion cells: there are less of them, and they integrate over a local pool of photoreceptors (highres_coords)
     """
     
-    def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1, fixation_size=3000, k=None, style='isotropic', sample_cortex=True, dtype=torch.float, device='cuda'):
+    def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1, fixation_size=3000, k=None, style='isotropic', sample_cortex=True, dtype=torch.float, device='cuda', isotropic_plotting_type='v1like'):
         """
         Initialize the KNNGridSampler.
         
@@ -158,8 +158,8 @@ class KNNGridSampler(BaseGridSampler):
             device (str, optional): Device to run on. Defaults to 'cuda'.
         """
         super().__init__()
-        self.highres_coords = SamplingCoords(fov, cmf_a_mult*cmf_a, res_mult*resolution, device=device, style=style, dtype=dtype)
-        self.coords = SamplingCoords(fov, cmf_a, resolution, device=device, style=style, dtype=dtype)
+        self.highres_coords = SamplingCoords(fov, cmf_a_mult*cmf_a, res_mult*resolution, device=device, style=style, dtype=dtype, isotropic_plotting_type=isotropic_plotting_type)
+        self.coords = SamplingCoords(fov, cmf_a, resolution, device=device, style=style, dtype=dtype, isotropic_plotting_type=isotropic_plotting_type)
 
         if k is None:
             # default to the ratio of the number of pixels in the retinal and cortical grids

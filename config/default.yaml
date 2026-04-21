@@ -39,6 +39,7 @@ saccades:
   add_aspect_variation: 0
   n_fixations: 1
   n_fixations_val: 1
+  isotropic_plotting_type: 'v1like'  # 'v1like', 'schwartz', or 'warp'
 
 transforms:
   where: 'loader'  # ['loader', 'pre_warp', 'post_warp']

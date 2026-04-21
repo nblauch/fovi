@@ -18,11 +18,12 @@ class SamplingCoords():
         style (str): What type of sampling.
         dtype (torch.dtype): What data type to use.
     """
-    def __init__(self, fov, cmf_a, res, device='cpu', style='isotropic', 
+    def __init__(self, fov, cmf_a, res, device='cpu', style='isotropic',
                  dtype=torch.float,
                  max_val=1,
+                 isotropic_plotting_type='v1like',
                  ):
-        
+
         self.fov = fov
         self.cmf_a = cmf_a
         self.resolution = res
@@ -30,6 +31,7 @@ class SamplingCoords():
         self.style = style
         self.dtype = dtype
         self.max_val = max_val
+        self.isotropic_plotting_type = isotropic_plotting_type
 
         if res == 1:
             self.cartesian = torch.zeros(1, 2, device=device, dtype=dtype)
@@ -37,7 +39,7 @@ class SamplingCoords():
             self.plotting = torch.zeros(1, 2, device=device, dtype=dtype)
             self.cortical = torch.zeros(1, 3, device=device, dtype=dtype)
         else:
-            self.cartesian, self.polar, self.plotting = get_sampling_coords(fov, cmf_a, res, device=device, style=style, max_val=max_val)
+            self.cartesian, self.polar, self.plotting = get_sampling_coords(fov, cmf_a, res, device=device, style=style, max_val=max_val, isotropic_plotting_type=isotropic_plotting_type)
             # image format (row, col)
             self.cartesian_rowcol = xy_to_rowcol(self.cartesian, do_norm=False, format='-11')
 
@@ -126,7 +128,7 @@ class SamplingCoords():
         if out_radii < 1:
             raise ValueError(f'Out radii decreased to less than 1: {out_radii}')
         
-        out_coords = SamplingCoords(self.fov, self.cmf_a, out_radii, self.device, self.style, self.dtype, max_val=max_val)
+        out_coords = SamplingCoords(self.fov, self.cmf_a, out_radii, self.device, self.style, self.dtype, max_val=max_val, isotropic_plotting_type=self.isotropic_plotting_type)
 
         return out_coords, out_radii, out_cart_res
     
@@ -166,7 +168,7 @@ class SamplingCoords():
             sizes[i] = radius * self.fov / self.resolution
         return sizes
     
-    def clone(self, fov=None, cmf_a=None, resolution=None, device=None, style=None, dtype=None, max_val=None):
+    def clone(self, fov=None, cmf_a=None, resolution=None, device=None, style=None, dtype=None, max_val=None, isotropic_plotting_type=None):
         """Return a deep copy of the SamplingCoords object with optional parameter overrides.
         
         Args:
@@ -189,6 +191,7 @@ class SamplingCoords():
             self.style if style is None else style,  
             self.dtype if dtype is None else dtype,
             self.max_val if max_val is None else max_val,
+            self.isotropic_plotting_type if isotropic_plotting_type is None else isotropic_plotting_type,
             )
         return new_coords
 
@@ -201,7 +204,7 @@ class SamplingCoords():
         return f'SamplingCoords(length={len(self)}, fov={self.fov}, cmf_a={self.cmf_a}, resolution={self.resolution}, style={self.style})'
 
 @add_to_all(__all__)
-def get_isotropic_sampling_coords(fov, cmf_a, res, circular=True, device='cpu', constant_num_angles=False, force_n_points=None, max_norm_rad=1):
+def get_isotropic_sampling_coords(fov, cmf_a, res, circular=True, device='cpu', constant_num_angles=False, force_n_points=None, max_norm_rad=1, plotting_type='v1like'):
     """Sample coordinates isotropically with the cortical magnification function of the complex log mapping w=log(z+a), where z=x+iy.
 
     Args:
@@ -213,6 +216,11 @@ def get_isotropic_sampling_coords(fov, cmf_a, res, circular=True, device='cpu', 
         constant_num_angles (bool, optional): If True, the number of angles is constant for all radii, implementing log polar image sampling. Defaults to False.
         force_n_points (int, optional): If not None, forces the number of points to exactly this value. Useful for controlled comparisons with other sensors. Defaults to None.
         max_norm_rad (float, optional): Maximum normalized radius. Defaults to 1.
+        plotting_type (str, optional): Layout style for plotting coords. One of:
+            - 'v1like': V1-like flat complex-log with inverted hemifields facing outwards.
+            - 'schwartz': upright complex-log (Schwartz's log(z+a) model) with hemifields facing inwards.
+            - 'warp': cortical polar disc (log-polar radial warp in a disc, fovea at centre);
+              matches fovi-rtx samples_uv_cortical_disc layout.
 
     Returns:
         tuple: A tuple containing:
@@ -281,17 +289,42 @@ def get_isotropic_sampling_coords(fov, cmf_a, res, circular=True, device='cpu', 
     polar_coords = torch.stack(polar_coords)
     hemi_inds = torch.tensor(hemi_inds)
 
-    # use log(z+a) model to compute plotting coordinates (i.e. cortical visualization) 
-    fov_coords = coords*(fov/2)
-    plotting_coords = torch.log(torch.abs(fov_coords[:,0]) + 1j*fov_coords[:,1] + cmf_a)
-    plotting_coords = torch.stack([plotting_coords.real, -plotting_coords.imag],1)
+    assert plotting_type in ('v1like', 'schwartz', 'warp'), \
+        f"plotting_type must be one of 'v1like', 'schwartz', 'warp'; got {plotting_type!r}"
 
-    max_fov_rad = np.log(fov/2 + cmf_a)
-    
-    # make plotting coords separated nicely across hemifields/hemispheres
-    std = torch.std(plotting_coords[:,0])*.5
-    plotting_coords[hemi_inds == 1,0] = std + max_fov_rad - plotting_coords[hemi_inds == 1,0]
-    plotting_coords[hemi_inds == 0,0] = plotting_coords[hemi_inds == 0,0] - (std + max_fov_rad)
+    if plotting_type == 'warp':
+        # log-polar radial warp in a disc 
+        # rho = log((r_deg + a)/a); rho_max = log((fov/2 + a)/a); plot_xy = (rho/rho_max) * (cos, sin)
+        r_norm = polar_coords[:, 0]
+        theta = polar_coords[:, 1]
+        r_deg = r_norm * (fov / 2.0)
+        rho_max = np.log((fov / 2.0 + cmf_a) / cmf_a)
+        rho = torch.log((r_deg + cmf_a) / cmf_a) / rho_max
+        plotting_coords = torch.stack([rho * torch.cos(theta), rho * torch.sin(theta)], dim=1)
+    else:
+        # use log(z+a) model to compute plotting coordinates (i.e. cortical visualization)
+        fov_coords = coords*(fov/2)
+        plotting_coords = torch.log(torch.abs(fov_coords[:,0]) + 1j*fov_coords[:,1] + cmf_a)
+        if plotting_type == 'v1like':
+            # V1-like: upper VF appears in lower plot (inverted Y)
+            plotting_coords = torch.stack([plotting_coords.real, -plotting_coords.imag],1)
+        else:
+            # upright: upper VF in upper plot (positive Y)
+            plotting_coords = torch.stack([plotting_coords.real, plotting_coords.imag],1)
+
+        max_fov_rad = np.log(fov/2 + cmf_a)
+        min_fov_rad = np.log(cmf_a)
+        std = torch.std(plotting_coords[:,0])*.5
+
+        if plotting_type == 'v1like':
+            # each hemifield's fovea faces outwards (toward plot edges), as in V1
+            plotting_coords[hemi_inds == 1,0] = std + max_fov_rad - plotting_coords[hemi_inds == 1,0]
+            plotting_coords[hemi_inds == 0,0] = plotting_coords[hemi_inds == 0,0] - (std + max_fov_rad)
+        else:
+            # each hemifield's fovea faces inwards (toward plot center); left VF on left, right VF on right
+            gap = std * 0.1
+            plotting_coords[hemi_inds == 0,0] = plotting_coords[hemi_inds == 0,0] - min_fov_rad + gap
+            plotting_coords[hemi_inds == 1,0] = -(plotting_coords[hemi_inds == 1,0] - min_fov_rad) - gap
 
     return coords, polar_coords, plotting_coords
 
@@ -448,7 +481,7 @@ def find_desired_res(fov, cmf_a, n_points_desired, style, device='cpu', bounds=(
 
 
 @add_to_all(__all__)
-def get_sampling_coords(fov, cmf_a, res, device='cpu', style='isotropic', max_val=1):
+def get_sampling_coords(fov, cmf_a, res, device='cpu', style='isotropic', max_val=1, isotropic_plotting_type='v1like'):
     """Generate sampling coordinates based on the specified style.
     
     Args:
@@ -479,7 +512,7 @@ def get_sampling_coords(fov, cmf_a, res, device='cpu', style='isotropic', max_va
         if style == 'logpolar' or style == 'logpolar_as_grid':
             coords, polar_coords, plotting_coords = get_logpolar_image_sampling_coords(fov, cmf_a, res, device=device, force_n_points=None, max_norm_rad=max_val)
         else:
-            coords, polar_coords, plotting_coords = get_isotropic_sampling_coords(fov, cmf_a, res, device=device, force_n_points=force_n_points, max_norm_rad=max_val)
+            coords, polar_coords, plotting_coords = get_isotropic_sampling_coords(fov, cmf_a, res, device=device, force_n_points=force_n_points, max_norm_rad=max_val, plotting_type=isotropic_plotting_type)
         if 'fixn' in style:
             assert coords.shape[0] == res**2
     else:
