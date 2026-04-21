@@ -147,9 +147,16 @@ class SamplingCoords():
         self.device = device
         self.dtype = dtype
         self.cartesian = self.cartesian.to(device=device, dtype=dtype)
-        self.cortical = self.cortical.to(device=device, dtype=dtype)
+        if self.cortical is not None:
+            self.cortical = self.cortical.to(device=device, dtype=dtype)
         self.polar = self.polar.to(device=device, dtype=dtype)
         self.plotting = self.plotting.to(device=device, dtype=dtype)
+        if hasattr(self, "cartesian_rowcol"):
+            self.cartesian_rowcol = self.cartesian_rowcol.to(device=device, dtype=dtype)
+        if hasattr(self, "cartesian_pad_coords"):
+            self.cartesian_pad_coords = self.cartesian_pad_coords.to(device=device, dtype=dtype)
+        if hasattr(self, "cortical_pad_coords"):
+            self.cortical_pad_coords = self.cortical_pad_coords.to(device=device, dtype=dtype)
         return self
     
     def get_scatter_sizes(self):
