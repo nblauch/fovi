@@ -242,7 +242,7 @@ class GaussianKNNGridSampler(KNNGridSampler):
     Inherits all attributes and methods from KNNGridSampler, with the pooler
     replaced by a Gaussian-weighted version.
     """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, gauss_sigma, **kwargs):
         """Initialize the GaussianKNNGridSampler.
         
         Args:
@@ -257,7 +257,7 @@ class GaussianKNNGridSampler(KNNGridSampler):
         super().__init__(*args, **kwargs)
 
         # just adjust the pooler
-        self.pooler = KNNPoolingLayer(self.k, self.highres_coords, self.coords, mode='gaussian', device=self.device, sample_cortex=self.sample_cortex)
+        self.pooler = KNNPoolingLayer(self.k, self.highres_coords, self.coords, mode='gaussian', device=self.device, sample_cortex=self.sample_cortex, gauss_sigma=gauss_sigma)
 
 def compute_knn_indices_chunked(in_coords, out_coords, chunk_size=200, max_k=1000, use_tqdm=True):
     """
