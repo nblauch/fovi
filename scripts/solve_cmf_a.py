@@ -15,6 +15,7 @@ radii_by_res = {
     36: np.arange(2,10),
     64: np.arange(2,11),
     100: np.arange(4,15),
+    121: np.arange(4,15),
     144: np.arange(6,17),
     256: np.arange(19,30),
 }
