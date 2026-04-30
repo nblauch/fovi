@@ -3,8 +3,9 @@ import torch
 import numbers
 from torch.nn.modules.utils import _pair
 
-from . import functional as F
-from . import functional_tensor as FT
+import importlib as _importlib
+F = _importlib.import_module('.functional', __package__)
+FT = _importlib.import_module('.functional_tensor', __package__)
 
 __all__ = [
             # utility transforms

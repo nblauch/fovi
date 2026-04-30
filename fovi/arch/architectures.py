@@ -11,8 +11,7 @@ from .knnvit import KNNViT
 from .vit import VisionTransformer
 from .dinov3 import build_fovi_dinov3
 from .mlp import get_mlp
-from . import resnet
-from ..sensing.retina import get_min_cmf_a
+from .resnet import resnet_ssl as _resnet_ssl
 from ..utils import HiddenPrints, add_to_all
 
 __all__ = []
@@ -158,7 +157,7 @@ def resnet(cfg, layers, device='cuda'):
     assert cfg.model.arch_flag == None or not len(cfg.model.arch_flag), 'variable architecture flag not implemented for resnet'
 
     polar='polar' in cfg.saccades.mode and 'comp' not in cfg.saccades.mode
-    network = resnet.resnet_ssl(layers=layers, mlp_kwargs=mlp_kwargs, polar=polar,
+    network = _resnet_ssl(layers=layers, mlp_kwargs=mlp_kwargs, polar=polar,
                                             out_map_size=cfg.model.final_grid_size,
                                             **backbone_kwargs,
                                             )
@@ -461,6 +460,7 @@ def rescale_fov(cfg):
         assert crop_area_range[0] == crop_area_range[1], 'only allow single sized training crops when rescaling FOV (either with rescale_fov or with auto cmf_a)'
         crop_size = np.sqrt(crop_area_range[0])*cfg.saccades.fixation_size
         if cmf_a == -1 or cmf_a == 'auto':
+            from ..sensing.retina import get_min_cmf_a
             cmf_a = get_min_cmf_a(crop_size, cfg.saccades.resize_size, cfg.saccades.fixation_size, fov=fov, style=cfg.saccades.mode)
         # auto FOV assumes the field-of-view is adjusted based on the crop size. this should always be the case, but for backwards compatibility it is not.
         fov = fov*(crop_size/cfg.saccades.fixation_size)
