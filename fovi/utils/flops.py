@@ -31,15 +31,17 @@ def remove_parametrizations(trainer):
     if cfg.pretrained_model.lora.layers is not None:
         for ii in cfg.pretrained_model.lora.layers:
             if ii == -1:
-                # patch embedding -- just has a single weight, no sublayers
                 layer = fovinet.network.backbone.embeddings.patch_embeddings
-                P.remove_parametrizations(layer, 'weight', leave_parametrized=True)
+                if P.is_parametrized(layer, 'weight'):
+                    P.remove_parametrizations(layer, 'weight', leave_parametrized=True)
                 continue
             else:
                 layer = fovinet.network.backbone.layer[ii]
             for sublayer in cfg.pretrained_model.lora.sublayers:
                 parent, child = sublayer.split('.')
-                P.remove_parametrizations(getattr(getattr(layer, parent), child), 'weight', leave_parametrized=True)
+                module = getattr(getattr(layer, parent), child)
+                if P.is_parametrized(module, 'weight'):
+                    P.remove_parametrizations(module, 'weight', leave_parametrized=True)
 
 def _as_value(x):
     # Return the first torch._C.Value whether x is a single Value or a list/tuple of them
@@ -233,29 +235,30 @@ def make_flop_counter(model, inputs, *, include_pointwise=True, include_reductio
 
 @add_to_all(__all__)
 class FlopWrapper(nn.Module):
-    """Wrapper module for FLOP counting of a trainer's model.
+    """Wrapper module for FLOP counting and benchmarking of a trainer's model.
     
-    Prepares a model for FLOP analysis by removing LoRA parametrizations
-    and freezing all parameters.
+    Removes LoRA parametrizations and optionally freezes parameters.
     
     Args:
         trainer: Trainer object containing the model to wrap.
         setting (str, optional): Forward pass setting (e.g., 'supervised',
             'self-supervised'). Defaults to 'supervised'.
+        freeze (bool, optional): If True, sets requires_grad=False on all
+            parameters (appropriate for FLOP counting and inference
+            benchmarking). Set to False for training benchmarks that
+            need backward passes. Defaults to True.
         **kwargs: Additional keyword arguments passed to model forward.
             
     Attributes:
         trainer: The trainer object.
         kwargs (dict): Keyword arguments for the forward pass.
     """
-    def __init__(self, trainer, setting='supervised', **kwargs):
+    def __init__(self, trainer, setting='supervised', freeze=True, **kwargs):
         super().__init__()
         self.trainer = trainer
-        # remove parametrizations: we don't want these to influence flops, since they can easily be removed after training
         remove_parametrizations(self.trainer)
-        # Set requires_grad to False for all parameters in the model
         for param in self.trainer.model.parameters():
-            param.requires_grad = False
+            param.requires_grad = not freeze
         self.kwargs = kwargs
         self.kwargs['setting'] = setting
 
@@ -272,7 +275,6 @@ class FlopWrapper(nn.Module):
             break
         return batch[0]
 
-    @torch.no_grad
     def forward(self, inputs):
         """Forward pass through the wrapped model.
         
@@ -392,8 +394,12 @@ def measure_latency(
             out = model(*inputs) if isinstance(inputs, tuple) else model(inputs)
             if add_dummy_backward:
                 model.zero_grad(set_to_none=True)
-                dummy_target = torch.randn_like(out)
-                loss = F.mse_loss(out, dummy_target)
+                if isinstance(out, (tuple, list)):
+                    out_tensor = out[0]
+                else:
+                    out_tensor = out
+                dummy_target = torch.randn_like(out_tensor)
+                loss = F.mse_loss(out_tensor, dummy_target)
                 loss.backward()
                 model.zero_grad(set_to_none=True)
             ender.record()
