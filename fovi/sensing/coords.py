@@ -507,8 +507,9 @@ def get_sampling_coords(fov, cmf_a, res, device='cpu', style='isotropic', max_va
     """
     assert style in ['isotropic', 'logpolar', 'isotropic_fixn', 'uniform', 'uniform_as_grid', 'logpolar_as_grid']
     if style == 'uniform' or style == 'uniform_as_grid':
-        coords = torch.linspace(-max_val, max_val, res)
-        coords = torch.stack(torch.meshgrid(coords, coords), dim=2).reshape(-1,2).to(device)
+        step = max_val / res
+        coords = torch.linspace(-max_val + step, max_val - step, res)
+        coords = torch.stack(torch.meshgrid(coords, coords), dim=2).reshape(-1, 2).to(device)
         polar_coords = torch.stack([torch.sqrt(coords[:,0]**2 + coords[:,1]**2), torch.arctan2(coords[:,1], coords[:,0])], dim=1)
         plotting_coords = coords.clone()
     elif 'isotropic' in style or style == 'logpolar' or style == 'logpolar_as_grid':
