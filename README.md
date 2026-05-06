@@ -98,4 +98,4 @@ python -m http.server 8000 --directory docs/_build/html
 ```
 
 ## 🏛️ Citation
-Blauch, N.M., Alvarez, G.A., Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. arXiv.
+Blauch, N. M., Alvarez, G. A., & Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. https://arxiv.org/abs/2602.03766

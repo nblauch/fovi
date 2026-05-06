@@ -39,6 +39,7 @@ class RetinalTransform(nn.Module):
                  pre_transforms=None, post_transforms=None,
                  sigma=None,
                  no_color_val=False,
+                 isotropic_plotting_type='v1like',
                  **kwargs, # passed to the sampler
                  ):
         """
@@ -97,13 +98,13 @@ class RetinalTransform(nn.Module):
         self.foveal_color = GaussianColorDecay(sigma)
 
         if sampler == 'gaussian_pooling':
-            self.sampler = GaussianKNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, **kwargs)
+            self.sampler = GaussianKNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, **kwargs)
         elif sampler == 'pooling':
-            self.sampler = KNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, **kwargs)
+            self.sampler = KNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, **kwargs)
         elif sampler == 'grid_nn':
-            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='nearest', style=style)
+            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='nearest', style=style, isotropic_plotting_type=isotropic_plotting_type)
         elif sampler == 'grid_bilinear':
-            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='bilinear', style=style)
+            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='bilinear', style=style, isotropic_plotting_type=isotropic_plotting_type)
 
         else:
             raise ValueError(f'Invalid sampler: {sampler}')

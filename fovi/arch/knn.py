@@ -646,21 +646,7 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
 
         return local_rf
 
-    def load_conv2d_weights(self, conv2d: nn.Conv2d, strict: bool = False):
-        """
-        Load weights from a pretrained nn.Conv2d into this layer.
-        
-        The Conv2d kernel is resampled to match the ref_grid_size if necessary.
-        The H and W dimensions are transposed to align the Conv2d weight convention 
-        with the coordinate convention used by this layer (row,col) = (-y, x) -> (x, y)
-        
-        Args:
-            conv2d: A nn.Conv2d layer to load weights from.
-            strict: If True, raises error if shapes don't match. If False, 
-                   resamples the kernel to match ref_grid_size.
-        """
-        conv_weight = conv2d.weight.data.clone()  # (out_ch, in_ch, H, W)
-        
+    def _load_conv_2d_weight(self, conv_weight: torch.Tensor, conv_bias: torch.Tensor, strict: bool = False):
         if conv_weight.shape[0] != self.out_channels:
             raise ValueError(f"Conv2d out_channels {conv_weight.shape[0]} != layer out_channels {self.out_channels}")
         if conv_weight.shape[1] != self.in_channels:
@@ -694,11 +680,39 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
             self.weight.data.copy_(rearrange(conv_weight, 'o i w h -> o i (w h)'))
         
         # Copy bias if present
-        if conv2d.bias is not None and self.bias is not None:
-            self.bias.data.copy_(conv2d.bias.data)
-        elif conv2d.bias is not None and self.bias is None:
+        if conv_bias is not None and self.bias is not None:
+            self.bias.data.copy_(conv_bias.data)
+        elif conv_bias is not None and self.bias is None:
             raise ValueError("Conv2d has bias but layer does not. Recreate layer with bias=True.")
 
+    def load_conv2d_weights(self, conv2d: nn.Conv2d, strict: bool = False):
+        """
+        Load weights from a pretrained nn.Conv2d into this layer.
+        
+        The Conv2d kernel is resampled to match the ref_grid_size if necessary.
+        The H and W dimensions are transposed to align the Conv2d weight convention 
+        with the grid_sample coordinate convention used by this layer (row,col) -> (col, row)
+        
+        Args:
+            conv2d: A nn.Conv2d layer to load weights from.
+            strict: If True, raises error if shapes don't match. If False, 
+                   resamples the kernel to match ref_grid_size.
+        """
+        conv_weight = conv2d.weight.data.clone()  # (out_ch, in_ch, H, W)
+        self._load_conv_2d_weight(conv_weight, conv2d.bias, strict=strict)
+    
+    def load_conv3d_weights(self, conv3d: nn.Conv3d, temporal_strategy='average', strict: bool = False):
+        """
+        load weights from Conv3D with strategy for collapsing over temporal dimension
+        """
+        conv_weight = conv3d.weight.data.clone() # (out_ch, in_chan, T, H, W)
+        if temporal_strategy == 'average':
+            conv_weight = conv_weight.mean(2)
+        elif temporal_strategy == 'select_first':
+            conv_weight = conv_weight[:,:,0]
+        else:
+            raise NotImplementedError()
+        self._load_conv_2d_weight(conv_weight, conv3d.bias, strict=strict)
 
     def __repr__(self):
         n_ref = self.ref_coords.shape[0]
