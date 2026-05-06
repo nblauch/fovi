@@ -2,7 +2,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel, AutoConfig
+from transformers.models.dinov3_vit.modeling_dinov3_vit import DINOv3ViTRopePositionEmbedding
 import os
+import copy
 
 from ..utils.lora import apply_lora
 from ..utils import add_to_all
@@ -111,6 +113,12 @@ def build_fovi_dinov3(cfg, device='cuda'):
             target_hw = (cfg.model.vit.patch_size, cfg.model.vit.patch_size),
             preserve_kernel_norm=getattr(cfg.pretrained_model, 'preserve_patch_norm', False),
         )
+
+        # ensure RoPE is properly adapted to new image and token sizes
+        new_config = copy.deepcopy(model.config)
+        new_config.patch_size = cfg.model.vit.patch_size
+        new_config.image_size = cfg.saccades.resize_size
+        model.rope_embeddings = DINOv3ViTRopePositionEmbedding(new_config)
 
     # create wrapper to make a fovinet model
     model.forward_head = lambda x: x # just replace the forward_head function with an identity mapper
