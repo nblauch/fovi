@@ -41,12 +41,13 @@ class KNNResNetBasicBlock(nn.Module):
                  norm_type='batch', arch_flag='',
                  sample_cortex=True, 
                  device='cuda', auto_match_cart_resources=0,
+                 isotropic_plotting_type='v1like',
                  ):
         super().__init__()
 
         self.expansion = 1
 
-        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device)
+        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
 
         # first conv does the stride to out_coords
         self.conv1 = conv_layer(
@@ -176,6 +177,7 @@ class KNNResNet(nn.Module):
                  device='cuda',
                  auto_match_cart_resources=0,
                  num_classes=None,
+                 isotropic_plotting_type='v1like',
                  ):
         super(KNNResNet, self).__init__()
 
@@ -200,9 +202,10 @@ class KNNResNet(nn.Module):
             sample_cortex=sample_cortex,
             device=device,
             auto_match_cart_resources=auto_match_cart_resources,
+            isotropic_plotting_type=isotropic_plotting_type,
         )
 
-        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, in_conv_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=None)
+        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, in_conv_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=None, isotropic_plotting_type=isotropic_plotting_type)
         
         # always use KNNConvLayer for the first conv
         self.conv1 = KNNConvLayer(
@@ -217,7 +220,7 @@ class KNNResNet(nn.Module):
         self.bn1 = get_norm(norm_type, len(self.out_coords), self.in_channels)
         self.relu = nn.ReLU(inplace=True)
 
-        _, self.pool_coords, self.cart_res = get_in_out_coords(self.out_coords.resolution, fov, cmf_a, in_pool_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res)
+        _, self.pool_coords, self.cart_res = get_in_out_coords(self.out_coords.resolution, fov, cmf_a, in_pool_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res, isotropic_plotting_type=isotropic_plotting_type)
         self.in_res = self.pool_coords.resolution
 
         self.maxpool = pool_layer(

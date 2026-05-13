@@ -115,8 +115,9 @@ def fovi_alexnet2023(cfg, device='cuda'):
         style=cfg.saccades.mode,
         sample_cortex=cfg.saccades.sample_cortex,
         device=device,
+        isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
         )
-    
+
     return arch_wrapper(knn, cfg, device=device)
 
 def resnet(cfg, layers, device='cuda'):
@@ -217,6 +218,7 @@ def fovi_resnet(cfg,
                  device=device,
                  auto_match_cart_resources=cfg.saccades.auto_match_cart_resources,
                  num_classes=None,
+                 isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
         )
 
     return arch_wrapper(knn, cfg, device=device)
@@ -296,8 +298,9 @@ def fovi_vit(cfg, embed_dim, num_heads, device='cuda'):
         attn_backend=getattr(cfg.model.vit, 'attn_backend', 'standard'),
         aggregation=cfg.model.vit.get('aggregation', 'cls_token'),
         ref_frame_side_length=cfg.model.vit.get('ref_frame_side_length', None),
+        isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
     )
-    
+
     return arch_wrapper(backbone, cfg, device=device)
 
 @add_to_all(__all__)

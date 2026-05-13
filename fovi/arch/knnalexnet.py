@@ -49,6 +49,7 @@ class KNNAlexNetBlock(nn.Module):
                  norm_type='batch', arch_flag='',
                  activation=nn.ReLU, sample_cortex=True, 
                  device='cuda', auto_match_cart_resources=0, ref_frame_mult=None,
+                 isotropic_plotting_type='v1like',
                  ):
         super().__init__()
         
@@ -56,7 +57,7 @@ class KNNAlexNetBlock(nn.Module):
         if isinstance(conv_layer, str):
             conv_layer = get_knn_conv_layer(conv_layer)
 
-        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device)
+        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
         
         # Compute ref_frame_side_length from ref_frame_mult if provided
         if ref_frame_mult is not None:
@@ -88,7 +89,7 @@ class KNNAlexNetBlock(nn.Module):
         
         # Optional pooling layer
         if pool:
-            _, pooled_coords, out_cart_res = get_in_out_coords(self.in_coords.resolution, fov, cmf_a, pool_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res, device=device)
+            _, pooled_coords, out_cart_res = get_in_out_coords(self.in_coords.resolution, fov, cmf_a, pool_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
 
             self.pool = KNNPoolingLayer(
                 k=pool_k,
@@ -162,6 +163,7 @@ class KNNAlexNet(nn.Module):
                  fov=16, cmf_a=0.5, 
                  device='cuda', sample_cortex=True,
                  ref_frame_mult=None,
+                 isotropic_plotting_type='v1like',
                  ):
         super().__init__()
         self.layers = []
@@ -182,6 +184,7 @@ class KNNAlexNet(nn.Module):
                 sample_cortex=sample_cortex,
                 device=device,
                 ref_frame_mult=ref_frame_mult,
+                isotropic_plotting_type=isotropic_plotting_type,
             )
 
             in_channels = features_per_layer[i]

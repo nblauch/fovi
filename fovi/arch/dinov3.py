@@ -84,6 +84,7 @@ def build_fovi_dinov3(cfg, device='cuda'):
             ref_frame_side_length=cfg.pretrained_model.patch_size,
             transposed=True,
             bias=True,
+            isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
             **kwargs,
         )
         # load in pretrained weights to foveated patch embedding

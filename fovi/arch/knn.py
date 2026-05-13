@@ -956,7 +956,7 @@ def compute_binary_receptive_field(knn_indices_list, layer_of_interest, unit_of_
 
 
 @add_to_all(__all__)
-def get_in_out_coords(in_res, fov, cmf_a, stride, style='isotropic', auto_match_cart_resources=1, in_cart_res=None, device='cuda', in_coords=None, force_out_match_less_than=True, max_out_coord_val=1):
+def get_in_out_coords(in_res, fov, cmf_a, stride, style='isotropic', auto_match_cart_resources=1, in_cart_res=None, device='cuda', in_coords=None, force_out_match_less_than=True, max_out_coord_val=1, isotropic_plotting_type='v1like'):
     """
     Convenience function to generate input and output coordinates for KNN layers.
     
@@ -983,7 +983,7 @@ def get_in_out_coords(in_res, fov, cmf_a, stride, style='isotropic', auto_match_
     if in_coords is None:
         if auto_match_cart_resources:
             in_res, in_cart_res = auto_match_num_coords(fov, cmf_a, in_cart_res, style, auto_match_cart_resources, device, force_less_than=True, quiet=True)
-        in_coords = SamplingCoords(fov, cmf_a, in_res, device=device, style=style)
+        in_coords = SamplingCoords(fov, cmf_a, in_res, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type)
 
     if max_out_coord_val == 'auto':
         tmp_max_val = 1

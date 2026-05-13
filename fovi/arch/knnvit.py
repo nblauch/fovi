@@ -41,6 +41,7 @@ class KNNPatchEmbedding(KNNConvLayer):
                  max_coord_val=1,
                  sample_cortex='geodesic',
                  ref_frame_side_length=None,
+                 isotropic_plotting_type='v1like',
                  **kwargs,
                  ):
         """Initialize KNN tokenization layer.
@@ -73,7 +74,7 @@ class KNNPatchEmbedding(KNNConvLayer):
             # resolution is fixed, k is adapted to match overlap factor
             stride = cart_patch_size
 
-        in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val)
+        in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val, isotropic_plotting_type=isotropic_plotting_type)
 
         if not new_parameterization:
             k = int((cart_patch_size*(out_cart_res)/(np.sqrt(len(out_coords)))*patch_overlap_factor)**2)
@@ -126,6 +127,7 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
                  arch_flag='',
                  in_coords=None,
                  out_coords=None,
+                 isotropic_plotting_type='v1like',
                  ):
         """Initialize partitioning patch embedding layer.
         
@@ -156,7 +158,7 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
         if in_coords is not None or out_coords is not None:
             assert in_coords is not None and out_coords is not None, "in_coords and out_coords must be provided if provided"
         else:
-            in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val)
+            in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val, isotropic_plotting_type=isotropic_plotting_type)
 
         self.in_channels = in_channels
         self.out_channels = embed_dim
@@ -237,6 +239,7 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
                 transposed=False,
                 max_coord_val='auto',
                 sample_cortex='geodesic',
+                isotropic_plotting_type='v1like',
                  **kwargs,
                  ):
         """Initialize KNN partitioning patch embedding layer.
@@ -261,7 +264,7 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
 
         stride = cart_patch_size # match number of tokens exactly with cartesian version
 
-        in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val)
+        in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val, isotropic_plotting_type=isotropic_plotting_type)
 
         # compute a partitioning, then use the maximum RF size to set k
         k = int(len(in_coords) / len(out_coords)) # set temporary k for use in geodesic dist computation, if necessary
@@ -321,6 +324,7 @@ class KNNViT(VisionTransformer):
                  attn_backend: str = 'flash',
                  aggregation='cls_token',
                  ref_frame_side_length=None,
+                 isotropic_plotting_type='v1like',
                  ):
         """Initialize KNNViT model.
         
@@ -371,6 +375,7 @@ class KNNViT(VisionTransformer):
             patch_overlap_factor=patch_overlap_factor,
             force_patches_less_than_matched=force_patches_less_than_matched,
             ref_frame_side_length=ref_frame_side_length,
+            isotropic_plotting_type=isotropic_plotting_type,
         )
         
         # Get cartesian coordinates for positional encoding

@@ -126,13 +126,14 @@ class ConvNeXtV2(nn.Module):
                  in_chans=3, num_classes=1000, first_stride=4,
                  depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], 
                  drop_path_rate=0., head_init_scale=1.,
+                 isotropic_plotting_type='v1like',
                  **kwargs,
                  ):
         super().__init__()
         self.depths = depths
         self.downsample_layers = nn.ModuleList() # stem and 3 intermediate downsampling conv layers
 
-        self.in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, first_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=None, device=device)
+        self.in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, first_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=None, device=device, isotropic_plotting_type=isotropic_plotting_type)
 
         self.stage_coords = [out_coords]
 
@@ -142,7 +143,7 @@ class ConvNeXtV2(nn.Module):
         )
         self.downsample_layers.append(stem)
         for i in range(3):
-            in_coords, out_coords, out_cart_res = get_in_out_coords(out_coords.resolution, fov, cmf_a, first_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res, device=device)
+            in_coords, out_coords, out_cart_res = get_in_out_coords(out_coords.resolution, fov, cmf_a, first_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
             downsample_layer = nn.Sequential(
                     LayerNorm(dims[i], eps=1e-6, data_format="channels_first"),
                     KNNConvLayer(dims[i], dims[i+1], k=4, in_coords=in_coords, out_coords=out_coords, device=device, bias=True, **kwargs),
@@ -170,7 +171,7 @@ class ConvNeXtV2(nn.Module):
 
         self.apply(self._init_weights)
 
-        self.out_coords = SamplingCoords(fov, cmf_a, 1, None, style=style, device=device)
+        self.out_coords = SamplingCoords(fov, cmf_a, 1, None, style=style, device=device, isotropic_plotting_type=isotropic_plotting_type)
         self.total_embed_dim = dims[-1]
 
     def _init_weights(self, m):
