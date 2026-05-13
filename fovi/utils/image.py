@@ -18,9 +18,8 @@ def fig_to_frame(fig):
         np.ndarray: RGB image array of shape (H, W, 3) with dtype uint8.
     """
     fig.canvas.draw()
-    frame = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    return frame
+    frame = np.array(fig.canvas.buffer_rgba())
+    return frame[..., :3]
 
 
 def plotly_fig_to_frame(fig):
