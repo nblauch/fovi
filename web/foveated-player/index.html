@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FOVI — Foveated sampling demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=Outfit:wght@300;400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="player.css">
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="glow glow-a" aria-hidden="true"></div>
+  <div class="glow glow-b" aria-hidden="true"></div>
+
+  <header class="intro" id="intro">
+    <h1>FOVI:<br>A biologically-inspired foveated interface for deep vision models</h1>
+    <p class="lede"><br>Human vision samples the world non-uniformly — sharp at the center of gaze, progressively coarser toward the periphery. This leads to more space being devoted to representing central locations in the maps of visual space found in primary visual cortex (V1), a phenomenon known as cortical magnification. 
+    <br><br> 
+    FOVI makes this link explicit, linking a non-uniform retina-like sensor array to a uniformly dense V1-like sensor manifold. It allows us to plug foveated sensing into deep vision models such as CNNs and ViTs, enabling efficient high-resolution active sensing. 
+    <br><br>  
+    Scroll to view multiple eye movements of the FOVI sensing on an image, and how each glimpse looks in a flattened view of the foveated sensor's native manifold. 
+    </p>
+    <div class="scroll-hint">
+      <span>Scroll</span>
+      <svg width="20" height="28" viewBox="0 0 20 28" fill="none" aria-hidden="true">
+        <rect x="1" y="1" width="18" height="26" rx="9" stroke="currentColor" stroke-width="1.2"/>
+        <circle class="scroll-dot" cx="10" cy="8" r="2" fill="currentColor"/>
+      </svg>
+    </div>
+  </header>
+
+  <main class="sequence" id="sequence" aria-live="polite"></main>
+
+  <footer class="outro" id="outro">
+    <div class="outro-inner">
+      <p class="outro-citation">
+        Blauch, N. M., Alvarez, G. A., &amp; Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. ICML.
+      </p>
+      <nav class="outro-links" aria-label="Project links">
+        <a href="https://arxiv.org/abs/2602.03766" target="_blank" rel="noopener noreferrer">paper</a>
+        <span class="outro-links-sep" aria-hidden="true">·</span>
+        <a href="https://github.com/nblauch/fovi" target="_blank" rel="noopener noreferrer">code</a>
+        <span class="outro-links-sep" aria-hidden="true">·</span>
+        <a href="docs/">docs</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="player.js"></script>
+</body>
+</html>

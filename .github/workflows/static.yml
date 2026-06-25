@@ -3,6 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
@@ -34,27 +36,35 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .  # necessary for auto-import doc creation
+          pip install -e .
           pip install -r requirements-docs.txt
 
-      - name: Build Sphinx documentation
+      - name: Assemble GitHub Pages site
         env:
           FOVI_SAVE_DIR: /tmp/fovi_save
           FOVI_DATASETS_DIR: /tmp/fovi_datasets
+        run: bash scripts/assemble_pages_site.sh
 
-        run: |
-          bash scripts/clean_docs.sh
-          python scripts/generate_docs.py
+      - name: Upload site artifact (PR preview)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-pages-site
+          path: site
+          retention-days: 7
 
       - name: Setup Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v4
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/_build/html
+          path: site
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
