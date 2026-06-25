@@ -73,7 +73,9 @@ model = get_model_from_base_fn('fovi-dinov3-splus_a-2.78_res-64_in1k')
 
 ## 📚 Documentation
 
-The docs are hosted at: https://nblauch.github.io/fovi/index.html
+The docs are hosted at: https://nblauch.github.io/fovi/docs/
+
+The interactive foveated sampling demo is at: https://nblauch.github.io/fovi/
 
 You can also build locally. Docs are generated semi-automatically from source code and docstrings. The documentation includes:
 

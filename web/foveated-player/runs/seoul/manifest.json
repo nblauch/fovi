@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "title": "seoul",
+  "source_image": "input.png",
+  "source_with_fixations": "input-with-fixations.png",
+  "image_size": [
+    800,
+    1200
+  ],
+  "fixations": [
+    {
+      "index": 1,
+      "row": 0.5506072874493928,
+      "col": 0.1683782627299957,
+      "views": {
+        "flat": "flat-1.png",
+        "local_cartesian": "local-cartesian-1.png",
+        "global_cartesian": "global-cartesian-1.png"
+      }
+    },
+    {
+      "index": 2,
+      "row": 0.266712748099141,
+      "col": 0.7147723906388863,
+      "views": {
+        "flat": "flat-2.png",
+        "local_cartesian": "local-cartesian-2.png",
+        "global_cartesian": "global-cartesian-2.png"
+      }
+    },
+    {
+      "index": 3,
+      "row": 0.537029722523946,
+      "col": 0.9418880221190877,
+      "views": {
+        "flat": "flat-3.png",
+        "local_cartesian": "local-cartesian-3.png",
+        "global_cartesian": "global-cartesian-3.png"
+      }
+    },
+    {
+      "index": 4,
+      "row": 0.4753135183173694,
+      "col": 0.3847964188143906,
+      "views": {
+        "flat": "flat-4.png",
+        "local_cartesian": "local-cartesian-4.png",
+        "global_cartesian": "global-cartesian-4.png"
+      }
+    }
+  ],
+  "params": {
+    "resolution": 128,
+    "start_res": 1200,
+    "fov": 16.0,
+    "cmf_a": 0.5,
+    "style": "isotropic",
+    "sampler": "pooling",
+    "fixation_size": null,
+    "fixation_size_frac": 1.5,
+    "auto_match_cart_resources": true,
+    "sigma": null,
+    "no_color_val": false,
+    "isotropic_plotting_type": "schwartz",
+    "res_mult": null,
+    "cmf_a_mult": null,
+    "k": null,
+    "size_mult": 40,
+    "center_crop": false,
+    "normalize": true,
+    "image_height": 800,
+    "image_width": 1200
+  },
+  "timing": {
+    "fixation_reveal_ms": 900,
+    "view_hold_ms": 1400,
+    "view_order": [
+      "global_cartesian",
+      "flat"
+    ],
+    "pause_between_fixations_ms": 400
+  }
+}

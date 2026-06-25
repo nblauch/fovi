@@ -8,6 +8,7 @@ notebooks/__pycache__
 **/*.pyc
 log
 docs/_build
+site/
 docs/.doctrees/
 docs/_autosummary/
 outputs

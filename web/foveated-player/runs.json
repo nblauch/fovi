@@ -1,0 +1,12 @@
+{
+  "runs": [
+    {
+      "id": "runs/seoul",
+      "label": "Seoul"
+    },
+    {
+      "id": "runs/example",
+      "label": "Example"
+    }
+  ]
+}
