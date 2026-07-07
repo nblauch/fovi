@@ -10,7 +10,7 @@ Scroll-driven playback of pre-rendered fixation sequences. No Python at view tim
 python scripts/interactive_sampling_demo.py path/to/image.jpg outputs/seoul/ --device cpu
 ```
 
-Writes PNGs plus `manifest.json` and `input.png`.
+Writes PNGs, 3D manifold MP4s, `manifest.json`, and `input.png`.
 
 For older folders without a manifest:
 
@@ -44,7 +44,7 @@ Open `http://localhost:8080/` (defaults to `runs/seoul`) or `?run=../../outputs/
 Scroll downward to unfold the sequence:
 
 1. **Fixation** — source image
-2. **Views** — global cartesian and flat manifold, side by side
+2. **Views** — image-space sampling, native 3D manifold, and flattened manifold
 3. Repeat for each fixation
 
 Content below the fold starts blurred and soft; scrolling gradually sharpens and brings it into place.

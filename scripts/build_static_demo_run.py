@@ -16,6 +16,7 @@ from PIL import Image
 
 from scripts.interactive_sampling_demo import (
     build_retinal_transform,
+    load_fixations_from_output,
     run_sampling_and_save,
     save_input_image,
     save_input_with_fixations,
@@ -65,6 +66,8 @@ def make_args_namespace():
         k=None,
         size_mult=10,
         dpi=120,
+        manifold_video_fps=15,
+        manifold_video_duration=3.0,
         center_crop=False,
         no_normalize=False,
     )
@@ -81,7 +84,10 @@ def main():
     batch, display_rgb, height, width = load_image_for_sampling(
         img_path, device=cli.device, center_crop=False,
     )
-    fixations = [(0.45, 0.35), (0.55, 0.72), (0.28, 0.55)]
+    try:
+        fixations, _prev_manifest = load_fixations_from_output(cli.output_dir)
+    except SystemExit:
+        fixations = [(0.45, 0.35), (0.55, 0.72), (0.28, 0.55)]
     start_res = max(height, width)
     retinal_transform = build_retinal_transform(sampling_args, start_res, cli.device)
 

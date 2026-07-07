@@ -23,11 +23,12 @@ from fovi.demo import load_image_for_sampling
 from fovi.sensing.coords import transform_sampling_grid
 from fovi.sensing.retina import RetinalTransform
 from fovi.utils import normalize
+from scripts.render_3d_manifold_video import render_3d_manifold_video_from_colors
 
 SAMPLER_CHOICES = ('grid_nn', 'grid_bilinear', 'pooling', 'gaussian_pooling')
 PLOTTING_TYPE_CHOICES = ('v1like', 'schwartz', 'warp')
 MANIFEST_VERSION = 1
-DEFAULT_VIEW_ORDER = ('global_cartesian', 'flat')
+DEFAULT_VIEW_ORDER = ('global_cartesian', 'manifold_3d', 'flat')
 
 
 def parse_args():
@@ -82,6 +83,10 @@ def parse_args():
                         help='Center-crop to a square before fixation picking')
     parser.add_argument('--dpi', type=int, default=150,
                         help='DPI for saved PNGs (default: 150)')
+    parser.add_argument('--manifold-video-fps', type=int, default=15,
+                        help='FPS for 3D manifold videos (default: 15)')
+    parser.add_argument('--manifold-video-duration', type=float, default=3.0,
+                        help='Duration in seconds for 3D manifold videos (default: 3.0)')
     parser.add_argument('--regenerate', action='store_true',
                         help='Skip fixation picker; reload fixations from output_dir manifest.json')
 
@@ -123,6 +128,8 @@ def sampling_params_dict(args, height, width, start_res):
         'normalize': not args.no_normalize,
         'image_height': height,
         'image_width': width,
+        'manifold_video_fps': getattr(args, 'manifold_video_fps', 15),
+        'manifold_video_duration': getattr(args, 'manifold_video_duration', 3.0),
     }
 
 
@@ -136,6 +143,9 @@ def write_manifest(output_dir, fixations, args, height, width, start_res, title=
             'col': col,
             'views': {
                 'flat': f'flat-{idx}.png',
+                'flat_schwartz': f'flat-schwartz-{idx}.png',
+                'manifold_3d': f'manifold-3d-{idx}.mp4',
+                'manifold_3d_plotly': f'manifold-3d-{idx}.json',
                 'local_cartesian': f'local-cartesian-{idx}.png',
                 'global_cartesian': f'global-cartesian-{idx}.png',
             },
@@ -152,7 +162,7 @@ def write_manifest(output_dir, fixations, args, height, width, start_res, title=
         'timing': {
             'fixation_reveal_ms': 900,
             'view_hold_ms': 1400,
-            'view_order': ['global_cartesian', 'flat'],
+            'view_order': list(DEFAULT_VIEW_ORDER),
             'pause_between_fixations_ms': 400,
         },
     }
@@ -339,6 +349,44 @@ def render_scatter(
     return fig
 
 
+def save_plotly_manifold_data(retinal_transform, color, output_path):
+    """Write compact data for a browser-side Plotly 3D manifold scatter."""
+    cortical_xyz = retinal_transform.sampler.coords.cortical.detach().cpu().numpy()
+    plot_xyz = np.column_stack([
+        cortical_xyz[:, 2],
+        cortical_xyz[:, 0],
+        cortical_xyz[:, 1],
+    ])
+    mins = plot_xyz.min(axis=0)
+    maxs = plot_xyz.max(axis=0)
+    center = (mins + maxs) / 2
+    scale = np.max(maxs - mins)
+    plot_xyz = (plot_xyz - center) / scale
+
+    rgb = np.clip(np.asarray(color), 0, 1)
+    rgb_u8 = np.rint(rgb * 255).astype(np.uint8)
+    colors = [f'#{r:02x}{g:02x}{b:02x}' for r, g, b in rgb_u8]
+
+    data = {
+        'version': 1,
+        # Match the matplotlib/movie convention: (cortical_z, cortical_x, cortical_y).
+        'x': np.round(plot_xyz[:, 0], 5).tolist(),
+        'y': np.round(plot_xyz[:, 1], 5).tolist(),
+        'z': np.round(plot_xyz[:, 2], 5).tolist(),
+        'range': [-0.51, 0.51],
+        'color': colors,
+        'marker_size': 2.4,
+        'camera': {
+            'eye': {'x': -1.45, 'y': -0.28, 'z': 0.36},
+            'center': {'x': 0, 'y': 0, 'z': 0},
+            'up': {'x': 0, 'y': 0, 'z': 1},
+        },
+    }
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, separators=(',', ':'))
+    return output_path
+
+
 def build_retinal_transform(args, start_res, device):
     sampler_kwargs = {}
     if args.res_mult is not None:
@@ -369,7 +417,12 @@ def run_sampling_and_save(batch, fixations, retinal_transform, args, height, wid
     scale = np.sqrt(args.fixation_size_frac)
     fix_side = scale * min(height, width)
     rel_cart_coords = retinal_transform.sampler.coords.cartesian.cpu().numpy()
-    manifold_coords = retinal_transform.sampler.coords.plotting.cpu().numpy()
+    flat_v1like_coords = retinal_transform.sampler.coords.clone(
+        isotropic_plotting_type='v1like',
+    ).plotting.cpu().numpy()
+    flat_schwartz_coords = retinal_transform.sampler.coords.clone(
+        isotropic_plotting_type='schwartz',
+    ).plotting.cpu().numpy()
     cart_sizes = args.size_mult * retinal_transform.scatter_sizes
 
     saved_paths = []
@@ -393,7 +446,8 @@ def run_sampling_and_save(batch, fixations, retinal_transform, args, height, wid
             abs_cart_coords[:, 1] = -abs_cart_coords[:, 1]
 
             outputs = [
-                ('flat', manifold_coords, 4, False, False, None),
+                ('flat', flat_v1like_coords, 4, False, False, None),
+                ('flat-schwartz', flat_schwartz_coords, 4, False, False, None),
                 ('local-cartesian', rel_cart_coords, cart_sizes, True, True, None),
                 ('global-cartesian', abs_cart_coords, cart_sizes, True, False, (height, width)),
             ]
@@ -409,6 +463,20 @@ def run_sampling_and_save(batch, fixations, retinal_transform, args, height, wid
                 fig.savefig(path, bbox_inches='tight', pad_inches=0, dpi=args.dpi, transparent=True)
                 plt.close(fig)
                 saved_paths.append(path)
+
+            manifold_video_path = os.path.join(output_dir, f'manifold-3d-{idx}.mp4')
+            render_3d_manifold_video_from_colors(
+                retinal_transform,
+                color,
+                manifold_video_path,
+                fps=getattr(args, 'manifold_video_fps', 15),
+                duration=getattr(args, 'manifold_video_duration', 3.0),
+            )
+            saved_paths.append(manifold_video_path)
+
+            manifold_plotly_path = os.path.join(output_dir, f'manifold-3d-{idx}.json')
+            save_plotly_manifold_data(retinal_transform, color, manifold_plotly_path)
+            saved_paths.append(manifold_plotly_path)
 
     return saved_paths
 

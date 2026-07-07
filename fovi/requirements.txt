@@ -2,6 +2,8 @@ einops
 fastcore
 huggingface_hub
 hydra-core
+imageio
+imageio-ffmpeg
 ipython
 matplotlib
 numpy

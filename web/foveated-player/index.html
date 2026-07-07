@@ -6,8 +6,9 @@
   <title>FOVI — Foveated sampling demo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=Outfit:wght@300;400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="player.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -15,13 +16,24 @@
   <div class="glow glow-b" aria-hidden="true"></div>
 
   <header class="intro" id="intro">
-    <h1>FOVI:<br>A biologically-inspired foveated interface for deep vision models</h1>
-    <p class="lede"><br>Human vision samples the world non-uniformly — sharp at the center of gaze, progressively coarser toward the periphery. This leads to more space being devoted to representing central locations in the maps of visual space found in primary visual cortex (V1), a phenomenon known as cortical magnification. 
-    <br><br> 
-    FOVI makes this link explicit, linking a non-uniform retina-like sensor array to a uniformly dense V1-like sensor manifold. It allows us to plug foveated sensing into deep vision models such as CNNs and ViTs, enabling efficient high-resolution active sensing. 
-    <br><br>  
-    Scroll to view multiple eye movements of the FOVI sensing on an image, and how each glimpse looks in a flattened view of the foveated sensor's native manifold. 
-    </p>
+    <h1>FOVI:<br>A biologically-inspired foveated interface<br>for deep vision models</h1>
+    <div class="intro-highlight" id="intro-highlight" aria-label="Animated FOVI fixation sequence preview">
+      <p class="intro-highlight-loading">Loading fixation preview…</p>
+    </div>
+    <div class="intro-citation-block">
+      <p class="outro-citation">
+        Blauch, N. M., Alvarez, G. A., &amp; Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. Forty-Third International Conference on Machine Learning (ICML), Seoul, South Korea.
+      </p>
+      <nav class="outro-links" aria-label="Project links">
+        <a href="https://arxiv.org/abs/2602.03766" target="_blank" rel="noopener noreferrer">paper</a>
+        <span class="outro-links-sep" aria-hidden="true">·</span>
+        <a href="https://github.com/nblauch/fovi" target="_blank" rel="noopener noreferrer">code</a>
+        <span class="outro-links-sep" aria-hidden="true">·</span>
+        <a href="https://huggingface.co/fovi-pytorch" target="_blank" rel="noopener noreferrer">models</a>
+        <span class="outro-links-sep" aria-hidden="true">·</span>
+        <a href="docs/">docs</a>
+      </nav>
+    </div>
     <div class="scroll-hint">
       <span>Scroll</span>
       <svg width="20" height="28" viewBox="0 0 20 28" fill="none" aria-hidden="true">
@@ -31,17 +43,151 @@
     </div>
   </header>
 
-  <main class="sequence" id="sequence" aria-live="polite"></main>
+  <main class="story" id="story">
+    <section class="story-section story-reveal" aria-labelledby="summary-title">
+      <div class="story-copy">
+        <h2 id="summary-title">From retina-like samples to a V1-like manifold</h2>
+        <p>
+          FOVI starts with a non-uniform sensor array: high sampling density at the center of gaze and fewer samples with increasing eccentricity. The key step is to reformat that array into a uniformly dense, curved sensor manifold, which can also be flattened into a V1-like map split across visual hemifields.
+        </p>
+        <p>
+          The sampling density follows a cortical magnification function, so it depends on eccentricity rather than polar angle. The visual samples are non-uniform in image space but approximately uniform on the sensor manifold, where neighborhoods can be defined consistently.
+        </p>
+      </div>
+      <div class="manifold-triptych" aria-label="Sensor manifold transformation">
+        <figure class="story-figure story-figure--panel story-figure--retina">
+          <img src="assets/3a_retina.png" alt="Retina-like foveated sampling array with dense central sampling and coarser peripheral sampling." loading="lazy">
+          <figcaption>Visual space: dense foveal samples and coarser peripheral context.</figcaption>
+        </figure>
+        <figure class="story-figure story-figure--panel">
+          <video src="assets/3b_manifold_nn.mp4" autoplay loop muted playsinline preload="metadata" aria-label="Animated nearest-neighbor relationships on the 3D sensor manifold."></video>
+          <figcaption>3D manifold: neighborhoods are defined on the curved surface.</figcaption>
+        </figure>
+        <figure class="story-figure story-figure--panel">
+          <video src="assets/3c_manifold_eccentricity.mp4" autoplay loop muted playsinline preload="metadata" aria-label="Animated eccentricity gradient on the sensor manifold."></video>
+          <figcaption>Manifold geometry: eccentricity maps smoothly across the surface.</figcaption>
+        </figure>
+      </div>
+      <div class="story-copy">
+        <p>
+          The next panel gives a more detailed mathematical view of the sampler, showing how the cortical magnification function defines the visual samples, the native 3D manifold, and its flattened visualization. This 3D manifold uniquely defines a foveated representation that varies only with eccentricity, preserving local isotropy. 
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/3d_samplers.png" alt="FOVI sampler geometry showing the cortical magnification function, non-uniform samples in visual space, the 3D sensor manifold, and the flattened Schwartz manifold." loading="lazy">
+        <figcaption>
+          The relationship between cortical magnification and isotropic foveated sensing. <strong>A.</strong> The cortical magnification function commonly used to account for the organization of retinotopic maps in visual cortex (Van Essen et al., 1984; Peters et al., 1994). We set <em>a</em> = 0.5 and a field-of-view of 16 degrees. <strong>B.</strong> The integral of the CMF <em>w</em>, from 0 to <em>r</em>, yielding the cortical dimension corresponding to eccentricity. <strong>C.</strong> Sampling evenly along the domain of <em>w</em> and solving for the corresponding retinal radius <em>r</em> to achieve foveated samples in visual space. <strong>D.</strong> Sensor locations in visual space arising from isotropic foveated sampling. <strong>E.</strong> Visual points from <strong>D.</strong> mapped in the manifold of Rovamo &amp; Virsu (1984). <strong>F.</strong> Visual points from <strong>D.</strong> mapped into the complex log model (Schwartz, 1980).
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="story-section story-reveal" aria-labelledby="tradeoffs-title">
+      <div class="story-copy">
+        <h2 id="tradeoffs-title">Uniform high acuity has hard trade-offs</h2>
+        <p>
+          If every location had foveal resolution, a large field of view would require a much larger representational surface, and thus much greater processing costs. With fixed constrained resources, uniform sampling either lowers resolution everywhere or preserves high resolution over only a tiny field of view. Foveation is a solution to this trade-off, providing graded resolution with a movable focus. 
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/2_uniform_tradeoffs.png" alt="Plots illustrating uniform magnification trade-offs between field of view, V1 size, and visual resolution." loading="lazy">
+      </figure>
+    </section>
+
+    <section class="story-section story-section--demo story-reveal" aria-labelledby="fixations-title">
+      <div class="story-copy">
+        <h2 id="fixations-title">Each fixation samples a different high-resolution glimpse</h2>
+        <p>
+          A fixation selects where the high-resolution part of the sensor lands. Scroll through the sequence to see the source image, the foveated sample in visual space, the same sample on the 3D manifold, and the flattened V1-like view. Drag and scroll on the 3D panel to explore the manifold. 
+        </p>
+      </div>
+    </section>
+
+    <section class="sequence" id="sequence" aria-live="polite"></section>
+
+    <section class="story-section story-reveal" aria-labelledby="kernel-title">
+      <div class="story-copy">
+        <h2 id="kernel-title">kNN-convolution allows for foveated perception</h2>
+        <p>
+          To perform convolutional processing on the manifold -- needed by both CNNs and ViTs (patch embedding) -- we define spatial receptive fields as k-nearest-neighborhoods on the sensor manifold. We perform kNN convolution via kernel mapping, which aligns each irregular neighborhood to a common Cartesian reference kernel, so a learned filter can be shared across the manifold. The result of this is that the same filter spans a small space in the fovea, and a larger space in the periphery.
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/4_kernel_mapping_wide.png" alt="Kernel mapping procedure for kNN-convolution, showing neighborhood coordinates, Cartesian reference frame mapping, and sampled kernels in manifold and visual space." loading="lazy">
+      </figure>
+    </section>
+
+    <section class="story-section story-reveal" aria-labelledby="architecture-title">
+      <div class="story-copy">
+        <h2 id="architecture-title">The same interface supports CNNs and ViTs</h2>
+        <p>
+          In a FOVI-CNN, kNN-convolutions build a hierarchy directly on the manifold. In a FOVI-ViT, kNN-convolution acts as a foveated patch embedding, allowing a pretrained transformer to receive foveated patches while the rest of the encoder stays largely familiar. Since the backbone is otherwise unchanged, this allows us to benefit from the pre-trained knowledge of ViT like DINOv3, while adapting it for foveation. 
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/5_foveated_arch.png" alt="FOVI architecture diagrams showing hierarchical kNN-convolution, manifold kernels, foveated patches, and DINOv3 adaptation." loading="lazy">
+      </figure>
+    </section>
+
+    <section class="story-section story-reveal" aria-labelledby="rf-title">
+      <div class="story-copy">
+        <h2 id="rf-title">Biological receptive field structure falls out naturally</h2>
+        <p>
+          Because neighborhoods are isotropic on the V1-like manifold, receptive fields grow with eccentricity in visual space, while the local isotropy prevents the eccentricity-dependent warping seen in log-polar and warped Cartesian approaches for foveation. FOVI-CNNs thus produce receptive field size and shape trends highly similar to primate visual cortex.
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/6_RFs.png" alt="Receptive field analyses comparing variable cortical magnification, human pRF sizes, model receptive field sizes, and receptive field shapes." loading="lazy">
+      </figure>
+    </section>
+
+    <section class="story-section story-reveal" aria-labelledby="cnn-title">
+      <div class="story-copy">
+        <h2 id="cnn-title">Moderate foveation improves recognition under a pixel budget</h2>
+        <p>
+          The cortical magnification function (CMF) hyperparameter a allows us to sweep from fully uniform to heavily foveated perception, with the same sensor resources. With a fixed constrained sensing budget, we find that ImageNet-100 classification improves with more fixations, while an intermediate foveation level outperforms both very strong foveation and nearly uniform sampling.
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/7_cnn_results.png" alt="FOVI-CNN results showing sampled fixations and ImageNet accuracy as a function of fixation count and foveation strength." loading="lazy">
+      </figure>
+    </section>
+
+    <section class="story-section story-reveal" aria-labelledby="vit-title">
+      <div class="story-copy">
+        <h2 id="vit-title">Foveated patchification adapts pretrained transformers</h2>
+        <p>
+          FOVI can replace the standard patch embedding of a pretrained DINOv3 ViT with a foveated kNN-convolution-based patch embedding. With LoRA adaptation, the resulting models retain much of the full-resolution model's ImageNet accuracy while using far fewer sampled pixels and patches, less FLOPS, and lower latency. 
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/8_vit_results.png" alt="Table comparing FOVI-DINOv3 variants with uniform, weak-FOVI, and log-polar baselines across accuracy, GFLOPs, latency, and memory." loading="lazy">
+      </figure>
+    </section>
+
+    <section class="story-section story-reveal" aria-labelledby="efficiency-title">
+      <div class="story-copy">
+        <h2 id="efficiency-title">Foveation matters most as resolution grows</h2>
+        <p>
+          Transformer attention becomes especially expensive at high image resolutions. FOVI keeps high acuity where it is needed for a fixation while limiting the number of sampled pixels and patches, making active high-resolution sensing more practical. This area remains to be explored in future work. 
+        </p>
+      </div>
+      <figure class="story-figure story-figure--wide">
+        <img src="assets/10_efficiency_vits.png" alt="Efficiency analyses showing GFLOPs scaling with image resolution, fixation count, and local sampling resolution." loading="lazy">
+      </figure>
+    </section>
+  </main>
 
   <footer class="outro" id="outro">
     <div class="outro-inner">
       <p class="outro-citation">
-        Blauch, N. M., Alvarez, G. A., &amp; Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. ICML.
+        Blauch, N. M., Alvarez, G. A., &amp; Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. Forty-Third International Conference on Machine Learning (ICML), Seoul, South Korea.
       </p>
       <nav class="outro-links" aria-label="Project links">
         <a href="https://arxiv.org/abs/2602.03766" target="_blank" rel="noopener noreferrer">paper</a>
         <span class="outro-links-sep" aria-hidden="true">·</span>
         <a href="https://github.com/nblauch/fovi" target="_blank" rel="noopener noreferrer">code</a>
+        <span class="outro-links-sep" aria-hidden="true">·</span>
+        <a href="https://huggingface.co/fovi-pytorch" target="_blank" rel="noopener noreferrer">models</a>
         <span class="outro-links-sep" aria-hidden="true">·</span>
         <a href="docs/">docs</a>
       </nav>

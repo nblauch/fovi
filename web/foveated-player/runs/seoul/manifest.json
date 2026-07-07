@@ -14,6 +14,9 @@
       "col": 0.1683782627299957,
       "views": {
         "flat": "flat-1.png",
+        "flat_schwartz": "flat-schwartz-1.png",
+        "manifold_3d": "manifold-3d-1.mp4",
+        "manifold_3d_plotly": "manifold-3d-1.json",
         "local_cartesian": "local-cartesian-1.png",
         "global_cartesian": "global-cartesian-1.png"
       }
@@ -24,6 +27,9 @@
       "col": 0.7147723906388863,
       "views": {
         "flat": "flat-2.png",
+        "flat_schwartz": "flat-schwartz-2.png",
+        "manifold_3d": "manifold-3d-2.mp4",
+        "manifold_3d_plotly": "manifold-3d-2.json",
         "local_cartesian": "local-cartesian-2.png",
         "global_cartesian": "global-cartesian-2.png"
       }
@@ -34,6 +40,9 @@
       "col": 0.9418880221190877,
       "views": {
         "flat": "flat-3.png",
+        "flat_schwartz": "flat-schwartz-3.png",
+        "manifold_3d": "manifold-3d-3.mp4",
+        "manifold_3d_plotly": "manifold-3d-3.json",
         "local_cartesian": "local-cartesian-3.png",
         "global_cartesian": "global-cartesian-3.png"
       }
@@ -44,6 +53,9 @@
       "col": 0.3847964188143906,
       "views": {
         "flat": "flat-4.png",
+        "flat_schwartz": "flat-schwartz-4.png",
+        "manifold_3d": "manifold-3d-4.mp4",
+        "manifold_3d_plotly": "manifold-3d-4.json",
         "local_cartesian": "local-cartesian-4.png",
         "global_cartesian": "global-cartesian-4.png"
       }
@@ -61,7 +73,7 @@
     "auto_match_cart_resources": true,
     "sigma": null,
     "no_color_val": false,
-    "isotropic_plotting_type": "schwartz",
+    "isotropic_plotting_type": "v1like",
     "res_mult": null,
     "cmf_a_mult": null,
     "k": null,
@@ -69,13 +81,16 @@
     "center_crop": false,
     "normalize": true,
     "image_height": 800,
-    "image_width": 1200
+    "image_width": 1200,
+    "manifold_video_fps": 15,
+    "manifold_video_duration": 3.0
   },
   "timing": {
     "fixation_reveal_ms": 900,
     "view_hold_ms": 1400,
     "view_order": [
       "global_cartesian",
+      "manifold_3d",
       "flat"
     ],
     "pause_between_fixations_ms": 400

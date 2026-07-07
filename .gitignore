@@ -1,3 +1,5 @@
+.fovi_demo_cache
+.DS_STORE
 docs/.github/
 docs/.nojekyll
 local_scripts
