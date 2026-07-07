@@ -51,7 +51,7 @@
           FOVI starts with a non-uniform sensor array: high sampling density at the center of gaze and fewer samples with increasing eccentricity. The key step is to reformat that array into a uniformly dense, curved sensor manifold, which can also be flattened into a V1-like map split across visual hemifields.
         </p>
         <p>
-          The sampling density follows a cortical magnification function, so it depends on eccentricity rather than polar angle. The visual samples are non-uniform in image space but approximately uniform on the sensor manifold, where neighborhoods can be defined consistently.
+          The video shows how expanding the samples into a third dimension allows for non-uniform density and uniform magnification to be converted into uniform density and non-uniform magnification - the same transformation seen from the retina to V1.
         </p>
       </div>
       <div class="manifold-triptych" aria-label="Sensor manifold transformation">
@@ -85,7 +85,16 @@
       <div class="story-copy">
         <h2 id="tradeoffs-title">Uniform high acuity has hard trade-offs</h2>
         <p>
-          If every location had foveal resolution, a large field of view would require a much larger representational surface, and thus much greater processing costs. With fixed constrained resources, uniform sampling either lowers resolution everywhere or preserves high resolution over only a tiny field of view. Foveation is a solution to this trade-off, providing graded resolution with a movable focus. 
+          So why foveation? 
+        </p>
+        <p>
+          One argument is based purely on efficiency. If every location in our field-of-view (FoV) had fovea-like resolution, a large FoV would require a much larger representational surface, and thus much greater processing costs. 
+        </p>
+        <p>
+          If we fix the size of V1 as a proxy for resource constraints and use uniform sampling, we could either lower resolution to keep the full FoV (equivalent to 20 deg peripheral resolution), preserve high resolution over only a tiny field of view (only 3 degrees), or do some combination.
+        </p>
+        <p>
+          Foveation is a different solution to this trade-off, where graded resolution can allow for both very high peak resolution, and a very large field-of-view, without blowing up the costs.
         </p>
       </div>
       <figure class="story-figure story-figure--wide">
@@ -120,11 +129,11 @@
       <div class="story-copy">
         <h2 id="architecture-title">The same interface supports CNNs and ViTs</h2>
         <p>
-          In a FOVI-CNN, kNN-convolutions build a hierarchy directly on the manifold. In a FOVI-ViT, kNN-convolution acts as a foveated patch embedding, allowing a pretrained transformer to receive foveated patches while the rest of the encoder stays largely familiar. Since the backbone is otherwise unchanged, this allows us to benefit from the pre-trained knowledge of ViT like DINOv3, while adapting it for foveation. 
+          In a FOVI-CNN, kNN-convolutions build a hierarchy directly on the manifold. In a FOVI-ViT, kNN-convolution acts as a foveated patch embedding, allowing a pretrained transformer to receive foveated patches while the rest of the encoder is architecturally unchanged. This allows us to benefit from the pre-trained knowledge of a ViT like DINOv3, while adapting it for foveation. 
         </p>
       </div>
       <figure class="story-figure story-figure--wide">
-        <img src="assets/5_foveated_arch.png" alt="FOVI architecture diagrams showing hierarchical kNN-convolution, manifold kernels, foveated patches, and DINOv3 adaptation." loading="lazy">
+        <img src="assets/5_foveated_arches.png" alt="FOVI architecture diagrams showing hierarchical kNN-convolution, manifold kernels, foveated patches, and DINOv3 adaptation." loading="lazy">
       </figure>
     </section>
 
@@ -156,7 +165,7 @@
       <div class="story-copy">
         <h2 id="vit-title">Foveated patchification adapts pretrained transformers</h2>
         <p>
-          FOVI can replace the standard patch embedding of a pretrained DINOv3 ViT with a foveated kNN-convolution-based patch embedding. With LoRA adaptation, the resulting models retain much of the full-resolution model's ImageNet accuracy while using far fewer sampled pixels and patches, less FLOPS, and lower latency. 
+          With LoRA adaptation to convert pre-trained DINOv3 models into lower-res foveated variants with a kNN-convolution patch embedding, the resulting models retain much of the full-resolution model's ImageNet accuracy while using far fewer sampled pixels and patches, less FLOPS, and lower latency.
         </p>
       </div>
       <figure class="story-figure story-figure--wide">
