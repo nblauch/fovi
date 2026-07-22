@@ -24,7 +24,7 @@ class LoRAParam(nn.Module):
         B (nn.Parameter): Low-rank factor B of shape (out_dim, r).
         A (nn.Parameter): Low-rank factor A of shape (r, in_dim).
     """
-    def __init__(self, weight_shape, r: int = 8, alpha: float = 8.0, init: str = "zeros", device='cuda'):
+    def __init__(self, weight_shape, r: int = 8, alpha: float = 8.0, init: str = "zeros", device='cuda', dtype=None):
         """Initialize LoRA parametrization.
         
         Args:
@@ -59,8 +59,8 @@ class LoRAParam(nn.Module):
             raise ValueError(f"Unsupported param shape {weight_shape}; expect (out,in) or (out,in,kH,kW).")
 
         # LoRA factors: B @ A has shape (out_dim, flat_in_dim)
-        self.B = nn.Parameter(torch.zeros(out_dim, r, device=device))
-        self.A = nn.Parameter(torch.zeros(r, self.flat_in_dim, device=device))
+        self.B = nn.Parameter(torch.zeros(out_dim, r, device=device, dtype=dtype))
+        self.A = nn.Parameter(torch.zeros(r, self.flat_in_dim, device=device, dtype=dtype))
 
         # Common in LoRA: B zeros, A random small, or both zeros. Here: A kaiming, B zeros.
         if init == "zeros":
@@ -95,7 +95,14 @@ def apply_lora(module: nn.Module, param_name: str = "weight", r: int = 8, alpha:
 
     # Parametrizations must initially live beside the parameter they transform.
     # The containing model may be moved to the requested training device later.
-    lora = LoRAParam(base.shape, r=r, alpha=alpha, init=init, device=base.device)
+    lora = LoRAParam(
+        base.shape,
+        r=r,
+        alpha=alpha,
+        init=init,
+        device=base.device,
+        dtype=base.dtype,
+    )
     P.register_parametrization(module, param_name, lora)
     return lora
 
