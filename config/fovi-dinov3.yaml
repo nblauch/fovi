@@ -5,6 +5,9 @@ defaults:
 
 model:
   arch: fovi_dinov3
+  # pooled: CLS only; tokens: CLS + registers + patches;
+  # patch_tokens: patches only.
+  output_mode: pooled
   arch_spec: base_lowres
   arch_flag: ''
   mlp: '1024'

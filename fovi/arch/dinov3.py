@@ -12,6 +12,23 @@ from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioni
 
 __all__ = []
 
+
+def _select_dinov3_output(output, output_mode, num_register_tokens):
+    """Select a tensor view from the native Hugging Face model output."""
+    if output_mode == 'pooled':
+        # Keep the established FOVI single-token sequence contract.
+        return output.pooler_output.unsqueeze(1)
+    if output_mode == 'tokens':
+        return output.last_hidden_state
+    if output_mode == 'patch_tokens':
+        num_prefix_tokens = 1 + num_register_tokens
+        return output.last_hidden_state[:, num_prefix_tokens:]
+    raise ValueError(
+        "cfg.model.output_mode must be 'pooled', 'tokens', or 'patch_tokens' "
+        f"(got {output_mode!r})."
+    )
+
+
 @add_to_all(__all__)
 def load_dinov3(path, device='cuda', pretrained=True):
     """Load a DinoV3 model and processor from Hugging Face.
@@ -124,8 +141,18 @@ def build_fovi_dinov3(cfg, device='cuda'):
     # create wrapper to make a fovinet model
     model.forward_head = lambda x: x # just replace the forward_head function with an identity mapper
 
-    model.forward_ = model.forward
-    model.forward = lambda x: model.forward_(x).pooler_output.unsqueeze(1)
+    output_mode = getattr(cfg.model, 'output_mode', 'pooled')
+    num_register_tokens = getattr(model.config, 'num_register_tokens', 0)
+    native_forward = model.forward
+
+    def forward(*args, **kwargs):
+        return _select_dinov3_output(
+            native_forward(*args, **kwargs),
+            output_mode,
+            num_register_tokens,
+        )
+
+    model.forward = forward
 
     model = prep_fovi_dinov3_finetuning(model, cfg, device=device)
 
