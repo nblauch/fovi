@@ -7,6 +7,9 @@ from scipy.optimize import minimize_scalar
 from .coords import find_desired_res
 from .samplers import GaussianKNNGridSampler, KNNGridSampler, GridSampler
 from ..utils import add_to_all
+from ..utils.fastaugs import transforms as fastT
+from ..utils.fastaugs import functional as fastF
+from ..utils.fastaugs import functional_tensor as fastFT
 
 __all__ = []
 
@@ -112,7 +115,12 @@ class RetinalTransform(nn.Module):
         self.dtype = dtype
 
         self.pre_transforms = pre_transforms
-        self.post_transforms = post_transforms    
+        self.post_transforms = post_transforms
+
+        # Whether the sample-then-augment fast path may be used when eligible
+        # (see _fast_pre_transforms_supported). Set to False to force the reference path.
+        self.fast_pre_transforms = True
+        self._padding_mask_src_cache = None
 
         self.scatter_sizes = self.sampler.coords.get_scatter_sizes().cpu().numpy()
 
@@ -120,27 +128,36 @@ class RetinalTransform(nn.Module):
     def forward(self, x, fix_loc, fixation_size=None, **kwargs):
         """
         Forward pass of the retinal transform.
-        
+
         Args:
             x (torch.Tensor): Input tensor.
             fix_loc (torch.Tensor or tuple): Fixation location.
             fixation_size (int, optional): Fixation size. Defaults to None.
             **kwargs: Additional arguments.
-            
+
         Returns:
             torch.Tensor: Transformed tensor.
         """
 
         # check fixation_size
         fixation_size = self._check_fixation_size(fixation_size, x.shape[0])
-            
+
         # check fix_loc
         fix_loc = self._check_fix_loc(fix_loc, x.shape[0])
-        
-        if self.pre_transforms is not None and self.training:
-            x = self.pre_transforms(x.clone())
 
-        x = self.sampler(x, fix_loc=fix_loc, fixation_size=fixation_size, **kwargs)
+        apply_pre = self.pre_transforms is not None and self.training
+        if apply_pre and not kwargs and self._fast_pre_transforms_supported():
+            # Fast path: sample first (nearest-neighbor), then apply the pointwise pre-warp
+            # transforms to the ~N sampled points instead of the full H x W image, once per
+            # fixation. Bit-exact with the reference path (see _sample_then_pre_transform)
+            # and consumes the RNG streams identically.
+            self._announce_pre_transform_execution(fast=True)
+            x = self._sample_then_pre_transform(x, fix_loc, fixation_size)
+        else:
+            if apply_pre:
+                self._announce_pre_transform_execution(fast=False)
+                x = self.pre_transforms(x.clone())
+            x = self.sampler(x, fix_loc=fix_loc, fixation_size=fixation_size, **kwargs)
 
         if self.post_transforms is not None and self.training:
             x = self.post_transforms(x.unsqueeze(3)).clone().squeeze(3)
@@ -155,6 +172,131 @@ class RetinalTransform(nn.Module):
             x = x.reshape(x.shape[0], x.shape[1], self.resolution, self.resolution)
 
         return x.to(self.dtype)
+
+    # ------------------------------------------------------------------
+    # Sample-then-augment fast path for pre-warp transforms
+    # ------------------------------------------------------------------
+
+    _FAST_PRE_TRANSFORM_TYPES = (fastT.RandomColorJitter, fastT.RandomGrayscale,
+                                 fastT.NormalizeGPU)
+
+    def _announce_pre_transform_execution(self, fast):
+        """One-time notice per decision, making the semantics/execution distinction
+        explicit: the ``transforms.where`` config declares SEMANTICS (pre_warp =
+        augmentations are defined on the full pre-warp image); the implementation is
+        free to choose any execution that preserves those semantics exactly, and
+        semantics-preserving post-warp execution (sample-then-augment) is preferred
+        because it touches ~11x fewer elements. Re-announces only if the decision
+        changes (e.g. transforms were swapped at runtime)."""
+        if getattr(self, '_announced_pre_transform_fast', None) == fast:
+            return
+        self._announced_pre_transform_fast = fast
+        names = [type(t).__name__ for t in getattr(self.pre_transforms, 'transforms', [])]
+        if fast:
+            print(
+                f"Note: pre_warp transforms {names} execute POST-warp (sample-then-augment) "
+                "with exact pre_warp semantics (bit-identical outputs and RNG streams). "
+                "pre_warp/post_warp declares semantics, not implementation; semantics-"
+                "preserving post-warp execution is preferred."
+            )
+        else:
+            reason = (
+                "fast_pre_transforms is disabled"
+                if not self.fast_pre_transforms
+                else "at least one transform/sampler is not on the verified "
+                "semantics-preserving allowlist for post-warp execution"
+            )
+            print(
+                f"Note: pre_warp transforms {names} execute on the full pre-warp image "
+                f"(reference path) - {reason} "
+                "(see RetinalTransform._fast_pre_transforms_supported)."
+            )
+
+    def _fast_pre_transforms_supported(self):
+        """The fast path requires (a) a plain nearest-neighbor GridSampler, so that sampling
+        commutes exactly with pointwise (per-pixel, per-image-parameter) transforms, and
+        (b) pre_transforms composed solely of such pointwise transforms.
+
+        Strict allowlist, checked by exact type: the container must be a plain
+        ``fastT.Compose`` (other containers such as ``RandomApply``/``MultiSample`` also
+        expose ``.transforms`` but have different call semantics), and every member must be
+        exactly one of the verified pointwise classes — no subclasses, whose overridden
+        behavior the fast path's replicated arithmetic would not reproduce. Anything else
+        (e.g., a future spatial transform in pre_transforms) falls back to the bit-exact
+        reference path rather than silently producing point-cloud-augmented results."""
+        if not self.fast_pre_transforms:
+            return False
+        if type(self.sampler) is not GridSampler or self.sampler.mode != 'nearest':
+            return False
+        if type(self.pre_transforms) is not fastT.Compose:
+            return False
+        return all(type(t) in self._FAST_PRE_TRANSFORM_TYPES for t in self.pre_transforms.transforms)
+
+    def _random_grayscale_points(self, s4, idx, num_output_channels):
+        """Same arithmetic as ``fastF.random_grayscale`` (ITU-R 601-2 luma, index_copy on the
+        selected images), but with the 3-element luma weights cached on-device instead of an
+        H2D copy per call."""
+        weights = getattr(self, '_grayscale_weights', None)
+        if weights is None or weights.device != s4.device:
+            weights = fastF.grayscale[None, :, :, :].to(s4.device)
+            self._grayscale_weights = weights
+        sel = s4.index_select(0, idx)
+        L = (sel * weights).sum(dim=1, keepdim=True).to(dtype=sel.dtype)
+        if num_output_channels == 3:
+            L = torch.cat(3 * [L], dim=1)
+        return s4.index_copy(0, idx, L)
+
+    def _padding_mask_src(self, x):
+        """(B,1,H,W) ones (batch-expanded view of a cached (1,1,H,W) tensor) used to mark
+        which sampled points fall inside the image (grid_sample zero-pads outside)."""
+        key = (x.shape[-2], x.shape[-1], x.device, x.dtype)
+        cached = self._padding_mask_src_cache
+        if cached is None or cached[0] != key:
+            ones = torch.ones(1, 1, x.shape[-2], x.shape[-1], device=x.device, dtype=x.dtype)
+            self._padding_mask_src_cache = (key, ones)
+            cached = self._padding_mask_src_cache
+        return cached[1].expand(x.shape[0], 1, x.shape[-2], x.shape[-1])
+
+    def _sample_then_pre_transform(self, x, fix_loc, fixation_size):
+        """Equivalent to ``self.sampler(self.pre_transforms(x.clone()), ...)`` for a
+        nearest-neighbor GridSampler and pointwise pre_transforms, but ~10x cheaper:
+        the image is sampled once, and the transforms run on the (B, C, N) point cloud.
+
+        Exactness notes (all verified bit-exact against the reference path):
+        - nearest-neighbor sampling selects pixel values, so pointwise ops commute with it;
+        - the contrast-jitter reference mean is a full-image statistic and is still computed
+          on the (brightness-adjusted) full image, exactly as FT.adjust_contrast does;
+        - grid_sample zero-pads out-of-bounds points AFTER the transforms in the reference
+          path, so the transformed samples are re-masked with a grid-sampled ones image;
+        - RNG draws (bernoulli masks + per-image jitter parameters) have identical shapes
+          and order, leaving the CUDA generator stream identical to the reference path.
+        """
+        grid = self.sampler._transform_fix_grid(x.shape[-2:], fix_loc, fixation_size)
+        sampled = torch.nn.functional.grid_sample(
+            x, grid, mode=self.sampler.mode, align_corners=False).squeeze(2)
+        mask = torch.nn.functional.grid_sample(
+            self._padding_mask_src(x), grid, mode=self.sampler.mode,
+            align_corners=False).squeeze(2)
+
+        s4 = sampled.unsqueeze(3)  # (B, C, N, 1): a 4D "image" for the batch transforms
+        for t in self.pre_transforms.transforms:
+            if isinstance(t, fastT.RandomColorJitter):
+                # same RNG consumption as t(full_image): bernoulli(B) + 4 x uniform(len(idx))
+                t.before_call(s4)
+                idx = t.idx
+                sel = s4.index_select(0, idx)
+                full_sel = x.index_select(0, idx)
+                sel = _color_jitter_points(sel, full_sel, t.h, t.s, t.v, t.c)
+                s4 = s4.index_copy(0, idx, sel.to(dtype=s4.dtype))
+            elif isinstance(t, fastT.RandomGrayscale):
+                t.before_call(s4)
+                s4 = self._random_grayscale_points(s4, t.idx, t.num_output_channels)
+            elif isinstance(t, fastT.NormalizeGPU):
+                s4 = t(s4)
+            else:  # pragma: no cover - guarded by _fast_pre_transforms_supported
+                raise RuntimeError(f'unsupported pre_transform for fast path: {t}')
+
+        return s4.squeeze(3) * mask
 
     def change_sigma(self, sigma):
         """
@@ -177,14 +319,32 @@ class RetinalTransform(nn.Module):
     def _check_fixation_size(self, fixation_size, batch_size):
         """
         Validate and format fixation size for batch processing.
-        
+
         Args:
-            fixation_size (int, tuple, or None): Fixation size specification.
+            fixation_size (int, tuple, torch.Tensor, or None): Fixation size specification.
             batch_size (int): Number of samples in the batch.
-            
+
         Returns:
-            np.ndarray: Formatted fixation size array of shape (batch_size, 2).
+            np.ndarray or torch.Tensor: Formatted fixation size of shape (batch_size, 2).
+            Tensor inputs stay tensors on their device (no host round-trip / device sync).
         """
+        if isinstance(fixation_size, torch.Tensor):
+            # pure-tensor handling: never .cpu()/.numpy() a (possibly CUDA) tensor here
+            fixation_size = fixation_size.squeeze()
+            if fixation_size.dim() <= 1:
+                fixation_size = fixation_size.reshape(-1)
+                if fixation_size.shape[0] == 2:
+                    fixation_size = fixation_size.unsqueeze(0).expand(batch_size, 2)
+                elif fixation_size.shape[0] == batch_size:
+                    fixation_size = fixation_size.unsqueeze(1).expand(batch_size, 2)
+                else:
+                    raise ValueError(f'fixation_size shape: {tuple(fixation_size.shape)}')
+            else:
+                assert fixation_size.shape[0] == batch_size
+            # move small CPU fixation sizes to the sampling device here (once) rather than
+            # inside the per-fixation grid transform
+            return fixation_size.to(self.device)
+
         if fixation_size is None or (isinstance(fixation_size, str) and fixation_size == 'none'):
             if hasattr(self.fixation_size, '__len__'):
                 fixation_size = np.array(self.fixation_size)
@@ -192,10 +352,8 @@ class RetinalTransform(nn.Module):
                 fixation_size = np.array([self.fixation_size, self.fixation_size])
         elif isinstance(fixation_size, int) or isinstance(fixation_size, float):
             fixation_size = np.array([fixation_size, fixation_size])
-        elif hasattr(fixation_size, '__len__') and len(fixation_size) == 2:
+        elif hasattr(fixation_size, '__len__'):
             fixation_size = np.array(fixation_size)
-        elif isinstance(fixation_size, torch.Tensor):
-            fixation_size = fixation_size.cpu().numpy()
         fixation_size = fixation_size.squeeze()
         if len(fixation_size.shape) == 1:
             if fixation_size.shape[0] == 2:
@@ -206,26 +364,34 @@ class RetinalTransform(nn.Module):
                 raise ValueError(f'fixation_size shape: {fixation_size.shape}')
         else:
             assert fixation_size.shape[0] == batch_size
-        
+
         return fixation_size
 
     def _check_fix_loc(self, fix_loc, batch_size):
         """
         Validate and format fixation location for batch processing.
-        
+
         Args:
             fix_loc (tuple, list, torch.Tensor, or None): Fixation location specification.
             batch_size (int): Number of samples in the batch.
-            
+
         Returns:
             torch.Tensor: Formatted fixation location tensor of shape (batch_size, 2).
         """
+        if isinstance(fix_loc, torch.Tensor):
+            # pure-tensor handling: the previous .cpu().numpy() round-trip forced a device
+            # sync per fixation for CUDA fixations on the training hot path
+            fix_loc = fix_loc.squeeze()
+            if fix_loc.dim() <= 1:
+                fix_loc = fix_loc.reshape(-1).unsqueeze(0).expand(batch_size, -1)
+            else:
+                assert fix_loc.shape[0] == batch_size
+            return fix_loc.to(device=self.device, dtype=self.dtype)
+
         if fix_loc is None:
             fix_loc = np.array([0.5, 0.5])
         elif isinstance(fix_loc, float) or isinstance(fix_loc, int):
             fix_loc = np.array([fix_loc, fix_loc])
-        elif isinstance(fix_loc, torch.Tensor):
-            fix_loc = fix_loc.cpu().numpy()
         elif isinstance(fix_loc, list) or isinstance(fix_loc, tuple):
             fix_loc = np.array(fix_loc)
         if len(fix_loc.squeeze().shape) == 1:
@@ -291,6 +457,48 @@ class RetinalTransform(nn.Module):
             fix_h = (area / aspect_ratio) ** 0.5
             fixation_size = np.stack((fix_h, fix_w), axis=1)
         return fixation_size
+
+def _color_jitter_points(pts, full_sel, hue, sat, val, con):
+    """Replicate ``fastFT.color_jitter`` (brightness -> contrast -> saturation -> hue) on
+    nearest-sampled points instead of full images.
+
+    Args:
+        pts (torch.Tensor): (n, 3, N, 1) sampled points of the selected images.
+        full_sel (torch.Tensor): (n, 3, H, W) the corresponding full images; needed only for
+            the contrast-jitter reference mean, which is a full-image statistic.
+        hue/sat/val/con (torch.Tensor or None): per-image factors of shape (n,), exactly as
+            drawn by RandomColorJitter.before_call.
+
+    Every operation is the same arithmetic as the corresponding ``fastFT.adjust_*`` call on
+    the full image (bit-exact), evaluated only at the sampled points. The wrapper asserts of
+    the ``adjust_*`` functions (``.any()``/``.all()`` device syncs) are intentionally skipped.
+    """
+    if val is not None:
+        v4 = val[:, None, None, None]
+        pts = fastFT._blend(pts, torch.zeros_like(pts), v4)
+    if con is not None:
+        c4 = con[:, None, None, None]
+        if val is not None:
+            # brightness-adjusted full image; _blend(img, zeros, v) == clamp(v * img, 0, 1)
+            full_b = full_sel.mul(val[:, None, None, None]).clamp_(0.0, 1.0)
+        else:
+            full_b = full_sel
+        mean = torch.mean(fastFT.rgb_to_grayscale(full_b).to(pts.dtype),
+                          dim=(-3, -2, -1), keepdim=True)
+        pts = fastFT._blend(pts, mean, c4)
+    if sat is not None:
+        s4 = sat[:, None, None, None]
+        pts = fastFT._blend(pts, fastFT.rgb_to_grayscale(pts), s4)
+    if hue is not None:
+        h3 = hue[:, None, None]
+        if not pts.is_contiguous():
+            pts = pts.contiguous()
+        pts = fastFT._rgb2hsv_fast(pts)  # in-place on pts (owned copy)
+        h_chan = pts.select(dim=-3, index=0)
+        h_chan.add_(h3).fmod_(1.0)
+        pts = fastFT._hsv2rgb_fast(pts)
+    return pts
+
 
 @add_to_all(__all__)
 def min_diff_for_cmf_a(cmf_a, fov, output_res, fixation_size, force_n_points=None, disallow_undersampling=True, force_less_than=False, device='cuda'):

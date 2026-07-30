@@ -4,6 +4,7 @@ import numpy as np
 
 from .knn import KNNConvLayer, KNNPoolingLayer, get_in_out_coords
 from .norm import get_norm
+from ..sensing.coords import auto_match_num_coords
 from ..utils import add_to_all
 
 __all__ = []
@@ -11,11 +12,11 @@ __all__ = []
 @add_to_all(__all__)
 class KNNResNetBasicBlock(nn.Module):
     """Basic block for KNN-based ResNet architecture.
-    
+
     This block implements a residual connection with two KNN convolution layers,
     following the standard ResNet basic block design but using KNN convolutions
     instead of standard convolutions.
-    
+
     Args:
         in_channels (int): Number of input channels.
         out_channels (int): Number of output channels.
@@ -32,22 +33,41 @@ class KNNResNetBasicBlock(nn.Module):
         arch_flag (str, optional): Architecture flag. Defaults to ''.
         sample_cortex (bool, optional): Whether to sample cortex. Defaults to True.
         device (str, optional): Device to use. Defaults to 'cuda'.
-        auto_match_cart_resources (int, optional): Auto-match cartesian resources. 
+        auto_match_cart_resources (int, optional): Auto-match cartesian resources.
             Defaults to 0.
     """
+
+    # Channel expansion factor on the class, matching the torchvision convention:
+    # KNNResNet reads ``block.expansion`` before any block is instantiated.
+    expansion = 1
     def __init__(self, in_channels, out_channels, k, in_res, stride,
-                 fov, cmf_a, 
+                 fov, cmf_a,
                  style='isotropic', conv_layer=KNNConvLayer, cart_res=None,
                  norm_type='batch', arch_flag='',
-                 sample_cortex=True, 
+                 sample_cortex=True,
                  device='cuda', auto_match_cart_resources=0,
                  isotropic_plotting_type='v1like',
+                 ref_frame_mult=1,
                  ):
         super().__init__()
 
         self.expansion = 1
 
-        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
+        # Higher-resolution reference frames (V > K) for the k>1 convs, matching the
+        # KNNAlexNet convention: side_length = ceil(ref_frame_mult * sqrt(k)). The
+        # default (1) reproduces the historical KNNResNet behavior exactly; the k=1
+        # downsample conv is always exempt (a single-tap conv has no grid to refine,
+        # and V=1 keeps it on the gather_gemm fast path).
+        if ref_frame_mult != 1:
+            assert not len(arch_flag), 'ref_frame_mult is incompatible with arch_flag'
+        self.ref_frame_mult = ref_frame_mult
+
+        def _rfl(k_conv):
+            if ref_frame_mult == 1 or k_conv <= 1:
+                return None
+            return int(np.ceil(ref_frame_mult * np.sqrt(k_conv)))
+
+        self.in_coords, self.out_coords, self.out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
 
         # first conv does the stride to out_coords
         self.conv1 = conv_layer(
@@ -59,6 +79,7 @@ class KNNResNetBasicBlock(nn.Module):
             sample_cortex=sample_cortex,
             arch_flag=arch_flag,
             device=device,
+            ref_frame_side_length=_rfl(k),
         )
 
         self.norm1 = get_norm(norm_type, len(self.out_coords), out_channels)
@@ -73,6 +94,7 @@ class KNNResNetBasicBlock(nn.Module):
             sample_cortex=sample_cortex,
             arch_flag=arch_flag,
             device=device,
+            ref_frame_side_length=_rfl(k),
         )
 
         self.norm2 = get_norm(norm_type, len(self.out_coords), out_channels)
@@ -178,6 +200,7 @@ class KNNResNet(nn.Module):
                  auto_match_cart_resources=0,
                  num_classes=None,
                  isotropic_plotting_type='v1like',
+                 ref_frame_mult=1,
                  ):
         super(KNNResNet, self).__init__()
 
@@ -203,11 +226,15 @@ class KNNResNet(nn.Module):
             device=device,
             auto_match_cart_resources=auto_match_cart_resources,
             isotropic_plotting_type=isotropic_plotting_type,
+            ref_frame_mult=ref_frame_mult,
         )
 
-        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, in_conv_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=None, isotropic_plotting_type=isotropic_plotting_type)
-        
-        # always use KNNConvLayer for the first conv
+        in_res, cart_res = auto_match_num_coords(fov, cmf_a, in_res, style, auto_match_cart_resources, device, quiet=True)
+        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, in_conv_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, isotropic_plotting_type=isotropic_plotting_type)
+
+        # always use KNNConvLayer for the first conv; higher-res reference frame per
+        # ref_frame_mult (side = ceil(mult * sqrt(k)), the KNNAlexNet convention)
+        self.ref_frame_mult = ref_frame_mult
         self.conv1 = KNNConvLayer(
             in_channels=3,
             out_channels=self.in_channels,
@@ -215,6 +242,9 @@ class KNNResNet(nn.Module):
             in_coords=self.in_coords,
             out_coords=self.out_coords,
             sample_cortex=sample_cortex,
+            ref_frame_side_length=(
+                None if ref_frame_mult == 1 else int(np.ceil(ref_frame_mult * np.sqrt(49)))
+            ),
         )
         
         self.bn1 = get_norm(norm_type, len(self.out_coords), self.in_channels)
@@ -245,9 +275,9 @@ class KNNResNet(nn.Module):
         if out_res is not None and out_res != -1:
             cart_res = out_res
 
+            in_coords = self.out_coords
             out_coords, out_radii, cart_res = in_coords.get_strided_coords(1, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res)
 
-            in_coords = self.out_coords
             self.out_coords = out_coords
             
             # set k to twice the downsampling factor squared - heuristic choice
@@ -264,12 +294,13 @@ class KNNResNet(nn.Module):
             self.avgpool = None
 
 
-        # linear layer for classification
-        if num_classes is not None:
-            self.fc = nn.Linear(self.out_channels * block.expansion, num_classes)
+        # convenience access to total number of output units
+        self.total_embed_dim = self.out_channels * block.expansion * self.out_coords.shape[0]
 
-        # convenience access to total number of outputs units
-        self.total_embed_dim = self.out_channels * self.out_coords.shape[0]
+        # linear layer for classification: the forward flattens one entry per output
+        # coordinate, and even an out_res=1 grid may hold more than one node.
+        if num_classes is not None:
+            self.fc = nn.Linear(self.total_embed_dim, num_classes)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         """Create a layer with the specified number of blocks.
@@ -283,14 +314,16 @@ class KNNResNet(nn.Module):
         Returns:
             nn.Sequential: Sequential container with the layer blocks.
         """
-        layers = [block(self.in_channels, planes, 9, self.in_res, stride, **self.block_kwargs)]
+        layers = [block(self.in_channels, planes, 9, self.in_res, stride, cart_res=self.cart_res, **self.block_kwargs)]
         self.in_channels = planes * layers[0].expansion
 
         self.in_res = layers[0].out_coords.resolution
+        self.cart_res = layers[0].out_cart_res
 
         for _ in range(1, blocks):
-            layers.append(block(self.in_channels, planes, 9, self.in_res, 1, **self.block_kwargs))
+            layers.append(block(self.in_channels, planes, 9, self.in_res, 1, cart_res=self.cart_res, **self.block_kwargs))
             self.in_res = layers[-1].out_coords.resolution
+            self.cart_res = layers[-1].out_cart_res
 
         return nn.Sequential(*layers)
     

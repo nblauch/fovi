@@ -99,5 +99,53 @@ open docs/_build/html/index.html
 python -m http.server 8000 --directory docs/_build/html
 ```
 
+## ⚡ Benchmarking: optimized vs baseline
+
+FOVI's **KNN convolution and KNN pooling** ship with optimized CUDA kernels (selected
+automatically); this is the optimization under test.
+`benchmarks/benchmark_final_comparison.py` is the single entry point that measures what
+they buy you — every FOVI model variant runs in two arms (`baseline` = the reference
+conv/pool kernels, `optimized` = the shipped optimized conv/pool kernels, with
+output-parity columns) against two clearly-labeled dense references:
+
+- **dense@64** — the matched *reduced-resolution* alternative design (torchvision
+  ResNet18, a dense low-res AlexNet, a dense stride-8-patch ViT), run one warped-input
+  pass per fixation (matched sample count).
+- **dense@256** — the *native-resolution* pipeline a non-foveated system needs
+  (ResNet18/AlexNet/ViT-S+16 on the full 256x256 image), run exactly **once per image**:
+  the foveated design trades one expensive full-res pass for a few cheap glances, so
+  cells are labeled `(images, n_fixations)` and per-image columns are emitted so you can
+  apply either normalization.
+
+```bash
+# from the repo root (defaults: all 5 variants, 10 & 128 images, 1 & 4 fixations,
+# train + inference, both dense references). Write both report formats alongside:
+python benchmarks/benchmark_final_comparison.py --device 0 \
+    --report-out results.md --html-out results.html
+
+# a quick look at one model:
+python benchmarks/benchmark_final_comparison.py --models resnet18_rf1 --batch 10 --repeats 5
+
+# render reports from already-collected JSON (one file per GPU), no re-benchmarking:
+python benchmarks/benchmark_final_comparison.py \
+    --report-from run_ada.jsonl run_h100.jsonl --html-out results.html
+```
+
+Output: one JSON-lines record per cell (timings under both protocols — CUDA-event
+median/min and wall throughput — memory, parity vs the baseline arm, per-layer backend
+routing), followed by a printed summary table with `xd@64` and `xd@256` speed ratios.
+`--report-out` writes a human-readable Markdown summary; `--html-out` writes a
+self-contained interactive page (select batch, fixations, train/inference, and the dense
+baseline — dense@64 tracks the fixation count, dense@256 is always one native pass — with
+color-coded cost-ratio and speedup tables across all GPUs). `--report-from` renders either
+format from existing JSON without re-running.
+Useful knobs: `--cache-dir` points model loading at a local Hugging Face cache (offline
+friendly); env vars `FOVI_KNN_BACKEND=baseline`, `FOVI_KNN_POOL_BACKEND=baseline`, and
+`FOVI_KNN_WORK_THRESHOLD` override backend selection globally. Missing optional
+dependencies (cupy/warp) degrade gracefully and are annotated in the output. The harness
+itself is the reproducible evidence — run the commands above to regenerate every number
+on your own hardware; final published results will live in the project's PR/release
+notes.
+
 ## 🏛️ Citation
 Blauch, N. M., Alvarez, G. A., & Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. https://arxiv.org/abs/2602.03766

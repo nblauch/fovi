@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -7,6 +9,11 @@ from scipy.spatial import Delaunay
 
 from ..sensing.coords import SamplingCoords, auto_match_num_coords
 from ..utils import normalize, add_to_all
+from .knn_optimization import VALID_BACKENDS, clear_cache, optimized_forward
+
+# Lazy handle for the optional fused pooling backend (requires cupy); resolved on
+# first CUDA pooling forward, None-cached if unavailable so we never retry the import.
+_optimized_pool_forward = False  # False = unresolved, None = unavailable
 
 __all__ = []
 
@@ -352,6 +359,22 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
         Returns:
             torch.Tensor: Pooled features of shape [batch_size, channels, num_output_nodes].
         """
+        # Optimized fused gather+reduce backend; returns None on ineligible
+        # mode/dtype/shape and we fall through to the reference implementation below.
+        global _optimized_pool_forward
+        if X_l.is_cuda and os.environ.get("FOVI_KNN_POOL_BACKEND", "auto") != "baseline":
+            if _optimized_pool_forward is False:
+                try:
+                    from .knn_pool_cuda import optimized_pool_forward as _hook
+
+                    _optimized_pool_forward = _hook
+                except ImportError:
+                    _optimized_pool_forward = None
+            if _optimized_pool_forward is not None:
+                optimized = _optimized_pool_forward(self, X_l)
+                if optimized is not None:
+                    return optimized
+
         # pad X_l with a single nan-value that will be indexed by padding units
         X_l = torch.concatenate([X_l, torch.nan*torch.zeros(X_l.shape[0], X_l.shape[1], 1, device=X_l.device, dtype=X_l.dtype)], dim=2)
 
@@ -418,6 +441,11 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         ref_frame_side_length (int, optional): Manual specification of reference frame side length.
         batch_size (int, optional): Number of output coordinates to process at once for memory efficiency.
                                    If None, uses a default based on available memory.
+        kernel_backend (str): Compute backend. ``auto`` picks per mode: at inference,
+                              cached backends (``torch_cached``/``warp_cached``/``warp_memory``);
+                              with gradients enabled, training-capable backends
+                              (``torch_scatter``/``torch_compact`` and registered kernel
+                              backends). ``baseline`` forces the reference path everywhere.
     """
     
     def __init__(self, in_channels, out_channels, k, in_coords, out_coords, 
@@ -427,6 +455,7 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
                  bias=False,
                  ref_frame_side_length=None,
                  batch_size=None,
+                 kernel_backend='auto',
                  ):
         super().__init__()
         self.in_channels = in_channels
@@ -439,6 +468,11 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         self.sample_cortex = sample_cortex
         self.ref_frame_side_length = ref_frame_side_length # if we want to specify manually
         self.batch_size = batch_size
+        if kernel_backend not in VALID_BACKENDS:
+            raise ValueError(
+                f"Unknown KNN kernel backend {kernel_backend!r}; expected one of {sorted(VALID_BACKENDS)}"
+            )
+        self.kernel_backend = kernel_backend
         
         assert isinstance(in_coords, SamplingCoords) and isinstance(out_coords, SamplingCoords)
 
@@ -546,15 +580,27 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
             torch.Tensor: Node features from layer l+1 [batch, d_l+1, N_l+1]
         """
         
+        optimized = optimized_forward(self, X_l)
+        if optimized is not None:
+            return optimized
+
         knn_features = self._pad_and_gather_knns(X_l)
 
         # apply local RF.  shape: [batch, d_l, k, num_coords] -> [batch, d_l, v, n], where v is the number of reference coordinates
         knn_features = self._apply_local_rf(knn_features)
         
-        # Apply the shared linear transformation to map to d_l+1 features
-        X_out = F.linear(knn_features, self.weight, self.bias).transpose(1,2)  # Shape: [batch, d_l+1, num_coords]
+        # Apply the shared linear transformation to map to d_l+1 features.
+        # contiguous() is a no-op on the common shapes, but the einsum->rearrange chain
+        # can yield a zero-copy batch-strided VIEW here, which matmul dispatches as a
+        # degenerate strided-batched GEMM up to ~50x slower than the contiguous fold
+        # on tiny-Nout/large-Cin*V cells.
+        X_out = F.linear(knn_features.contiguous(), self.weight, self.bias).transpose(1,2)  # Shape: [batch, d_l+1, num_coords]
         
         return X_out
+
+    def clear_optimized_cache(self):
+        """Release derived compact indices and inference-only effective weights."""
+        clear_cache(self)
 
     def compute_reference_coords(self, arch_flag):
         """

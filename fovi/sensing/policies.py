@@ -128,6 +128,49 @@ class BaseSaccadePolicy(nn.Module):
 
         return fixation, fixation_size
 
+    def get_random_nearcenter_fixations_batch(self, height, width, scale, ratio, normalized_dist_from_center, n):
+        """Vectorized version of ``get_random_nearcenter_fixation`` for a whole batch.
+
+        Draws from the global numpy RNG in exactly the same order and quantity as ``n``
+        sequential calls to ``get_random_nearcenter_fixation`` (bitwise-identical results at
+        a fixed seed), but without the per-sample Python loop.
+
+        Returns:
+            tuple:
+                - np.ndarray: (n, 2) normalized fixation centers [y, x]
+                - np.ndarray: (n, 2) integer fixation sizes [h, w]
+        """
+        area = height * width
+        has_area = hasattr(scale, '__len__')
+        has_ratio = hasattr(ratio, '__len__')
+        # per-sample draw order: [area?, ratio?, fix_y, fix_x]; np.random.uniform(low, high)
+        # consumes exactly one double, and random_sample fills C-order, so one (n, k) draw
+        # reproduces the sequential per-sample stream exactly
+        k = 2 + int(has_area) + int(has_ratio)
+        raw = np.random.random_sample((n, k))
+        col = 0
+        if has_area:
+            target_area = area * (scale[0] + (scale[1] - scale[0]) * raw[:, col])
+            col += 1
+        else:
+            target_area = np.full(n, area * scale, dtype=np.float64)
+        if has_ratio:
+            log_ratio = np.log(ratio)
+            aspect_ratio = np.exp(log_ratio[0] + (log_ratio[1] - log_ratio[0]) * raw[:, col])
+            col += 1
+        else:
+            aspect_ratio = ratio
+
+        w = np.round(np.sqrt(target_area * aspect_ratio)).astype(np.int64)
+        h = np.round(np.sqrt(target_area / aspect_ratio)).astype(np.int64)
+        fixation_sizes = np.stack([h, w], axis=1)
+
+        min_frac = 0.5 - normalized_dist_from_center
+        max_frac = 0.5 + normalized_dist_from_center
+        fixations = min_frac + (max_frac - min_frac) * raw[:, col:col + 2]
+
+        return fixations, fixation_sizes
+
     def sample_fixations(self, img_size, n=1, area_range=None, ratio=None, norm_dist_from_center=None):
         """
         Sample multiple fixations for batch processing.
@@ -148,17 +191,19 @@ class BaseSaccadePolicy(nn.Module):
             area_range = self.crop_area_range if self.training else self.val_crop_size
         if ratio is None:
             ratio = self.crop_aspect_range if self.training else 1
-        fixations = []
-        fixation_sizes = []
-        for _ in range(n):
-            if norm_dist_from_center is not None:
-                fixation, fixation_size = self.get_random_nearcenter_fixation(img_size[0], img_size[1], scale=area_range, ratio=ratio, 
-                    normalized_dist_from_center=norm_dist_from_center,
-                    )
-            else:
+        if norm_dist_from_center is not None:
+            # vectorized batch sampling (bitwise-identical draws to the per-sample loop)
+            fixations, fixation_sizes = self.get_random_nearcenter_fixations_batch(
+                img_size[0], img_size[1], scale=area_range, ratio=ratio,
+                normalized_dist_from_center=norm_dist_from_center, n=n)
+        else:
+            # get_random_crop uses a data-dependent rejection loop; keep the sequential path
+            fixations = []
+            fixation_sizes = []
+            for _ in range(n):
                 fixation, fixation_size = self.get_random_crop(img_size[0], img_size[1], scale=area_range, ratio=ratio)
-            fixations.append(fixation)
-            fixation_sizes.append(fixation_size)
+                fixations.append(fixation)
+                fixation_sizes.append(fixation_size)
         fixations = torch.tensor(fixations, dtype=self.dtype, device=self.device)
         fixation_sizes = torch.tensor(fixation_sizes)
         return fixations, fixation_sizes
