@@ -5,7 +5,8 @@ defaults:
 
 model:
   arch: fovi_dinov3
-  # Expose either the pooled CLS representation or spatial patch tokens.
+  # pooled: CLS only; tokens: CLS + registers + patches;
+  # patch_tokens: patches only.
   output_mode: pooled
   arch_spec: base_lowres
   arch_flag: ''
