@@ -125,7 +125,22 @@ def build_fovi_dinov3(cfg, device='cuda'):
     model.forward_head = lambda x: x # just replace the forward_head function with an identity mapper
 
     model.forward_ = model.forward
-    model.forward = lambda x: model.forward_(x).pooler_output.unsqueeze(1)
+    output_mode = getattr(cfg.model, 'output_mode', 'pooled')
+    if output_mode == 'pooled':
+        # Preserve the established FOVI projector-head contract.
+        model.forward = lambda x: model.forward_(x).pooler_output.unsqueeze(1)
+    elif output_mode == 'patch_tokens':
+        # DINOv3 orders CLS, register, then spatial patch tokens.
+        num_prefix_tokens = 1 + getattr(model.config, 'num_register_tokens', 0)
+        model.forward = (
+            lambda x, _start=num_prefix_tokens:
+            model.forward_(x).last_hidden_state[:, _start:]
+        )
+    else:
+        raise ValueError(
+            "cfg.model.output_mode must be 'pooled' or 'patch_tokens' "
+            f"(got {output_mode!r})."
+        )
 
     model = prep_fovi_dinov3_finetuning(model, cfg, device=device)
 
