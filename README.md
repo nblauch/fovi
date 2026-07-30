@@ -108,9 +108,10 @@ they buy you — every FOVI model variant runs in two arms (`baseline` = the ref
 conv/pool kernels, `optimized` = the shipped optimized conv/pool kernels, with
 output-parity columns) against two clearly-labeled dense references:
 
-- **dense@64** — the matched *reduced-resolution* alternative design (torchvision
-  ResNet18, a dense low-res AlexNet, a dense stride-8-patch ViT), run one warped-input
-  pass per fixation (matched sample count).
+- **logpolar@64** — the matched foveated *control*: the same fixations, retina, and
+  augmentation feeding a standard Conv2d/ViT (a log-polar-warped 64x64 input, with the
+  necessary circular padding) instead of KNNConv, so only the backbone differs from the
+  foveated model — run one warped pass per fixation (matched sample count).
 - **dense@256** — the *native-resolution* pipeline a non-foveated system needs
   (ResNet18/AlexNet/ViT-S+16 on the full 256x256 image), run exactly **once per image**:
   the foveated design trades one expensive full-res pass for a few cheap glances, so
@@ -135,10 +136,10 @@ Output: one JSON-lines record per cell (timings under both protocols — CUDA-ev
 median/min and wall throughput — memory, parity vs the baseline arm, per-layer backend
 routing), followed by a printed summary table with `xd@64` and `xd@256` speed ratios.
 `--report-out` writes a human-readable Markdown summary; `--html-out` writes a
-self-contained interactive page (select batch, fixations, train/inference, and the dense
-baseline — dense@64 tracks the fixation count, dense@256 is always one native pass — with
-color-coded cost-ratio and speedup tables across all GPUs). `--report-from` renders either
-format from existing JSON without re-running.
+self-contained interactive page (select batch, fixations, train/inference, scope, and the
+reference — logpolar@64 tracks the fixation count, dense@256 is always one native pass —
+with color-coded speedup tables across all GPUs). `--report-from` renders either format
+from existing JSON without re-running.
 Useful knobs: `--cache-dir` points model loading at a local Hugging Face cache (offline
 friendly); env vars `FOVI_KNN_BACKEND=baseline`, `FOVI_KNN_POOL_BACKEND=baseline`, and
 `FOVI_KNN_WORK_THRESHOLD` override backend selection globally. Missing optional
@@ -149,3 +150,12 @@ notes.
 
 ## 🏛️ Citation
 Blauch, N. M., Alvarez, G. A., & Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. https://arxiv.org/abs/2602.03766
+
+## 🙏 Acknowledgements
+Originally developed at the Kempner Institute at Harvard University. Ongoing support provided by NVIDIA.
+
+<p align="left">
+  <a href="https://kempnerinstitute.harvard.edu/"><img src="web/foveated-player/assets/kempner-logo.png" alt="Kempner Institute at Harvard University" height="46"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://www.nvidia.com/"><img src="web/foveated-player/assets/nvidia-logo.svg" alt="NVIDIA" height="40"></a>
+</p>
