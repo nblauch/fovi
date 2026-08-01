@@ -132,7 +132,7 @@ def resnet(cfg, layers, device='cuda'):
         nn.Module: The configured ResNet model.
     """
     mlp_kwargs = dict(mlp=cfg.model.mlp, dropout=partial(nn.Dropout, p=cfg.model.dropout), dropout_all=cfg.model.dropout_all)
-    backbone_kwargs = dict(channel_mult=cfg.modelchannel_mult) # multiply # of channels in each layer by this factor
+    backbone_kwargs = dict(channel_mult=cfg.model.channel_mult) # multiply # of channels in each layer by this factor
 
     if 'batch' in cfg.model.norm:
         backbone_kwargs.update(norm_layer = lambda channels: nn.BatchNorm2d(channels))
@@ -219,6 +219,7 @@ def fovi_resnet(cfg,
                  auto_match_cart_resources=cfg.saccades.auto_match_cart_resources,
                  num_classes=None,
                  isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
+                 ref_frame_mult=getattr(cfg.model, 'ref_frame_mult', 1) or 1,
         )
 
     return arch_wrapper(knn, cfg, device=device)

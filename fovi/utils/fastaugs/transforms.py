@@ -367,14 +367,16 @@ class NormalizeGPU(object):
     """x = (x - mean) / std"""
 
     def __init__(self, mean, std, inplace=True, device=default_device):
-        self.mean = torch.tensor(mean).to(device, non_blocking=True)
-        self.std = torch.tensor(std).to(device, non_blocking=True)
+        # force float32 (numpy inputs default to float64): float64 mean/std promotes the
+        # whole normalize computation to float64, which is very slow on consumer GPUs
+        self.mean = torch.as_tensor(mean, dtype=torch.float32).to(device, non_blocking=True)
+        self.std = torch.as_tensor(std, dtype=torch.float32).to(device, non_blocking=True)
         self.inplace = inplace
-        self.device = default_device 
-    
+        self.device = default_device
+
     def op(self, b):
         if self.mean.device != b.device: self.mean = self.mean.to(b.device, non_blocking=True)
-        if self.mean.std != b.device: self.std = self.std.to(b.device, non_blocking=True)
+        if self.std.device != b.device: self.std = self.std.to(b.device, non_blocking=True)
         return F.normalize(b, self.mean, self.std, self.inplace)
     
     def before_call(self, b):

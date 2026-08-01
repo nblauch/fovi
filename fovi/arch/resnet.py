@@ -251,6 +251,7 @@ class ResNet(ResNet_):
         width_per_group: int = 64,
         pre_block_pooling = True,
         main_block_stride = 1, # normally 2
+        pool_stride = None, # stem maxpool stride; None keeps the legacy default (3 polar / 2 non-polar)
         polar = False,
         no_fc = False,
         out_map_size=1,
@@ -258,8 +259,10 @@ class ResNet(ResNet_):
         replace_stride_with_dilation: Optional[List[bool]] = None,
         norm_layer: Optional[Callable[..., nn.Module]] = None
     ) -> None:
-        # super().__init__(block, layers, stride=1, zero_init_residual=zero_init_residual, **kwargs)
-        super(ResNet, self).__init__()
+        # This subclass rebuilds every module itself, so skip torchvision's
+        # ResNet.__init__ (which requires block/layers and would build them twice)
+        # and initialize only the nn.Module machinery.
+        nn.Module.__init__(self)
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -289,12 +292,15 @@ class ResNet(ResNet_):
         self.relu = nn.ReLU(inplace=True)
         if pre_block_pooling:
             if polar:
+                # PolarPadder supplies the (circular-angular) padding; MaxPool pads 0.
+                ps = 3 if pool_stride is None else pool_stride
                 self.maxpool = nn.Sequential(
                     PolarPadder(1),
-                    nn.MaxPool2d(kernel_size=3, stride=3, padding=0),
+                    nn.MaxPool2d(kernel_size=3, stride=ps, padding=0),
                 )
             else:
-                self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+                ps = 2 if pool_stride is None else pool_stride
+                self.maxpool = nn.MaxPool2d(kernel_size=3, stride=ps, padding=1)
         else:
             self.maxpool = nn.Identity()
         self.layer1 = self._make_layer(block, int(channel_mult*64), layers[0])

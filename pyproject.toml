@@ -9,6 +9,9 @@ description = "A foveated interface for deep vision models"
 requires-python = ">=3.9"
 dynamic = ["dependencies"]
 
+[project.optional-dependencies]
+warp = ["warp-lang>=1.12"]
+
 [tool.hatch.metadata.hooks.requirements_txt]
 files = ["fovi/requirements.txt"]
 

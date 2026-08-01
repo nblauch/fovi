@@ -47,7 +47,7 @@ environment activated, do:
 
 ::
 
-   conda install cupy pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
+   conda install pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
    pip install git+https://github.com/facebookresearch/FFCV-SSL.git
    # from within the fovi repo
    pip install -e .
