@@ -63,6 +63,14 @@ def build_fovi_dinov3(cfg, device='cuda'):
         torch.nn.Module: The configured DinoV3 model.
     """
 
+    # The cuDNN fused-attention SDPA backend produces NaN gradients in the ViT
+    # attention backward on sm_90 (Hopper), silently corrupting the trainable LoRA
+    # parameters while the loss stays finite. It is the default SDPA backend on some
+    # Hopper stacks (e.g. recent NGC containers); flash/efficient/math are all correct.
+    # Disable it globally so DINOv3 training/inference is correct regardless of stack.
+    if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
+        torch.backends.cuda.enable_cudnn_sdp(False)
+
     load_weights = getattr(cfg.pretrained_model, 'load_weights', True)
     model, processor = load_dinov3(cfg.pretrained_model.path, device=device, pretrained=load_weights)
 
