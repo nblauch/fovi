@@ -86,6 +86,12 @@ class TestKNNCudaForward(unittest.TestCase):
             case = _make_case(10, 6, 50, 11, 23, 40, 20, pads=9, dtype=dtype)
             self._check(case, dtype=dtype)
 
+    def test_forward_accepts_inference_tensors(self):
+        with torch.inference_mode():
+            for dtype in (torch.float16, torch.bfloat16):
+                case = _make_case(10, 6, 50, 11, 23, 40, 20, pads=9, dtype=dtype)
+                self._check(case, dtype=dtype)
+
     def test_forward_parity_large_batch_all_tiles(self):
         # exercises the bm128/bn128 config with multiple k-steps, o-tiles, and b-groups
         for dtype in (torch.float16, torch.bfloat16):

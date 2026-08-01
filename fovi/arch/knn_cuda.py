@@ -897,8 +897,16 @@ def _shared_wt(weight, dtype, cpad):
 
     One entry per parameter: valid across forward and grad_input within a step (the version
     counter only bumps at the optimizer update) and across all inference forwards until the
-    weights change.
+    weights change. Inference tensors have no version counter, so their derived layouts are
+    returned without caching.
     """
+    if weight.is_inference():
+        cout = weight.shape[0]
+        w2 = weight.detach().reshape(cout, -1)
+        if w2.dtype != dtype:
+            w2 = w2.to(dtype)
+        return F.pad(w2.transpose(0, 1), (0, cpad - cout)).contiguous()
+
     key = id(weight)
     cached = _WT_CACHE.get(key)
     version = weight._version
