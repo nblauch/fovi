@@ -2,6 +2,7 @@
 
 Welcome to the `fovi` codebase, a PyTorch library for implementing foveated vision. This library provides tools for foveated sampling and an interface to deep vision models, including CNNs and ViTs. 
 
+We provide an interactive walkthrough of the methods and results at https://nblauch.github.io/fovi/
 
 ## 🛠️ Install
 
@@ -74,8 +75,6 @@ model = get_model_from_base_fn('fovi-dinov3-splus_a-2.78_res-64_in1k')
 ## 📚 Documentation
 
 The docs are hosted at: https://nblauch.github.io/fovi/docs/
-
-The interactive foveated sampling demo is at: https://nblauch.github.io/fovi/
 
 You can also build locally. Docs are generated semi-automatically from source code and docstrings. The documentation includes:
 
@@ -170,7 +169,7 @@ automatic routing, forward/backward parity, FP16/BF16 autocast, fused convolutio
 pooling, Warp, inference tensors, graph capture, and retinal-sampling equivalence.
 
 ## 🏛️ Citation
-Blauch, N. M., Alvarez, G. A., & Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. https://arxiv.org/abs/2602.03766
+Blauch, N. M., Alvarez, G. A., & Konkle, T. (2026). FOVI: a biologically-inspired foveated interface for deep vision models. Proceedings of the 43rd International Conference on Machine Learning (ICML). https://arxiv.org/abs/2602.03766
 
 ## 🙏 Acknowledgements
 Originally developed at the Kempner Institute at Harvard University. Ongoing support provided by NVIDIA.
