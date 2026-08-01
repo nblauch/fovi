@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
-
 
 VALID_BACKENDS = {
     "auto",
@@ -55,6 +55,12 @@ def _warp_available() -> bool:
 
 def _cuda_available() -> bool:
     return importlib.util.find_spec("cupy") is not None
+
+
+def _native_cuda_supported(device: torch.device) -> bool:
+    """Return whether the fused convolution kernel supports this CUDA device."""
+    major, _minor = torch.cuda.get_device_capability(device)
+    return major >= 8
 
 
 # Engagement heuristic from the final tuning sweep:
@@ -186,10 +192,16 @@ def select_backend(layer, x: torch.Tensor) -> str:
         return "baseline"
 
     if requested == "cuda":
-        if not (x.is_cuda and _autocast_dtype(x) in (torch.float16, torch.bfloat16)):
+        if not x.is_cuda or _autocast_dtype(x) not in (torch.float16, torch.bfloat16):
             raise RuntimeError(
                 "cuda backend requires CUDA tensors and float16/bfloat16 (or matching autocast)"
             )
+        if not _native_cuda_supported(x.device):
+            raise RuntimeError(
+                "cuda backend requires an Ampere-or-newer GPU (compute capability >= 8.0)"
+            )
+        if not _cuda_available():
+            raise RuntimeError("cuda backend requires CuPy")
         return "cuda"
 
     if requested == "warp_train":
@@ -225,7 +237,11 @@ def select_backend(layer, x: torch.Tensor) -> str:
         if _work_volume(layer, x) < WORK_VOLUME_THRESHOLD:
             return "baseline"
         target_dtype = _autocast_dtype(x)
-        if target_dtype in (torch.float16, torch.bfloat16) and _cuda_available():
+        if (
+            target_dtype in (torch.float16, torch.bfloat16)
+            and _cuda_available()
+            and _native_cuda_supported(x.device)
+        ):
             return "cuda"
         return "torch_compact"
 
@@ -257,7 +273,7 @@ def select_backend(layer, x: torch.Tensor) -> str:
         # large-K layers at ANY batch — except on sm_90/Hopper, where small-batch
         # cuda loses to the cached GEMM (measured on an H100 sweep): keep the
         # any-batch exception off that arch.
-        if _cuda_available():
+        if _cuda_available() and _native_cuda_supported(x.device):
             engage = _work_volume(layer, x) >= WORK_VOLUME_THRESHOLD
             if not engage and dense_low_cin:
                 engage = torch.cuda.get_device_capability(x.device) != (9, 0)
@@ -292,7 +308,7 @@ def select_backend(layer, x: torch.Tensor) -> str:
     return "torch_cached"
 
 
-def optimized_forward(layer, x: torch.Tensor) -> torch.Tensor | None:
+def optimized_forward(layer, x: torch.Tensor) -> Optional[torch.Tensor]:  # noqa: UP045
     """Return an optimized result, or ``None`` when the baseline should run."""
     backend = select_backend(layer, x)
     layer._last_knn_backend = backend

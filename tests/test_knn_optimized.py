@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import os
 import unittest
+from unittest import mock
 
 import torch
 import torch.nn as nn
@@ -362,7 +363,10 @@ class TestCudaTrainingBackends(unittest.TestCase):
         try:
             self.assertEqual(run_auto(dict(cin=32), 128), "torch_compact")
             expected = (
-                "cuda" if importlib.util.find_spec("cupy") is not None else "torch_compact"
+                "cuda"
+                if importlib.util.find_spec("cupy") is not None
+                and ko._native_cuda_supported(torch.device("cuda"))
+                else "torch_compact"
             )
             self.assertEqual(
                 run_auto(dict(cin=3, nout=257, nin=67, k=7, reference_points=31), 4, torch.float16),
@@ -373,6 +377,10 @@ class TestCudaTrainingBackends(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("cupy") is not None, "cupy is required")
     def test_auto_inference_dense_low_cin_prefers_cuda_at_any_batch(self):
+        from fovi.arch import knn_optimization as ko
+
+        if not ko._native_cuda_supported(torch.device("cuda")):
+            self.skipTest("native CUDA convolution requires Ampere or newer")
         # The cuda any-batch exception requires a large-K stem (alex0-like, K>=100);
         # smaller-K stems take the cached-GEMM cell (later measurement reverted
         # the earlier baseline gate: warp_cached on small-K stems is an in-model
@@ -395,6 +403,31 @@ class TestCudaTrainingBackends(unittest.TestCase):
                 if expected == "warp_cached" and layer._last_knn_backend == "torch_cached":
                     expected = "torch_cached"  # warp-lang absent fallback
                 self.assertEqual(layer._last_knn_backend, expected)
+
+    def test_native_cuda_capability_gate(self):
+        from fovi.arch import knn_optimization as ko
+
+        layer = _make_layer(
+            backend="auto",
+            device="cuda",
+            dtype=torch.float16,
+            cin=3,
+            nout=257,
+            nin=67,
+            k=7,
+            reference_points=31,
+        )
+        x = torch.randn(4, 3, 67, device="cuda", dtype=torch.float16)
+        original = ko.WORK_VOLUME_THRESHOLD
+        ko.WORK_VOLUME_THRESHOLD = 1
+        try:
+            with mock.patch.object(torch.cuda, "get_device_capability", return_value=(7, 5)):
+                self.assertEqual(ko.select_backend(layer, x), "torch_compact")
+                layer.kernel_backend = "cuda"
+                with self.assertRaisesRegex(RuntimeError, "Ampere-or-newer"):
+                    ko.select_backend(layer, x)
+        finally:
+            ko.WORK_VOLUME_THRESHOLD = original
 
     def test_chunked_compact_parity(self):
         os.environ["FOVI_KNN_STAGE_MIB"] = "0"

@@ -14,6 +14,10 @@ import torch.nn.functional as F
 
 _HAVE_CUDA = torch.cuda.is_available()
 _HAVE_CUPY = importlib.util.find_spec("cupy") is not None
+_TEST_DEVICE_INDEX = int(os.environ.get("FOVI_TEST_DEVICE", "0"))
+_HAVE_NATIVE_CUDA = (
+    _HAVE_CUDA and torch.cuda.get_device_capability(_TEST_DEVICE_INDEX)[0] >= 8
+)
 
 if _HAVE_CUDA and _HAVE_CUPY:
     from fovi.arch import knn_cuda
@@ -21,8 +25,7 @@ if _HAVE_CUDA and _HAVE_CUPY:
 
 
 def _device():
-    index = int(os.environ.get("FOVI_TEST_DEVICE", "0"))
-    return torch.device("cuda", index)
+    return torch.device("cuda", _TEST_DEVICE_INDEX)
 
 
 def _make_case(batch, cin, nin, k, nout, cout, v, *, pads=0, dtype=torch.float16,
@@ -68,7 +71,7 @@ def _reference(x, weight, bias, input_linear, weight_linear):
 _TOL = {torch.float16: 6e-3, torch.bfloat16: 5e-2}
 
 
-@unittest.skipUnless(_HAVE_CUDA, "CUDA device required")
+@unittest.skipUnless(_HAVE_NATIVE_CUDA, "Ampere-or-newer CUDA device required")
 @unittest.skipUnless(_HAVE_CUPY, "CuPy required")
 class TestKNNCudaForward(unittest.TestCase):
     def _check(self, case, config=None, dtype=torch.float16):
@@ -155,7 +158,7 @@ def _make_meta(*, cin, nin, k, nout, cout, v, il, wl, device):
     )
 
 
-@unittest.skipUnless(_HAVE_CUDA, "CUDA device required")
+@unittest.skipUnless(_HAVE_NATIVE_CUDA, "Ampere-or-newer CUDA device required")
 @unittest.skipUnless(_HAVE_CUPY, "CuPy required")
 class TestKNNCudaBackward(unittest.TestCase):
     """Gradient parity with the relative-to-fp32-oracle criterion.
@@ -449,7 +452,7 @@ class TestKNNCudaBackward(unittest.TestCase):
         self.assertLess((dw - dw_oracle).abs().max().item() / 2.0 ** 14, 1e-3)
 
 
-@unittest.skipUnless(_HAVE_CUDA, "CUDA device required")
+@unittest.skipUnless(_HAVE_NATIVE_CUDA, "Ampere-or-newer CUDA device required")
 @unittest.skipUnless(_HAVE_CUPY, "CuPy required")
 class TestKNNCudaRegistry(unittest.TestCase):
     def test_registered(self):

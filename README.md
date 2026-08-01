@@ -27,7 +27,7 @@ pip install -e . # this will automatically install fovi/requirements.txt
 
 To install with `ffcv` to allow fast training, we first follow the instructions to install `ffcv-ssl`, which has stricter requirements, and then install `fovi` and its requirements. With your `fovi` conda environment activated, do:
 ```
-conda install cupy pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
+conda install pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
 pip install git+https://github.com/facebookresearch/FFCV-SSL.git
 # from within the fovi repo
 pip install -e .
@@ -103,6 +103,10 @@ python -m http.server 8000 --directory docs/_build/html
 
 FOVI's **KNN convolution and KNN pooling** ship with optimized CUDA kernels (selected
 automatically); this is the optimization under test.
+The native CUDA convolution requires CUDA 12 and an Ampere-or-newer GPU. CuPy is installed
+automatically with FOVI; older NVIDIA GPUs use the portable Torch/Warp fallback rather than
+attempting to compile an unsupported native kernel. Python 3.9 installations resolve to
+CuPy 13, preserving compatibility with FFCV; newer Python versions may use CuPy 14.
 `benchmarks/benchmark_final_comparison.py` is the single entry point that measures what
 they buy you — every FOVI model variant runs in two arms (`baseline` = the reference
 conv/pool kernels, `optimized` = the shipped optimized conv/pool kernels, with
@@ -147,6 +151,23 @@ dependencies (cupy/warp) degrade gracefully and are annotated in the output. The
 itself is the reproducible evidence — run the commands above to regenerate every number
 on your own hardware; final published results will live in the project's PR/release
 notes.
+
+### Manual optimization test gate
+
+GPU CI is not currently enabled. Before merging changes to the optimized kernels or retinal
+sampling path, run the complete gate manually on a CUDA 12 Ampere-or-newer machine. Install
+the optional Warp backend when it is part of the change; without it, its tests report as
+skipped.
+
+```bash
+pip install -e ".[warp]"
+python -m unittest discover -s tests -p 'test_knn*.py' -v
+python -m unittest discover -s tests -p 'test_retinal_sampling.py' -v
+```
+
+Set `FOVI_TEST_DEVICE=<index>` to select a particular GPU. The gate covers baseline and
+automatic routing, forward/backward parity, FP16/BF16 autocast, fused convolution and
+pooling, Warp, inference tensors, graph capture, and retinal-sampling equivalence.
 
 ## 🏛️ Citation
 Blauch, N. M., Alvarez, G. A., & Konkle, T. (2026). FOVI: A biologically-inspired foveated interface for deep vision models. https://arxiv.org/abs/2602.03766
