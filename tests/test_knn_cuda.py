@@ -388,7 +388,7 @@ class TestKNNCudaBackward(unittest.TestCase):
         static_w = weight.detach().clone().requires_grad_(True)
         static_b = bias.detach().clone().requires_grad_(True)
 
-        def step():
+        def step() -> None:
             y = KNNConvFunction.apply(static_x, static_w, static_b, meta, "cuda")
             y.backward(g)
             return y
@@ -514,6 +514,62 @@ class TestKNNCudaRegistry(unittest.TestCase):
                 cuda_error, 3.0 * compact_error + 2e-3,
                 msg=f"{name}: {cuda_error:.3e} vs torch_compact {compact_error:.3e}",
             )
+
+    def test_amp_training_does_not_retain_prior_step_weights(self):
+        """Completed AMP steps must not retain cast weights from older graphs."""
+        from fovi.arch.knn_autograd import KNNConvFunction
+
+        device = _device()
+        batch = 32
+        cin, nin, k, nout, cout, v = 3, 512, 121, 25, 384, 196
+        x, weight, bias, il, wl = _make_case(
+            batch,
+            cin,
+            nin,
+            k,
+            nout,
+            cout,
+            v,
+            dtype=torch.float32,
+        )
+        meta = _make_meta(
+            cin=cin,
+            nin=nin,
+            k=k,
+            nout=nout,
+            cout=cout,
+            v=v,
+            il=il,
+            wl=wl,
+            device=device,
+        )
+        x.requires_grad_(True)
+        weight.requires_grad_(True)
+        bias.requires_grad_(True)
+
+        def step():
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                output = KNNConvFunction.apply(x, weight, bias, meta, "cuda")
+                loss = output.float().square().mean()
+            loss.backward()
+            x.grad = None
+            weight.grad = None
+            bias.grad = None
+
+        for _ in range(3):
+            step()
+        torch.cuda.synchronize(device)
+        baseline = torch.cuda.memory_allocated(device)
+        for _ in range(20):
+            step()
+        torch.cuda.synchronize(device)
+        retained = torch.cuda.memory_allocated(device) - baseline
+
+        self.assertLess(
+            retained,
+            2 * 2**20,
+            msg=f"Repeated AMP steps retained {retained / 2**20:.1f} MiB",
+        )
 
 
 if __name__ == "__main__":

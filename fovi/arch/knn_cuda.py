@@ -41,8 +41,9 @@ import collections
 import glob
 import os
 import sys
+import weakref
 
-import torch  # noqa: F401  (must precede cupy import; see NVRTC note above)
+import torch  # must precede cupy import; see NVRTC note above
 import torch.nn.functional as F
 
 try:
@@ -892,6 +893,15 @@ def _launch(kernel, grid, block, args, smem, device):
 _WT_CACHE = {}
 
 
+def _drop_wt_cache_entry(
+    key: int,
+    weight_ref: weakref.ReferenceType[torch.Tensor],
+) -> None:
+    cached = _WT_CACHE.get(key)
+    if cached is not None and cached[0] is weight_ref:
+        _WT_CACHE.pop(key)
+
+
 def _shared_wt(weight, dtype, cpad):
     """Transposed, padded weight [Q, cpad] cached by (identity, version, dtype, cpad).
 
@@ -912,20 +922,22 @@ def _shared_wt(weight, dtype, cpad):
     version = weight._version
     if (
         cached is not None
-        and cached[0] is weight
+        and cached[0]() is weight
         and cached[1] == version
         and cached[2] == dtype
         and cached[3] == cpad
     ):
         return cached[4]
-    if len(_WT_CACHE) > 256:  # bound growth from per-step AMP weight casts
-        _WT_CACHE.clear()
     cout = weight.shape[0]
     w2 = weight.detach().reshape(cout, -1)
     if w2.dtype != dtype:
         w2 = w2.to(dtype)
     wt = F.pad(w2.transpose(0, 1), (0, cpad - cout)).contiguous()
-    _WT_CACHE[key] = (weight, version, dtype, cpad, wt)
+    weight_ref = weakref.ref(
+        weight,
+        lambda ref, cache_key=key: _drop_wt_cache_entry(cache_key, ref),
+    )
+    _WT_CACHE[key] = (weight_ref, version, dtype, cpad, wt)
     return wt
 
 
