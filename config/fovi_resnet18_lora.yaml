@@ -1,0 +1,16 @@
+# Torchvision-pretrained FOVI ResNet-18 adaptation recipe. The default mode is
+# full-backbone LoRA; raw and partial fine-tuning are selected with overrides.
+defaults:
+  - fovi_resnet18_rf2
+  - pretrained_model: resnet18_lora
+  - _self_
+
+model:
+  arch: fovi_resnet18_lora
+  ref_frame_mult: 2
+
+training:
+  epochs: 100
+  base_lr: 0.0005
+  warmup_epochs: 0
+  amp_dtype: bfloat16

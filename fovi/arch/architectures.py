@@ -10,6 +10,11 @@ from .wrapper import BackboneProjectorWrapper
 from .knnvit import KNNViT
 from .vit import VisionTransformer
 from .dinov3 import build_fovi_dinov3
+from .pretrained_resnet import (
+    load_torchvision_resnet18,
+    load_torchvision_resnet_backbone,
+    prep_fovi_resnet_finetuning,
+)
 from .mlp import get_mlp
 from .resnet import resnet_ssl as _resnet_ssl
 from ..utils import HiddenPrints, add_to_all
@@ -178,8 +183,8 @@ def resnet50(*args, **kwargs):
 
 @add_to_all(__all__)
 def fovi_resnet(cfg,
-                        in_conv_stride=2,
-                        in_pool_stride=2,
+                        in_conv_stride=None,
+                        in_pool_stride=None,
                         depthwise_sep_conv=False,
                         layers=[2, 2, 2, 2],
                         device='cuda',
@@ -202,11 +207,34 @@ def fovi_resnet(cfg,
         nn.Module: The configured foveated ResNet model wrapped with projector.
     """
     cfg = rescale_fov(cfg)
+    knn = build_fovi_resnet_backbone(
+        cfg,
+        in_conv_stride=in_conv_stride,
+        in_pool_stride=in_pool_stride,
+        depthwise_sep_conv=depthwise_sep_conv,
+        layers=layers,
+        device=device,
+    )
 
-    knn = KNNResNet(
+    return arch_wrapper(knn, cfg, device=device)
+
+
+def build_fovi_resnet_backbone(cfg,
+                               in_conv_stride=None,
+                               in_pool_stride=None,
+                               depthwise_sep_conv=False,
+                               layers=[2, 2, 2, 2],
+                               device='cuda'):
+    """Construct the KNN ResNet backbone shared by scratch and pretrained models."""
+    if in_conv_stride is None:
+        in_conv_stride = cfg.model.get('stem_conv_stride', 2)
+    if in_pool_stride is None:
+        in_pool_stride = cfg.model.get('stem_pool_stride', 2)
+    return KNNResNet(
                  layers=layers,
                  in_conv_stride=in_conv_stride,
                  in_pool_stride=in_pool_stride,
+                 stem_kernel_size=cfg.model.get('stem_kernel_size', 7),
                  fov=cfg.saccades.fov,
                  cmf_a=cfg.saccades.cmf_a,
                  in_res=cfg.saccades.resize_size,
@@ -217,12 +245,11 @@ def fovi_resnet(cfg,
                  conv_layer=KNNDepthwiseSeparableConvLayer if depthwise_sep_conv else KNNConvLayer,
                  device=device,
                  auto_match_cart_resources=cfg.saccades.auto_match_cart_resources,
+                 out_res=cfg.model.out_grid_size,
                  num_classes=None,
                  isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
                  ref_frame_mult=getattr(cfg.model, 'ref_frame_mult', 1) or 1,
         )
-
-    return arch_wrapper(knn, cfg, device=device)
 
 @add_to_all(__all__)
 def fovi_resnet9(*args, **kwargs):
@@ -235,6 +262,21 @@ def fovi_resnet9_lowres(*args, **kwargs):
 @add_to_all(__all__)
 def fovi_resnet18(*args, **kwargs):
     return fovi_resnet(*args, layers=[2, 2, 2, 2], **kwargs)
+
+
+@add_to_all(__all__)
+def fovi_resnet18_lora(cfg, device='cuda'):
+    """Build a pretrained FOVI ResNet-18 with configured LoRA adapters."""
+    cfg = rescale_fov(cfg)
+    knn = build_fovi_resnet_backbone(cfg, layers=[2, 2, 2, 2], device=device)
+    source = load_torchvision_resnet18(cfg.pretrained_model.weights)
+    load_torchvision_resnet_backbone(
+        knn,
+        source,
+        preserve_kernel_norm=cfg.pretrained_model.get('preserve_kernel_norm', False),
+    )
+    prep_fovi_resnet_finetuning(knn, cfg, device=device)
+    return arch_wrapper(knn, cfg, device=device)
 
 @add_to_all(__all__)
 def fovi_resnet18_lowres(*args, **kwargs):
@@ -589,6 +631,11 @@ ARCHITECTURE_REGISTRY.register(
 ARCHITECTURE_REGISTRY.register(
     'fovi_resnet18',
     lambda cfg, device='cuda': fovi_resnet18(cfg, device=device)
+)
+
+ARCHITECTURE_REGISTRY.register(
+    'fovi_resnet18_lora',
+    lambda cfg, device='cuda': fovi_resnet18_lora(cfg, device=device)
 )
 
 ARCHITECTURE_REGISTRY.register(

@@ -28,7 +28,7 @@ def main(cfg: DictConfig):
         cfg.logging.base_fn = get_random_name()
 
     # parse unfreeze layers
-    if hasattr(cfg.pretrained_model.unfreeze_layers, '__len__') and len(cfg.pretrained_model.unfreeze_layers) and isinstance(cfg.training.unfreeze_layers, str):
+    if hasattr(cfg.pretrained_model.unfreeze_layers, '__len__') and len(cfg.pretrained_model.unfreeze_layers) and isinstance(cfg.pretrained_model.unfreeze_layers, str):
         cfg.pretrained_model.unfreeze_layers = [int(x) for x in cfg.pretrained_model.unfreeze_layers.split(',')]
     if hasattr(cfg.pretrained_model.lora.layers, '__len__') and len(cfg.pretrained_model.lora.layers) and isinstance(cfg.pretrained_model.lora.layers, str):
         cfg.pretrained_model.lora.layers = [int(x) for x in cfg.pretrained_model.lora.layers.split(',')]
