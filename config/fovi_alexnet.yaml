@@ -42,7 +42,13 @@ saccades:
   fix_agg: mean
   add_aspect_variation: 0
   n_fixations: 4
-  n_fixations_val: 20
+  n_fixations_val:
+    - 1
+    - 2
+    - 3
+    - 5
+    - 10
+    - 20
 
 transforms:
   where: pre_warp

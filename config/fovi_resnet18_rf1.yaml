@@ -1,0 +1,8 @@
+# RF1 FOVI ResNet-18 ImageNet recipe. Everything else comes from the RF2
+# recipe and, transitively, the established FOVI AlexNet recipe.
+defaults:
+  - fovi_resnet18_rf2
+  - _self_
+
+model:
+  ref_frame_mult: 1

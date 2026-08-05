@@ -1,0 +1,15 @@
+# RF2 FOVI ResNet-18 ImageNet recipe. Keep the established FOVI AlexNet
+# recipe intact and change only the architecture and per-GPU batch size.
+defaults:
+  - fovi_alexnet
+  - _self_
+
+model:
+  arch: fovi_resnet18
+  # Match the standard ResNet-18 terminal global-average pooling and retain
+  # the current AlexNet recipe's two-times KNN reference frame.
+  out_grid_size: 1
+  ref_frame_mult: 2
+
+training:
+  batch_size: 512

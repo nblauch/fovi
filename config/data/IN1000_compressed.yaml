@@ -1,0 +1,4 @@
+train_dataset: ${oc.env:FOVI_DATASETS_DIR}/ffcv/imagenet/train_compressed.ffcv
+val_dataset: ${oc.env:FOVI_DATASETS_DIR}/ffcv/imagenet/val_compressed.ffcv
+num_classes: 1000
+
