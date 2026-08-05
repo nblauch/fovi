@@ -1,4 +1,8 @@
 .fovi_demo_cache
+.data/
+.dockerignore
+uv.lock
+osmo
 .DS_STORE
 docs/.github/
 docs/.nojekyll
