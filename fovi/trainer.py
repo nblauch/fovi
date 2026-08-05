@@ -698,8 +698,6 @@ class Trainer:
                 # supervised or fovinet
                 ssl_batch = False
 
-            torch.cuda.empty_cache()
-            
             # SSL Training
             if self.do_network_training:
                 total_loss_train = torch.tensor(0.).to(self.gpu)
@@ -807,8 +805,6 @@ class Trainer:
 
                 msg = ', '.join(f'{n}={v}' for n, v in zip(names, values))
                 iterator.set_description(msg)
-
-        torch.cuda.empty_cache()
 
         # Return epoch's log
         if cfg.logging.log_level > 0:
