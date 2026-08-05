@@ -1,0 +1,17 @@
+# LORA + pretrained IN1K weights is good for small scale adaptations like IN-100. 
+# For IN-1K, there is minimal benefit of using pretrained weights, mostly just faster training.
+name: resnet18
+weights: IMAGENET1K_V1
+preserve_kernel_norm: 0
+freeze_backbone: 1
+update_norm_stats: 1
+unfreeze_patch_embed: 0
+unfreeze_all_norms: 1
+unfreeze_layers: null
+unfreeze_norm: 0
+lora:
+  # -1 is the stem; nonnegative entries index BasicBlocks in forward order.
+  layers: [-1, 0, 1, 2, 3, 4, 5, 6, 7]
+  sublayers: [conv1, conv2, downsample.0]
+  r: 64
+  alpha: 64

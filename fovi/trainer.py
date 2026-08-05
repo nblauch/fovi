@@ -663,6 +663,10 @@ class Trainer:
         self.model.train()
         if cfg.get('pretrained_model', {}).get('freeze_backbone', False):
             self.model_.network.backbone.eval()
+            if cfg.pretrained_model.get('update_norm_stats', False):
+                for module in self.model_.network.backbone.modules():
+                    if isinstance(module, nn.modules.batchnorm._BatchNorm):
+                        module.train()
         self.probes.train()
         losses = []
 

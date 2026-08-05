@@ -10,6 +10,9 @@ model:
   # the current AlexNet recipe's two-times KNN reference frame.
   out_grid_size: 1
   ref_frame_mult: 2
+  stem_kernel_size: 7
+  stem_conv_stride: 2
+  stem_pool_stride: 2
 
 training:
   batch_size: 512

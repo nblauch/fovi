@@ -67,7 +67,17 @@ class KNNResNetBasicBlock(nn.Module):
                 return None
             return int(np.ceil(ref_frame_mult * np.sqrt(k_conv)))
 
-        self.in_coords, self.out_coords, self.out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
+        self.in_coords, self.out_coords, self.out_cart_res = get_in_out_coords(
+            in_res,
+            fov,
+            cmf_a,
+            stride,
+            style=style,
+            auto_match_cart_resources=auto_match_cart_resources,
+            in_cart_res=cart_res,
+            device=device,
+            isotropic_plotting_type=isotropic_plotting_type,
+        )
 
         # first conv does the stride to out_coords
         self.conv1 = conv_layer(
@@ -82,7 +92,7 @@ class KNNResNetBasicBlock(nn.Module):
             ref_frame_side_length=_rfl(k),
         )
 
-        self.norm1 = get_norm(norm_type, len(self.out_coords), out_channels)
+        self.norm1 = get_norm(norm_type, len(self.out_coords), out_channels, device=device)
 
         # second conv does no stride
         self.conv2 = conv_layer(
@@ -97,7 +107,7 @@ class KNNResNetBasicBlock(nn.Module):
             ref_frame_side_length=_rfl(k),
         )
 
-        self.norm2 = get_norm(norm_type, len(self.out_coords), out_channels)
+        self.norm2 = get_norm(norm_type, len(self.out_coords), out_channels, device=device)
 
         # downsample is a 1x1 conv on the input to use as the residual
         if stride != 1:
@@ -112,7 +122,7 @@ class KNNResNetBasicBlock(nn.Module):
                     arch_flag=arch_flag,
                     device=device,
                     ),
-                get_norm(norm_type, len(self.out_coords), out_channels),
+                get_norm(norm_type, len(self.out_coords), out_channels, device=device),
             )
         else:
             self.downsample = None
@@ -186,6 +196,7 @@ class KNNResNet(nn.Module):
                  layers=[2, 2, 2, 2],
                  in_conv_stride=2,
                  in_pool_stride=2,
+                 stem_kernel_size=7,
                  fov=16,
                  cmf_a=0.5,
                  in_res=64,
@@ -215,6 +226,12 @@ class KNNResNet(nn.Module):
         self.conv_layer = conv_layer
         self.num_classes = num_classes
 
+        if stem_kernel_size <= 0:
+            raise ValueError(
+                f"stem_kernel_size must be a positive integer, got {stem_kernel_size}"
+            )
+        self.stem_kernel_size = stem_kernel_size
+
         self.block_kwargs = dict(
             fov=fov,
             cmf_a=cmf_a,
@@ -230,27 +247,49 @@ class KNNResNet(nn.Module):
         )
 
         in_res, cart_res = auto_match_num_coords(fov, cmf_a, in_res, style, auto_match_cart_resources, device, quiet=True)
-        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, in_conv_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, isotropic_plotting_type=isotropic_plotting_type)
+        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(
+            in_res,
+            fov,
+            cmf_a,
+            in_conv_stride,
+            style=style,
+            auto_match_cart_resources=auto_match_cart_resources,
+            in_cart_res=cart_res,
+            device=device,
+            isotropic_plotting_type=isotropic_plotting_type,
+        )
 
-        # always use KNNConvLayer for the first conv; higher-res reference frame per
-        # ref_frame_mult (side = ceil(mult * sqrt(k)), the KNNAlexNet convention)
+        # Always use KNNConvLayer for the first conv; higher-res reference frame per
+        # ref_frame_mult (side = ceil(mult * sqrt(k)), the KNNAlexNet convention).
         self.ref_frame_mult = ref_frame_mult
+        stem_k = stem_kernel_size ** 2
         self.conv1 = KNNConvLayer(
             in_channels=3,
             out_channels=self.in_channels,
-            k=49,
+            k=stem_k,
             in_coords=self.in_coords,
             out_coords=self.out_coords,
             sample_cortex=sample_cortex,
+            device=device,
             ref_frame_side_length=(
-                None if ref_frame_mult == 1 else int(np.ceil(ref_frame_mult * np.sqrt(49)))
+                None if ref_frame_mult == 1 else int(np.ceil(ref_frame_mult * stem_kernel_size))
             ),
         )
         
-        self.bn1 = get_norm(norm_type, len(self.out_coords), self.in_channels)
+        self.bn1 = get_norm(norm_type, len(self.out_coords), self.in_channels, device=device)
         self.relu = nn.ReLU(inplace=True)
 
-        _, self.pool_coords, self.cart_res = get_in_out_coords(self.out_coords.resolution, fov, cmf_a, in_pool_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res, isotropic_plotting_type=isotropic_plotting_type)
+        _, self.pool_coords, self.cart_res = get_in_out_coords(
+            self.out_coords.resolution,
+            fov,
+            cmf_a,
+            in_pool_stride,
+            style=style,
+            auto_match_cart_resources=auto_match_cart_resources,
+            in_cart_res=out_cart_res,
+            device=device,
+            isotropic_plotting_type=isotropic_plotting_type,
+        )
         self.in_res = self.pool_coords.resolution
 
         self.maxpool = pool_layer(

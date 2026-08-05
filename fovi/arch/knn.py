@@ -692,7 +692,13 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
 
         return local_rf
 
-    def _load_conv_2d_weight(self, conv_weight: torch.Tensor, conv_bias: torch.Tensor, strict: bool = False):
+    def _load_conv_2d_weight(
+        self,
+        conv_weight: torch.Tensor,
+        conv_bias: torch.Tensor,
+        strict: bool = False,
+        preserve_kernel_norm: bool = False,
+    ):
         if conv_weight.shape[0] != self.out_channels:
             raise ValueError(f"Conv2d out_channels {conv_weight.shape[0]} != layer out_channels {self.out_channels}")
         if conv_weight.shape[1] != self.in_channels:
@@ -710,12 +716,20 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
                     f"Set strict=False to resample the kernel."
                 )
             # Resample the kernel using bilinear interpolation
+            original_norm = None
+            if preserve_kernel_norm:
+                original_norm = conv_weight.flatten(1).norm(dim=1).clamp_min(1e-12)
+
             conv_weight = F.interpolate(
                 conv_weight, 
                 size=(self.ref_grid_size, self.ref_grid_size),
                 mode='bilinear',
                 align_corners=True
             )
+
+            if original_norm is not None:
+                resampled_norm = conv_weight.flatten(1).norm(dim=1).clamp_min(1e-12)
+                conv_weight.mul_((original_norm / resampled_norm).view(-1, 1, 1, 1))
         
         # Reshape to match layer's weight shape
         if self.weight.dim() == 2:
@@ -731,7 +745,12 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         elif conv_bias is not None and self.bias is None:
             raise ValueError("Conv2d has bias but layer does not. Recreate layer with bias=True.")
 
-    def load_conv2d_weights(self, conv2d: nn.Conv2d, strict: bool = False):
+    def load_conv2d_weights(
+        self,
+        conv2d: nn.Conv2d,
+        strict: bool = False,
+        preserve_kernel_norm: bool = False,
+    ):
         """
         Load weights from a pretrained nn.Conv2d into this layer.
         
@@ -741,11 +760,18 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         
         Args:
             conv2d: A nn.Conv2d layer to load weights from.
-            strict: If True, raises error if shapes don't match. If False, 
+            strict: If True, raises error if shapes don't match. If False,
                    resamples the kernel to match ref_grid_size.
+            preserve_kernel_norm: Preserve each output filter's L2 norm when
+                resampling the spatial kernel.
         """
         conv_weight = conv2d.weight.data.clone()  # (out_ch, in_ch, H, W)
-        self._load_conv_2d_weight(conv_weight, conv2d.bias, strict=strict)
+        self._load_conv_2d_weight(
+            conv_weight,
+            conv2d.bias,
+            strict=strict,
+            preserve_kernel_norm=preserve_kernel_norm,
+        )
     
     def load_conv3d_weights(self, conv3d: nn.Conv3d, temporal_strategy='average', strict: bool = False):
         """

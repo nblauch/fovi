@@ -93,7 +93,9 @@ def apply_lora(module: nn.Module, param_name: str = "weight", r: int = 8, alpha:
     base = getattr(module, param_name)
     base.requires_grad_(False)
 
-    lora = LoRAParam(base.shape, r=r, alpha=alpha, init=init, device=device)
+    # Parametrizations must initially live beside the parameter they transform.
+    # The containing model may be moved to the requested training device later.
+    lora = LoRAParam(base.shape, r=r, alpha=alpha, init=init, device=base.device)
     P.register_parametrization(module, param_name, lora)
     return lora
 
