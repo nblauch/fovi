@@ -28,11 +28,11 @@ from fovi.arch.knn_optimization import VALID_BACKENDS
 
 
 MODELS = {
-    "alexnet": "fovi-alexnet_a-1_res-64_rfmult-2_in1k",
+    "alexnet": "fovi-alexnet_a-0.5_res-64_rfmult-2_in1k",
     # 1x reference-frame variant: identical KNN geometry, V == K on every conv
     # (ref frame side = ceil(sqrt(K)) instead of 2*ceil(sqrt(K))). First-class alongside
     # the rf2 default in all reporting (user directive).
-    "alexnet_rf1": "fovi-alexnet_a-1_res-64_rfmult-1_in1k",
+    "alexnet_rf1": "fovi-alexnet_a-0.5_res-64_rfmult-1_in1k",
     "dinov3": "fovi-dinov3-splus_a-2.78_res-64_in1k",
 }
 
