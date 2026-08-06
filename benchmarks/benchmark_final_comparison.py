@@ -1,7 +1,7 @@
 """Definitive FOVI-vs-dense comparison harness: one entry point, six model
 variants, two execution arms, two dense-reference framings.
 
-Variants: alexnet_rf2 (shipped fovi-alexnet_a-1_res-64_rfmult-2_in1k), alexnet_rf1
+Variants: alexnet_rf2 (shipped fovi-alexnet_a-0.5_res-64_rfmult-2_in1k), alexnet_rf1
 (cached rf1 checkpoint), resnet18_rf1 / resnet18_rf2 (local bench configs), dinov3
 (=DINOv3-S+, fovi-dinov3-splus_a-2.78_res-64_in1k), dinov3_hplus (=DINOv3-H+,
 fovi-dinov3-hplus_a-2.78_res-64_in1k). Each dinov3 size is compared against a dense
@@ -84,8 +84,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 SEED = 20260721
 
 VARIANTS = {
-    "alexnet_rf2": ("hf", "fovi-alexnet_a-1_res-64_rfmult-2_in1k"),
-    "alexnet_rf1": ("hf", "fovi-alexnet_a-1_res-64_rfmult-1_in1k"),
+    "alexnet_rf2": ("hf", "fovi-alexnet_a-0.5_res-64_rfmult-2_in1k"),
+    "alexnet_rf1": ("hf", "fovi-alexnet_a-0.5_res-64_rfmult-1_in1k"),
     "resnet18_rf1": ("local", "resnet18_rf1"),
     "resnet18_rf2": ("local", "resnet18_rf2"),
     "dinov3": ("hf", "fovi-dinov3-splus_a-2.78_res-64_in1k"),        # DINOv3-S+ (ViT-S/16+)
@@ -360,7 +360,7 @@ def build_dense256(family, device):
 # The fovi config carrying each family's backbone + foveation (S+ vs H+ ViT for dinov3).
 DENSE64_CFG = {
     "resnet18": ("local", "resnet18_rf1"),
-    "alexnet": ("hf", "fovi-alexnet_a-1_res-64_rfmult-2_in1k"),
+    "alexnet": ("hf", "fovi-alexnet_a-0.5_res-64_rfmult-2_in1k"),
     "dinov3": ("hf", "fovi-dinov3-splus_a-2.78_res-64_in1k"),
     "dinov3_hplus": ("hf", "fovi-dinov3-hplus_a-2.78_res-64_in1k"),
 }
