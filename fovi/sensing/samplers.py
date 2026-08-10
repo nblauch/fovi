@@ -437,8 +437,8 @@ class KNNGridSampler(BaseGridSampler):
             fov (float): Field of view diameter in degrees.
             cmf_a (float): A parameter from the CMF: M(r)=1/(r+a). Smaller = stronger foveation.
             resolution (int): Resolution parameter.
-            res_mult (int, optional): Resolution multiplier for photoreceptor layer vs. rgc layer. Defaults to 3.
-            cmf_a_mult (int, optional): CMF_a multiplier for photoreceptor layer vs. rgc layer. Defaults to 1.
+            res_mult (float, optional): Resolution multiplier for photoreceptor layer vs. rgc layer. Defaults to 3.
+            cmf_a_mult (float, optional): CMF_a multiplier for photoreceptor layer vs. rgc layer. Defaults to 1.
             fixation_size (int, optional): Fixation size in pixels. Defaults to 3000.
             k (int, optional): Number of nearest neighbors. Defaults to None.
             style (str, optional): Sampling style. Defaults to 'isotropic'.
@@ -447,9 +447,12 @@ class KNNGridSampler(BaseGridSampler):
             device (str, optional): Device to run on. Defaults to 'cuda'.
         """
         super().__init__()
+        self.res_mult = float(res_mult)
+        self.cmf_a_mult = float(cmf_a_mult)
+        self.highres_resolution = int(round(self.res_mult * int(resolution)))
         self.highres_coords = SamplingCoords(
-            fov, cmf_a_mult*cmf_a, res_mult*resolution, device=device,
-            style=style, dtype=dtype,
+            fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
+            device=device, style=style, dtype=dtype,
             isotropic_plotting_type=isotropic_plotting_type,
             fov_type=fov_type)
         self.coords = SamplingCoords(
@@ -467,7 +470,8 @@ class KNNGridSampler(BaseGridSampler):
         if output_dtype is not None and not output_dtype.is_floating_point:
             raise ValueError("KNN pooling requires a floating output dtype")
         self.input_sampler = GridSampler(
-            fov, cmf_a_mult * cmf_a, res_mult * resolution, device=device, dtype=dtype,
+            fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
+            device=device, dtype=dtype,
             mode='nearest', style=style, coords=self.highres_coords,
             isotropic_plotting_type=isotropic_plotting_type, backend=backend,
             fov_type=fov_type)
