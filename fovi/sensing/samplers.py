@@ -104,9 +104,9 @@ class BaseGridSampler(nn.Module):
         ).unsqueeze(1)
 
     @staticmethod
-    def _mask_invalid_samples(samples, valid_mask):
+    def _mask_invalid_samples(samples, valid_mask, all_valid):
         """Apply deterministic FoV padding without changing forward signatures."""
-        if bool(valid_mask.all()):
+        if all_valid:
             return samples
         return samples * valid_mask.to(
             device=samples.device, dtype=samples.dtype)[None, None, :]
@@ -177,7 +177,11 @@ class GridSampler(BaseGridSampler):
         self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
-        self.valid_mask = self.coords.valid_mask
+        self.register_buffer(
+            'valid_mask', self.coords.valid_mask, persistent=False)
+        # FoV validity is fixed by the sampling topology. Cache the Python
+        # branch before any forward can be captured by a CUDA graph.
+        self._all_samples_valid = bool(self.valid_mask.all().item())
 
     def _requested_backend(self):
         requested = os.environ.get('FOVI_GRID_SAMPLER_BACKEND', self.backend)
@@ -388,7 +392,8 @@ class GridSampler(BaseGridSampler):
                     img.shape[-2:], fix_loc_t, fixation_size_t)
 
         sampled = self._convert_output(sampled)
-        sampled = self._mask_invalid_samples(sampled, self.valid_mask)
+        sampled = self._mask_invalid_samples(
+            sampled, self.valid_mask, self._all_samples_valid)
         
         if return_coords:
             return sampled, grid
@@ -483,8 +488,14 @@ class KNNGridSampler(BaseGridSampler):
         self.out_sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
 
         self.polar_radius = self.coords.polar[:,0]
-        self.highres_valid_mask = self.highres_coords.valid_mask
-        self.valid_mask = self.coords.valid_mask
+        self.register_buffer(
+            'highres_valid_mask', self.highres_coords.valid_mask,
+            persistent=False)
+        self.register_buffer(
+            'valid_mask', self.coords.valid_mask, persistent=False)
+        self._all_highres_samples_valid = bool(
+            self.highres_valid_mask.all().item())
+        self._all_samples_valid = bool(self.valid_mask.all().item())
         self.fov = fov
         self.cmf_a = cmf_a
         self.resolution = resolution
@@ -522,11 +533,12 @@ class KNNGridSampler(BaseGridSampler):
             direct=direct).to(self.dtype)
         self._last_backend = self.input_sampler._last_backend
         ret_samples = self._mask_invalid_samples(
-            ret_samples, self.highres_valid_mask)
+            ret_samples, self.highres_valid_mask,
+            self._all_highres_samples_valid)
         # pool to get the final retinal samples
         pooled_samples = self.pooler(ret_samples)
         pooled_samples = self._mask_invalid_samples(
-            pooled_samples, self.valid_mask)
+            pooled_samples, self.valid_mask, self._all_samples_valid)
 
         if self.output_dtype is not None:
             pooled_samples = pooled_samples.to(self.output_dtype)

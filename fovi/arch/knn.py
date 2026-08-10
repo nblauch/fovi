@@ -62,20 +62,26 @@ class KNNBaseLayer:
         self.knn_indices_pad_token = self.knn_indices.clone()
         self.knn_indices_pad_token[padding_mask] = self.knn_pad_token_val
 
+        # Output validity depends only on the fixed KNN topology. Cache both the
+        # device mask and the all-valid fast-path decision now, outside any
+        # forward that may later run under CUDA graph capture.
+        output_valid_mask = ~torch.all(
+            self.knn_indices_pad_token == self.knn_pad_token_val, dim=0)
+        self.register_buffer(
+            '_knn_output_valid_mask', output_valid_mask, persistent=False)
+        # This is an intentional one-time host read during layer construction.
+        self._knn_all_outputs_valid = bool(output_valid_mask.all().item())
+
     def _mask_invalid_outputs(self, output):
         """Zero outputs whose entire KNN neighborhood is spatial padding."""
-        pad_token = getattr(self, 'knn_pad_token_val', None)
-        if pad_token is None:
-            pad_token = self.in_coords.shape[0]
-        valid_mask = ~torch.all(
-            self.knn_indices_pad_token == pad_token, dim=0)
-        if bool(valid_mask.all()):
+        if self._knn_all_outputs_valid:
             return output
-        valid_mask = valid_mask.to(device=output.device)
         view_shape = [1] * output.ndim
-        view_shape[-1] = valid_mask.numel()
+        view_shape[-1] = self._knn_output_valid_mask.numel()
         return torch.where(
-            valid_mask.reshape(view_shape), output, torch.zeros_like(output))
+            self._knn_output_valid_mask.reshape(view_shape),
+            output,
+            torch.zeros_like(output))
 
     @staticmethod
     def _as_geodesic_vertices(coords):
@@ -442,8 +448,10 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
             if _optimized_pool_forward is not None:
                 optimized = _optimized_pool_forward(self, X_l)
                 if optimized is not None:
+                    self._last_knn_pool_backend = 'cuda'
                     return self._mask_invalid_outputs(optimized)
 
+        self._last_knn_pool_backend = 'baseline'
         # pad X_l with a single nan-value that will be indexed by padding units
         X_l = torch.concatenate([X_l, torch.nan*torch.zeros(X_l.shape[0], X_l.shape[1], 1, device=X_l.device, dtype=X_l.dtype)], dim=2)
 

@@ -57,7 +57,7 @@ def load_dinov3(path, device='cuda', pretrained=True):
     """
     processor = AutoImageProcessor.from_pretrained(path)
     if pretrained:
-        model = AutoModel.from_pretrained(path, device_map=device)
+        model = AutoModel.from_pretrained(path).to(device)
     else:
         config = AutoConfig.from_pretrained(path)
         model = AutoModel.from_config(config).to(device)
