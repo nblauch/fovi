@@ -121,6 +121,7 @@ def fovi_alexnet2023(cfg, device='cuda'):
         sample_cortex=cfg.saccades.sample_cortex,
         device=device,
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
+        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
         )
 
     return arch_wrapper(knn, cfg, device=device)
@@ -248,6 +249,7 @@ def build_fovi_resnet_backbone(cfg,
                  out_res=cfg.model.out_grid_size,
                  num_classes=None,
                  isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
+                 fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
                  ref_frame_mult=getattr(cfg.model, 'ref_frame_mult', 1) or 1,
         )
 
@@ -342,6 +344,7 @@ def fovi_vit(cfg, embed_dim, num_heads, device='cuda'):
         aggregation=cfg.model.vit.get('aggregation', 'cls_token'),
         ref_frame_side_length=cfg.model.vit.get('ref_frame_side_length', None),
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
+        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
     )
 
     return arch_wrapper(backbone, cfg, device=device)
@@ -507,7 +510,11 @@ def rescale_fov(cfg):
         crop_size = np.sqrt(crop_area_range[0])*cfg.saccades.fixation_size
         if cmf_a == -1 or cmf_a == 'auto':
             from ..sensing.retina import get_min_cmf_a
-            cmf_a = get_min_cmf_a(crop_size, cfg.saccades.resize_size, cfg.saccades.fixation_size, fov=fov, style=cfg.saccades.mode)
+            cmf_a = get_min_cmf_a(
+                crop_size, cfg.saccades.resize_size,
+                cfg.saccades.fixation_size, fov=fov,
+                style=cfg.saccades.mode,
+                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'))
         # auto FOV assumes the field-of-view is adjusted based on the crop size. this should always be the case, but for backwards compatibility it is not.
         fov = fov*(crop_size/cfg.saccades.fixation_size)
     else:

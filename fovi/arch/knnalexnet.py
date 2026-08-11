@@ -50,6 +50,7 @@ class KNNAlexNetBlock(nn.Module):
                  activation=nn.ReLU, sample_cortex=True, 
                  device='cuda', auto_match_cart_resources=0, ref_frame_mult=None,
                  isotropic_plotting_type='v1like',
+                 fov_type='circular',
                  ):
         super().__init__()
         
@@ -57,7 +58,12 @@ class KNNAlexNetBlock(nn.Module):
         if isinstance(conv_layer, str):
             conv_layer = get_knn_conv_layer(conv_layer)
 
-        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
+        self.in_coords, self.out_coords, out_cart_res = get_in_out_coords(
+            in_res, fov, cmf_a, stride, style=style,
+            auto_match_cart_resources=auto_match_cart_resources,
+            in_cart_res=cart_res, device=device,
+            isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type)
         
         # Compute ref_frame_side_length from ref_frame_mult if provided
         if ref_frame_mult is not None:
@@ -89,7 +95,13 @@ class KNNAlexNetBlock(nn.Module):
         
         # Optional pooling layer
         if pool:
-            _, pooled_coords, out_cart_res = get_in_out_coords(self.in_coords.resolution, fov, cmf_a, pool_stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=out_cart_res, device=device, isotropic_plotting_type=isotropic_plotting_type)
+            _, pooled_coords, out_cart_res = get_in_out_coords(
+                self.in_coords.resolution, fov, cmf_a, pool_stride,
+                style=style,
+                auto_match_cart_resources=auto_match_cart_resources,
+                in_cart_res=out_cart_res, device=device,
+                isotropic_plotting_type=isotropic_plotting_type,
+                fov_type=fov_type)
 
             self.pool = KNNPoolingLayer(
                 k=pool_k,
@@ -164,6 +176,7 @@ class KNNAlexNet(nn.Module):
                  device='cuda', sample_cortex=True,
                  ref_frame_mult=None,
                  isotropic_plotting_type='v1like',
+                 fov_type='circular',
                  ):
         super().__init__()
         self.layers = []
@@ -172,7 +185,9 @@ class KNNAlexNet(nn.Module):
         if isinstance(layer_cls, str):
             layer_cls = get_knn_conv_layer(layer_cls)
         
-        in_res, cart_res = auto_match_num_coords(fov, cmf_a, in_res, style, auto_match_cart_resources, device, quiet=True)
+        in_res, cart_res = auto_match_num_coords(
+            fov, cmf_a, in_res, style, auto_match_cart_resources,
+            device, quiet=True, fov_type=fov_type)
                 
         for i in range(len(features_per_layer)):
 
@@ -185,6 +200,7 @@ class KNNAlexNet(nn.Module):
                 device=device,
                 ref_frame_mult=ref_frame_mult,
                 isotropic_plotting_type=isotropic_plotting_type,
+                fov_type=fov_type,
             )
 
             in_channels = features_per_layer[i]

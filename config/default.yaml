@@ -29,7 +29,7 @@ saccades:
   sample_cortex: True
   sampler: 'grid_nn'
   sampler_backend: 'auto'  # uint8/float: auto | torch | cuda; env override supported
-  circular: 1
+  fov_type: circular
   fov: 16
   rescale_fov: 1
   cmf_a: 0.5

@@ -70,6 +70,7 @@ class FoviNet(nn.Module):
                 auto_match_cart_resources=cfg.saccades.auto_match_cart_resources,
                 isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
                 sampler_backend=getattr(cfg.saccades, 'sampler_backend', 'auto'),
+                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
             )
 
         self.get_repr_sizes()

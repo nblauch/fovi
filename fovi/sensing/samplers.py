@@ -103,6 +103,14 @@ class BaseGridSampler(nn.Module):
             (2.0 * pixel_x / width - 1.0, 2.0 * pixel_y / height - 1.0), dim=-1
         ).unsqueeze(1)
 
+    @staticmethod
+    def _mask_invalid_samples(samples, valid_mask):
+        """Apply deterministic FoV padding without changing forward signatures."""
+        if bool(valid_mask.all()):
+            return samples
+        return samples * valid_mask.to(
+            device=samples.device, dtype=samples.dtype)[None, None, :]
+
 
 @add_to_all(__all__)
 class GridSampler(BaseGridSampler):
@@ -115,7 +123,8 @@ class GridSampler(BaseGridSampler):
     
     def __init__(self, fov, cmf_a, resolution, device='cuda', dtype=torch.float,
                  mode='nearest', style='isotropic', coords=None,
-                 isotropic_plotting_type='v1like', backend='auto', output_dtype=None):
+                 isotropic_plotting_type='v1like', backend='auto',
+                 output_dtype=None, fov_type='circular'):
         """
         Initialize the GridSampler.
         
@@ -155,15 +164,20 @@ class GridSampler(BaseGridSampler):
         self._native_errors = {}
         self._native_uint8_sample_fn = None
         self._native_float_sample_fn = None
+        self.fov_type = fov_type
         
         if coords is None:
-            self.coords = SamplingCoords(fov, cmf_a, resolution, device=device, style=style, dtype=dtype, isotropic_plotting_type=isotropic_plotting_type)
+            self.coords = SamplingCoords(
+                fov, cmf_a, resolution, device=device, style=style,
+                dtype=dtype, isotropic_plotting_type=isotropic_plotting_type,
+                fov_type=fov_type)
         else:
             self.coords = coords
             
         self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
+        self.valid_mask = self.coords.valid_mask
 
     def _requested_backend(self):
         requested = os.environ.get('FOVI_GRID_SAMPLER_BACKEND', self.backend)
@@ -374,6 +388,7 @@ class GridSampler(BaseGridSampler):
                     img.shape[-2:], fix_loc_t, fixation_size_t)
 
         sampled = self._convert_output(sampled)
+        sampled = self._mask_invalid_samples(sampled, self.valid_mask)
         
         if return_coords:
             return sampled, grid
@@ -395,7 +410,8 @@ class GridSampler(BaseGridSampler):
 
     def __repr__(self):
         """String representation of the GridSampler."""
-        return (f'GridSampler(fov={self.fov}, cmf_a={self.cmf_a}, style={self.style}, '
+        return (f'GridSampler(fov={self.fov}, cmf_a={self.cmf_a}, '
+                f'fov_type={self.fov_type!r}, style={self.style}, '
                 f'resolution={self.resolution}, mode={self.mode}, backend={self.backend}, '
                 f'output_dtype={self.output_dtype}, n={len(self.coords)})')
     
@@ -413,7 +429,7 @@ class KNNGridSampler(BaseGridSampler):
     def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1,
                  fixation_size=3000, k=None, style='isotropic', sample_cortex=True,
                  dtype=torch.float, device='cuda', isotropic_plotting_type='v1like',
-                 backend='auto', output_dtype=None):
+                 backend='auto', output_dtype=None, fov_type='circular'):
         """
         Initialize the KNNGridSampler.
         
@@ -431,8 +447,15 @@ class KNNGridSampler(BaseGridSampler):
             device (str, optional): Device to run on. Defaults to 'cuda'.
         """
         super().__init__()
-        self.highres_coords = SamplingCoords(fov, cmf_a_mult*cmf_a, res_mult*resolution, device=device, style=style, dtype=dtype, isotropic_plotting_type=isotropic_plotting_type)
-        self.coords = SamplingCoords(fov, cmf_a, resolution, device=device, style=style, dtype=dtype, isotropic_plotting_type=isotropic_plotting_type)
+        self.highres_coords = SamplingCoords(
+            fov, cmf_a_mult*cmf_a, res_mult*resolution, device=device,
+            style=style, dtype=dtype,
+            isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type)
+        self.coords = SamplingCoords(
+            fov, cmf_a, resolution, device=device, style=style, dtype=dtype,
+            isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type)
 
         if k is None:
             # default to the ratio of the number of pixels in the retinal and cortical grids
@@ -446,7 +469,8 @@ class KNNGridSampler(BaseGridSampler):
         self.input_sampler = GridSampler(
             fov, cmf_a_mult * cmf_a, res_mult * resolution, device=device, dtype=dtype,
             mode='nearest', style=style, coords=self.highres_coords,
-            isotropic_plotting_type=isotropic_plotting_type, backend=backend)
+            isotropic_plotting_type=isotropic_plotting_type, backend=backend,
+            fov_type=fov_type)
         self.backend = backend
         self.output_dtype = output_dtype
         self._last_backend = None
@@ -455,6 +479,8 @@ class KNNGridSampler(BaseGridSampler):
         self.out_sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
 
         self.polar_radius = self.coords.polar[:,0]
+        self.highres_valid_mask = self.highres_coords.valid_mask
+        self.valid_mask = self.coords.valid_mask
         self.fov = fov
         self.cmf_a = cmf_a
         self.resolution = resolution
@@ -463,6 +489,7 @@ class KNNGridSampler(BaseGridSampler):
         self.dtype = dtype
         self.device = device
         self.style = style
+        self.fov_type = fov_type
         self.num_coords = len(self.coords)
         self.sample_cortex = sample_cortex
 
@@ -490,8 +517,12 @@ class KNNGridSampler(BaseGridSampler):
             img, fix_loc=fix_loc, fixation_size=fixation_size,
             direct=direct).to(self.dtype)
         self._last_backend = self.input_sampler._last_backend
+        ret_samples = self._mask_invalid_samples(
+            ret_samples, self.highres_valid_mask)
         # pool to get the final retinal samples
         pooled_samples = self.pooler(ret_samples)
+        pooled_samples = self._mask_invalid_samples(
+            pooled_samples, self.valid_mask)
 
         if self.output_dtype is not None:
             pooled_samples = pooled_samples.to(self.output_dtype)
