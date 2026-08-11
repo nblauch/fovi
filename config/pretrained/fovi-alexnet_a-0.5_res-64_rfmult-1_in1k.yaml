@@ -26,7 +26,7 @@ saccades:
   mode: isotropic
   sample_cortex: true
   sampler: grid_nn
-  circular: 1
+  fov_type: circular
   fov: 16.0
   rescale_fov: 1
   cmf_a: 0.5

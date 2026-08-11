@@ -26,6 +26,66 @@ class KNNBaseLayer:
     This class provides the foundation for KNN-based operations in foveated neural networks,
     including distance computation in both visual and cortical spaces.
     """
+
+    def _set_knn_padding_metadata(self):
+        """Map spatial padding and masked FoV samples to one pad token.
+
+        Masked samples remain candidates during the neighborhood search so they
+        occupy their proper geometric positions.  Replacing their selected
+        indices only after KNN matching prevents receptive fields near a FoV
+        boundary from stretching inward to find additional valid samples.
+        """
+        num_real_coords = self.in_coords.shape[0]
+        self.knn_pad_token_val = num_real_coords
+        padding_mask = torch.logical_or(
+            self.knn_indices >= num_real_coords,
+            self.knn_indices < 0)
+
+        valid_mask = getattr(self.in_coords, 'valid_mask', None)
+        if valid_mask is not None:
+            real_mask = torch.logical_and(
+                self.knn_indices >= 0,
+                self.knn_indices < num_real_coords)
+            if torch.any(real_mask):
+                valid_mask = valid_mask.to(device=self.knn_indices.device)
+                padding_mask[real_mask] = torch.logical_or(
+                    padding_mask[real_mask],
+                    ~valid_mask[self.knn_indices[real_mask]])
+
+        out_valid_mask = getattr(self.out_coords, 'valid_mask', None)
+        if out_valid_mask is not None:
+            out_valid_mask = out_valid_mask.to(
+                device=self.knn_indices.device)
+            padding_mask[:, ~out_valid_mask] = True
+
+        self.knn_indices_pad_mask = padding_mask
+        self.knn_indices_pad_token = self.knn_indices.clone()
+        self.knn_indices_pad_token[padding_mask] = self.knn_pad_token_val
+
+    def _mask_invalid_outputs(self, output):
+        """Zero outputs whose entire KNN neighborhood is spatial padding."""
+        pad_token = getattr(
+            self, 'knn_pad_token_val', self.in_coords.shape[0])
+        valid_mask = ~torch.all(
+            self.knn_indices_pad_token == pad_token, dim=0)
+        if bool(valid_mask.all()):
+            return output
+        valid_mask = valid_mask.to(device=output.device)
+        view_shape = [1] * output.ndim
+        view_shape[-1] = valid_mask.numel()
+        return torch.where(
+            valid_mask.reshape(view_shape), output, torch.zeros_like(output))
+
+    @staticmethod
+    def _as_geodesic_vertices(coords):
+        """Lift a planar cortical representation into PyGeodesic's 3-D API."""
+        if coords.shape[1] == 2:
+            return F.pad(coords, (0, 1))
+        if coords.shape[1] == 3:
+            return coords
+        raise ValueError(
+            "geodesic cortical coordinates must have two or three columns, "
+            f"got shape {tuple(coords.shape)}")
     
     def _compute_knns(self, batch_size=None):
         """
@@ -89,9 +149,11 @@ class KNNBaseLayer:
             
             # Compute geodesic distances
             tri = Delaunay(self.sample_coords_cart[target_points].cpu())
-            F = tri.simplices  # shape: [M, 3]
-            V = self.sample_coords[target_points].cpu() # [N, 3]  3D positions
-            algorithm = geodesic.PyGeodesicAlgorithmExact(V, F)
+            faces = tri.simplices  # shape: [M, 3]
+            vertices = self._as_geodesic_vertices(
+                self.sample_coords[target_points]).cpu().numpy()
+            algorithm = geodesic.PyGeodesicAlgorithmExact(
+                vertices, faces)
             dists = algorithm.geodesicDistances([0])
             
             # Store geodesic distances for all candidates
@@ -114,12 +176,20 @@ class KNNBaseLayer:
         if self.sample_cortex:
             self.sample_coords_cart = torch.concatenate([self.in_coords.cartesian, self.in_coords.cartesian_pad_coords], dim=0)
             out_coords = self.out_coords.cortical.clone()
-            if self.in_coords.style in ['image', 'logpolar']:
-                assert self.out_coords.style == self.in_coords.style 
+            if self.in_coords.style == 'logpolar':
+                assert self.out_coords.style == self.in_coords.style
+                self.sample_coords = torch.concatenate((
+                    self.in_coords.cortical,
+                    self.in_coords.cortical_pad_coords), dim=0)
+                wrap_row = True
+                angular_period = 1.0
+            elif self.in_coords.style == 'image':
+                assert self.out_coords.style == self.in_coords.style
                 self.sample_coords = self.in_coords.cortical.clone() # not bothering with pad coords here
                 self.sample_coords = (self.sample_coords - self.sample_coords.min(dim=0)[0])/(self.sample_coords.max(dim=0)[0] - self.sample_coords.min(dim=0)[0])
                 out_coords = (out_coords - out_coords.min(dim=0)[0])/(out_coords.max(dim=0)[0] - out_coords.min(dim=0)[0])
                 wrap_row = True
+                angular_period = self.sample_coords[:,1].max()
             else:
                 self.sample_coords = torch.concatenate([self.in_coords.cortical, self.in_coords.cortical_pad_coords], dim=0)
         else:
@@ -141,10 +211,8 @@ class KNNBaseLayer:
                 # for log polar image cortical distances, we wrap along the row dimension (angles)
                 row_dists = torch.cdist(self.sample_coords[:,0].unsqueeze(1), batch_out_coords[:,0].unsqueeze(1), p=1)
                 col_dists = torch.cdist(self.sample_coords[:,1].unsqueeze(1), batch_out_coords[:,1].unsqueeze(1), p=1)
-                max_row = self.sample_coords[:,1].max()
-                mid_row = self.sample_coords[:,1].min() + (max_row - self.sample_coords[:,1].min())/2
-                wrap_inds = col_dists > mid_row
-                col_dists[wrap_inds] = max_row - col_dists[wrap_inds]
+                col_dists = torch.minimum(
+                    col_dists, angular_period - col_dists)
                 batch_distances = (row_dists**2 + col_dists**2)**(1/2)
             else:
                 batch_distances = torch.cdist(self.sample_coords, batch_out_coords)
@@ -191,9 +259,11 @@ class KNNBaseLayer:
                 source_idx = i
                 target_points = D_euc[:,i].topk(num_neighbors, dim=0, largest=False).indices
                 tri = Delaunay(self.sample_coords_cart[target_points].cpu())
-                F = tri.simplices  # shape: [M, 3]
-                V = self.sample_coords[target_points].cpu() # [N, 3]  3D positions
-                algorithm = geodesic.PyGeodesicAlgorithmExact(V, F)
+                faces = tri.simplices  # shape: [M, 3]
+                vertices = self._as_geodesic_vertices(
+                    self.sample_coords[target_points]).cpu().numpy()
+                algorithm = geodesic.PyGeodesicAlgorithmExact(
+                    vertices, faces)
                 dists = algorithm.geodesicDistances([0])
                 all_dists.append(dists[0])
                 all_indices.append(target_points)
@@ -205,12 +275,20 @@ class KNNBaseLayer:
             if self.sample_cortex:
                 self.sample_coords_cart = torch.concatenate([self.in_coords.cartesian, self.in_coords.cartesian_pad_coords], dim=0)
                 out_coords = self.out_coords.cortical.clone()
-                if self.in_coords.style == 'image':
+                if self.in_coords.style == 'logpolar':
+                    assert self.out_coords.style == self.in_coords.style
+                    self.sample_coords = torch.concatenate((
+                        self.in_coords.cortical,
+                        self.in_coords.cortical_pad_coords), dim=0)
+                    wrap_row = True
+                    angular_period = 1.0
+                elif self.in_coords.style == 'image':
                     self.sample_coords = self.in_coords.cortical.clone() # not bothering with pad coords here
                     self.sample_coords = (self.sample_coords - self.sample_coords.min(dim=0)[0])/(self.sample_coords.max(dim=0)[0] - self.sample_coords.min(dim=0)[0])
                     out_coords = (out_coords - out_coords.min(dim=0)[0])/(out_coords.max(dim=0)[0] - out_coords.min(dim=0)[0])
                     wrap_row = True
                     assert self.out_coords.style == 'image'
+                    angular_period = self.sample_coords[:,1].max()
                 else:
                     self.sample_coords = torch.concatenate([self.in_coords.cortical, self.in_coords.cortical_pad_coords], dim=0)
             else:
@@ -221,10 +299,8 @@ class KNNBaseLayer:
                 # for log polar image cortical distances, we wrap along the row dimension (angles)
                 row_dists = torch.cdist(self.sample_coords[:,0].unsqueeze(1), out_coords[:,0].unsqueeze(1), p=1)
                 col_dists = torch.cdist(self.sample_coords[:,1].unsqueeze(1), out_coords[:,1].unsqueeze(1), p=1)
-                max_row = self.sample_coords[:,1].max()
-                mid_row = self.sample_coords[:,1].min() + (max_row - self.sample_coords[:,1].min())/2
-                wrap_inds = col_dists > mid_row
-                col_dists[wrap_inds] = max_row - col_dists[wrap_inds]
+                col_dists = torch.minimum(
+                    col_dists, angular_period - col_dists)
                 distances = (row_dists**2 + col_dists**2)**(1/2)
             else:
                 distances = torch.cdist(self.sample_coords, out_coords)
@@ -251,11 +327,7 @@ class KNNGetterLayer(nn.Module, KNNBaseLayer):
 
         self.knn_indices, self.knn_distances = self._compute_knns(batch_size)
 
-        # compute padding mask for use at inference
-        self.knn_pad_token_val = self.in_coords.shape[0]
-        self.knn_indices_pad_mask = self.knn_indices >= self.in_coords.shape[0]
-        self.knn_indices_pad_token = self.knn_indices.clone()
-        self.knn_indices_pad_token[self.knn_indices_pad_mask] = self.knn_pad_token_val # pad index
+        self._set_knn_padding_metadata()
 
     def forward(self, X_l):
         """
@@ -319,11 +391,7 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
 
         self.knn_indices, self.knn_distances = self._compute_knns(batch_size)
 
-        # compute padding mask for use at inference
-        self.knn_pad_token_val = self.in_coords.shape[0]
-        self.knn_indices_pad_mask = self.knn_indices >= self.in_coords.shape[0]
-        self.knn_indices_pad_token = self.knn_indices.clone()
-        self.knn_indices_pad_token[self.knn_indices_pad_mask] = self.knn_pad_token_val # pad index
+        self._set_knn_padding_metadata()
 
         if self.mode == 'gaussian':
             self.gauss_sigma = gauss_sigma
@@ -373,7 +441,7 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
             if _optimized_pool_forward is not None:
                 optimized = _optimized_pool_forward(self, X_l)
                 if optimized is not None:
-                    return optimized
+                    return self._mask_invalid_outputs(optimized)
 
         # pad X_l with a single nan-value that will be indexed by padding units
         X_l = torch.concatenate([X_l, torch.nan*torch.zeros(X_l.shape[0], X_l.shape[1], 1, device=X_l.device, dtype=X_l.dtype)], dim=2)
@@ -414,7 +482,7 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
         else:
             raise NotImplementedError(f"Pooling style {self.mode} not implemented")
                 
-        return X_out
+        return self._mask_invalid_outputs(X_out)
 
     def __repr__(self):
         return f'KNNPoolingLayer(\n\tmode={self.mode}\n\tk={self.k}\n\tin_coords={self.in_coords}\n\tout_coords={self.out_coords}\n\tsample_cortex={self.sample_cortex}\n)'
@@ -481,10 +549,7 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
 
         self.knn_indices, self.knn_distances = self._compute_knns(batch_size)
 
-        # compute padding mask for use at inference
-        self.knn_indices_pad_mask = self.knn_indices >= self.in_coords.shape[0]
-        self.knn_indices_pad_token = self.knn_indices.clone()
-        self.knn_indices_pad_token[self.knn_indices_pad_mask] = self.in_coords.shape[0] # pad index
+        self._set_knn_padding_metadata()
 
         # this will be updated to the correct size for a batch to be used for batches of the same size
         self.knn_indices_batch_cache = self.knn_indices_pad_token
@@ -582,7 +647,7 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         
         optimized = optimized_forward(self, X_l)
         if optimized is not None:
-            return optimized
+            return self._mask_invalid_outputs(optimized)
 
         knn_features = self._pad_and_gather_knns(X_l)
 
@@ -596,7 +661,7 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         # on tiny-Nout/large-Cin*V cells.
         X_out = F.linear(knn_features.contiguous(), self.weight, self.bias).transpose(1,2)  # Shape: [batch, d_l+1, num_coords]
         
-        return X_out
+        return self._mask_invalid_outputs(X_out)
 
     def clear_optimized_cache(self):
         """Release derived compact indices and inference-only effective weights."""
@@ -868,7 +933,7 @@ class KNNDepthwiseSeparableConvLayer(KNNConvLayer):
         # apply pointwise conv
         X_out = self.p_conv(dw_features).transpose(1,2)  # Shape: [batch, d_l+1, num_coords]
         
-        return X_out     
+        return self._mask_invalid_outputs(X_out)
 
 
 @add_to_all(__all__)
@@ -941,7 +1006,7 @@ class KNNDepthwiseConvLayer(KNNConvLayer):
 
         X_out = X_out + self.bias[None, :, None]
         
-        return X_out            
+        return self._mask_invalid_outputs(X_out)
 
 
 @add_to_all(__all__)
@@ -1028,7 +1093,12 @@ def compute_binary_receptive_field(knn_indices_list, layer_of_interest, unit_of_
 
 
 @add_to_all(__all__)
-def get_in_out_coords(in_res, fov, cmf_a, stride, style='isotropic', auto_match_cart_resources=1, in_cart_res=None, device='cuda', in_coords=None, force_out_match_less_than=True, max_out_coord_val=1, isotropic_plotting_type='v1like'):
+def get_in_out_coords(
+        in_res, fov, cmf_a, stride, style='isotropic',
+        auto_match_cart_resources=1, in_cart_res=None, device='cuda',
+        in_coords=None, force_out_match_less_than=True,
+        max_out_coord_val=1, isotropic_plotting_type='v1like',
+        fov_type='circular'):
     """
     Convenience function to generate input and output coordinates for KNN layers.
     
@@ -1054,8 +1124,14 @@ def get_in_out_coords(in_res, fov, cmf_a, stride, style='isotropic', auto_match_
     # Generate input coordinates if not provided
     if in_coords is None:
         if auto_match_cart_resources:
-            in_res, in_cart_res = auto_match_num_coords(fov, cmf_a, in_cart_res, style, auto_match_cart_resources, device, force_less_than=True, quiet=True)
-        in_coords = SamplingCoords(fov, cmf_a, in_res, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type)
+            in_res, in_cart_res = auto_match_num_coords(
+                fov, cmf_a, in_cart_res, style,
+                auto_match_cart_resources, device, force_less_than=True,
+                quiet=True, fov_type=fov_type)
+        in_coords = SamplingCoords(
+            fov, cmf_a, in_res, device=device, style=style,
+            isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type)
 
     if max_out_coord_val == 'auto':
         tmp_max_val = 1

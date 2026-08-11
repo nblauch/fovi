@@ -110,6 +110,7 @@ def build_fovi_dinov3(cfg, device='cuda'):
             transposed=True,
             bias=True,
             isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
+            fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
             **kwargs,
         )
         # load in pretrained weights to foveated patch embedding

@@ -42,6 +42,7 @@ class KNNPatchEmbedding(KNNConvLayer):
                  sample_cortex='geodesic',
                  ref_frame_side_length=None,
                  isotropic_plotting_type='v1like',
+                 fov_type='circular',
                  **kwargs,
                  ):
         """Initialize KNN tokenization layer.
@@ -74,7 +75,14 @@ class KNNPatchEmbedding(KNNConvLayer):
             # resolution is fixed, k is adapted to match overlap factor
             stride = cart_patch_size
 
-        in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val, isotropic_plotting_type=isotropic_plotting_type)
+        in_coords, out_coords, out_cart_res = get_in_out_coords(
+            in_res, fov, cmf_a, stride, style=style,
+            auto_match_cart_resources=auto_match_cart_resources,
+            in_cart_res=in_cart_res, device=device,
+            force_out_match_less_than=force_patches_less_than_matched,
+            max_out_coord_val=max_coord_val,
+            isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type)
 
         if not new_parameterization:
             k = int((cart_patch_size*(out_cart_res)/(np.sqrt(len(out_coords)))*patch_overlap_factor)**2)
@@ -128,6 +136,7 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
                  in_coords=None,
                  out_coords=None,
                  isotropic_plotting_type='v1like',
+                 fov_type='circular',
                  ):
         """Initialize partitioning patch embedding layer.
         
@@ -158,7 +167,14 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
         if in_coords is not None or out_coords is not None:
             assert in_coords is not None and out_coords is not None, "in_coords and out_coords must be provided if provided"
         else:
-            in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val, isotropic_plotting_type=isotropic_plotting_type)
+            in_coords, out_coords, out_cart_res = get_in_out_coords(
+                in_res, fov, cmf_a, stride, style=style,
+                auto_match_cart_resources=auto_match_cart_resources,
+                in_cart_res=in_cart_res, device=device,
+                force_out_match_less_than=force_patches_less_than_matched,
+                max_out_coord_val=max_coord_val,
+                isotropic_plotting_type=isotropic_plotting_type,
+                fov_type=fov_type)
 
         self.in_channels = in_channels
         self.out_channels = embed_dim
@@ -194,10 +210,9 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
 
         print(f'minimum k to use all inputs: {self.k}')
 
-        # compute padding mask for use at inference - compatibility with KNNConv
-        self.knn_indices_pad_mask = torch.logical_or(self.knn_indices >= self.in_coords.shape[0], self.knn_indices < 0)
-        self.knn_indices_pad_token = self.knn_indices.clone()
-        self.knn_indices_pad_token[self.knn_indices_pad_mask] = self.knn_pad_token_val # pad index
+        # Compute padding metadata after partitioning so masked FoV cells keep
+        # their geometric slots but gather the same pad value as index padding.
+        self._set_knn_padding_metadata()
         # this will be updated to the correct size for a batch to be used for batches of the same size
         self.knn_indices_batch_cache = self.knn_indices_pad_token
 
@@ -240,6 +255,7 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
                 max_coord_val='auto',
                 sample_cortex='geodesic',
                 isotropic_plotting_type='v1like',
+                fov_type='circular',
                  **kwargs,
                  ):
         """Initialize KNN partitioning patch embedding layer.
@@ -264,7 +280,14 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
 
         stride = cart_patch_size # match number of tokens exactly with cartesian version
 
-        in_coords, out_coords, out_cart_res = get_in_out_coords(in_res, fov, cmf_a, stride, style=style, auto_match_cart_resources=auto_match_cart_resources, in_cart_res=in_cart_res, device=device, force_out_match_less_than=force_patches_less_than_matched, max_out_coord_val=max_coord_val, isotropic_plotting_type=isotropic_plotting_type)
+        in_coords, out_coords, out_cart_res = get_in_out_coords(
+            in_res, fov, cmf_a, stride, style=style,
+            auto_match_cart_resources=auto_match_cart_resources,
+            in_cart_res=in_cart_res, device=device,
+            force_out_match_less_than=force_patches_less_than_matched,
+            max_out_coord_val=max_coord_val,
+            isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type)
 
         # compute a partitioning, then use the maximum RF size to set k
         k = int(len(in_coords) / len(out_coords)) # set temporary k for use in geodesic dist computation, if necessary
@@ -325,6 +348,7 @@ class KNNViT(VisionTransformer):
                  aggregation='cls_token',
                  ref_frame_side_length=None,
                  isotropic_plotting_type='v1like',
+                 fov_type='circular',
                  ):
         """Initialize KNNViT model.
         
@@ -376,6 +400,7 @@ class KNNViT(VisionTransformer):
             force_patches_less_than_matched=force_patches_less_than_matched,
             ref_frame_side_length=ref_frame_side_length,
             isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type,
         )
         
         # Get cartesian coordinates for positional encoding

@@ -44,6 +44,7 @@ class RetinalTransform(nn.Module):
                  no_color_val=False,
                  isotropic_plotting_type='v1like',
                  sampler_backend='auto',
+                 fov_type='circular',
                  **kwargs, # passed to the sampler
                  ):
         """
@@ -66,12 +67,15 @@ class RetinalTransform(nn.Module):
             no_color_val (bool, optional): Whether to disable color in eval mode. Defaults to False.
             sampler_backend (str, optional): Sampler backend (``auto``, ``torch``, or
                 ``cuda``) for both uint8 and floating inputs. Defaults to ``auto``.
+            fov_type (str, optional): FoV geometry. Defaults to
+                ``'circular'``.
             **kwargs: Additional arguments passed to warping function.
         """
         super().__init__()
         self.sigma = sigma
         self.cmf_a = cmf_a
         self.fov = fov
+        self.fov_type = fov_type
         full_fov = self.fov
         self.fixation_size = start_res if fixation_size is None else fixation_size # this is the maximum fixation size
         self.start_res = start_res
@@ -86,7 +90,10 @@ class RetinalTransform(nn.Module):
                 resolution = resolution
             else:
                 # otherwise we determine it now
-                resolution, num_coords = find_desired_res(fov, cmf_a, num_coords, style=style, device=self.device, force_less_than=True, quiet=True)
+                resolution, num_coords = find_desired_res(
+                    fov, cmf_a, num_coords, style=style,
+                    device=self.device, force_less_than=True, quiet=True,
+                    fov_type=fov_type)
 
         self.resolution = resolution
 
@@ -104,13 +111,29 @@ class RetinalTransform(nn.Module):
         self.foveal_color = GaussianColorDecay(sigma)
 
         if sampler == 'gaussian_pooling':
-            self.sampler = GaussianKNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
+            self.sampler = GaussianKNNGridSampler(
+                self.fov, self.cmf_a, resolution,
+                fixation_size=self.fixation_size, device=device, style=style,
+                isotropic_plotting_type=isotropic_plotting_type,
+                backend=sampler_backend, fov_type=fov_type, **kwargs)
         elif sampler == 'pooling':
-            self.sampler = KNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
+            self.sampler = KNNGridSampler(
+                self.fov, self.cmf_a, resolution,
+                fixation_size=self.fixation_size, device=device, style=style,
+                isotropic_plotting_type=isotropic_plotting_type,
+                backend=sampler_backend, fov_type=fov_type, **kwargs)
         elif sampler == 'grid_nn':
-            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='nearest', style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
+            self.sampler = GridSampler(
+                self.fov, self.cmf_a, resolution, device=device,
+                mode='nearest', style=style,
+                isotropic_plotting_type=isotropic_plotting_type,
+                backend=sampler_backend, fov_type=fov_type, **kwargs)
         elif sampler == 'grid_bilinear':
-            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='bilinear', style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
+            self.sampler = GridSampler(
+                self.fov, self.cmf_a, resolution, device=device,
+                mode='bilinear', style=style,
+                isotropic_plotting_type=isotropic_plotting_type,
+                backend=sampler_backend, fov_type=fov_type, **kwargs)
 
         else:
             raise ValueError(f'Invalid sampler: {sampler}')
@@ -126,6 +149,7 @@ class RetinalTransform(nn.Module):
         self._padding_mask_src_cache = None
 
         self.scatter_sizes = self.sampler.coords.get_scatter_sizes().cpu().numpy()
+        self.valid_mask = self.sampler.valid_mask
 
     @torch.autocast(device_type='cuda', enabled=False)
     def forward(self, x, fix_loc, fixation_size=None, **kwargs):
@@ -548,7 +572,10 @@ def _color_jitter_points(pts, full_sel, hue, sat, val, con):
 
 
 @add_to_all(__all__)
-def min_diff_for_cmf_a(cmf_a, fov, output_res, fixation_size, force_n_points=None, disallow_undersampling=True, force_less_than=False, device='cuda'):
+def min_diff_for_cmf_a(
+        cmf_a, fov, output_res, fixation_size, force_n_points=None,
+        disallow_undersampling=True, force_less_than=False, device='cuda',
+        fov_type='circular'):
     """
     Helper function that computes minimum difference between radii for a given cmf_a value.
     
@@ -561,15 +588,21 @@ def min_diff_for_cmf_a(cmf_a, fov, output_res, fixation_size, force_n_points=Non
         disallow_undersampling (bool, optional): Whether to disallow undersampling. Defaults to True.
         force_less_than (bool, optional): Whether to force less than. Defaults to False.
         device (str, optional): Device to use. Defaults to 'cuda'.
+        fov_type (str, optional): FoV geometry. Isotropic CMF fitting supports
+            ``'circular'`` and ``'square'``.
         
     Returns:
         float: Minimum difference between radii.
     """
     if force_n_points is not None:
-        output_res = find_desired_res(fov, cmf_a, force_n_points, 'isotropic', device=device, force_less_than=force_less_than, quiet=True)
+        output_res = find_desired_res(
+            fov, cmf_a, force_n_points, 'isotropic', device=device,
+            force_less_than=force_less_than, quiet=True,
+            fov_type=fov_type)
 
     w_min = np.log(cmf_a)
-    w_max = np.log(cmf_a + fov/2)
+    r_max = fov / 2
+    w_max = np.log(cmf_a + r_max)
 
     log_radius = np.linspace(w_min, w_max, output_res//2)
     lin_radius = np.exp(log_radius) - cmf_a
@@ -583,7 +616,11 @@ def min_diff_for_cmf_a(cmf_a, fov, output_res, fixation_size, force_n_points=Non
     return np.abs(1 - min_diff)  # Return difference from target min_diff of 1
 
 @add_to_all(__all__)
-def get_min_cmf_a(fixation_size, output_res, start_res=5496, fov=65, start_cmf_a=0.15, style='isotropic', maxiters=200, disallow_undersampling=True, use_scaled_fov=True, device='cuda'):
+def get_min_cmf_a(
+        fixation_size, output_res, start_res=5496, fov=65,
+        start_cmf_a=0.15, style='isotropic', maxiters=200,
+        disallow_undersampling=True, use_scaled_fov=True, device='cuda',
+        fov_type='circular'):
     """
     Find the minimum cmf_a value that satisfies the constraints.
     
@@ -597,6 +634,7 @@ def get_min_cmf_a(fixation_size, output_res, start_res=5496, fov=65, start_cmf_a
         maxiters (int, optional): Maximum iterations for optimization. Defaults to 200.
         disallow_undersampling (bool, optional): Whether to disallow undersampling. Defaults to True.
         use_scaled_fov (bool, optional): Whether to use scaled FOV. Defaults to True.
+        fov_type (str, optional): FoV geometry. Defaults to ``'circular'``.
         
     Returns:
         float or None: Minimum cmf_a value, or None if not found.
@@ -605,7 +643,10 @@ def get_min_cmf_a(fixation_size, output_res, start_res=5496, fov=65, start_cmf_a
         fov = fov * (fixation_size / start_res)
     
     def loss_fn(cmf_a):
-        return min_diff_for_cmf_a(cmf_a, fov, output_res, fixation_size, disallow_undersampling=disallow_undersampling, device=device)
+        return min_diff_for_cmf_a(
+            cmf_a, fov, output_res, fixation_size,
+            disallow_undersampling=disallow_undersampling, device=device,
+            fov_type=fov_type)
     
     try:
         result = minimize_scalar(loss_fn, bounds=(0.01, 1000), method='bounded', options=dict(maxiter=maxiters))
