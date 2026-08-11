@@ -28,7 +28,7 @@ saccades:
   mode: 'isotropic'
   sample_cortex: True
   sampler: 'grid_nn'
-  sampler_backend: 'auto'  # auto | torch | cuda; env FOVI_GRID_SAMPLER_BACKEND overrides
+  sampler_backend: 'auto'  # uint8/float: auto | torch | cuda; env override supported
   circular: 1
   fov: 16
   rescale_fov: 1

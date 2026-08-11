@@ -82,30 +82,6 @@ def _sampling_coords(output_resolution, device):
     return SimpleNamespace(cartesian=cartesian, polar=polar)
 
 
-def _torch_direct_nearest(
-        image, sampling_grid, fix_loc, fix_size, coordinate_dtype):
-    """Eager direct-index reference with an explicit coordinate compute dtype."""
-    height, width = image.shape[-2:]
-    base = sampling_grid[0, 0].to(
-        device=image.device, dtype=coordinate_dtype)
-    fix_loc = fix_loc.to(device=image.device, dtype=coordinate_dtype)
-    fix_size = fix_size.to(device=image.device, dtype=coordinate_dtype)
-    pixel_x = (
-        base[None, :, 0] * (fix_size[:, None, 1] * 0.5)
-        + fix_loc[:, None, 1] * width)
-    pixel_y = (
-        base[None, :, 1] * (fix_size[:, None, 0] * 0.5)
-        + fix_loc[:, None, 0] * height)
-    x = torch.round(pixel_x - 0.5).long()
-    y = torch.round(pixel_y - 0.5).long()
-    valid = (x >= 0) & (x < width) & (y >= 0) & (y < height)
-    x = x.clamp(0, width - 1)
-    y = y.clamp(0, height - 1)
-    batch_index = torch.arange(image.shape[0], device=image.device)[:, None]
-    values = image.permute(0, 2, 3, 1)[batch_index, y, x].permute(0, 2, 1)
-    return values * valid[:, None, :].to(values.dtype)
-
-
 def benchmark_case(height, width, output_resolution, device, iterations):
     image = torch.randint(
         0, 256, (1, 3, height, width), dtype=torch.uint8, device=device)
@@ -122,8 +98,6 @@ def benchmark_case(height, width, output_resolution, device, iterations):
     converted_sampler = GridSampler(
         16.0, 0.5, output_resolution, device=device, mode="nearest", backend="torch",
         coords=eager.coords)
-
-    from fovi.sensing.grid_sample_cuda import _sample_float_nearest
 
     def native_sample():
         return native(image, fix_loc, fix_size)
@@ -150,34 +124,33 @@ def benchmark_case(height, width, output_resolution, device, iterations):
     float_results = {}
     for dtype_label, image_dtype, coordinate_dtype in FLOAT_CASES:
         float_image = image.to(image_dtype).div_(255.0)
-        grid_coords = SimpleNamespace(
-            cartesian=coords.cartesian.to(coordinate_dtype),
-            polar=coords.polar.to(coordinate_dtype))
+        direct_sampler = GridSampler(
+            16.0, 0.5, output_resolution, device=device, dtype=coordinate_dtype,
+            mode="nearest", backend="torch", coords=coords)
+        native_sampler = GridSampler(
+            16.0, 0.5, output_resolution, device=device, dtype=coordinate_dtype,
+            mode="nearest", backend="cuda", coords=coords)
         grid_sampler = GridSampler(
             16.0, 0.5, output_resolution, device=device, dtype=coordinate_dtype,
-            mode="nearest", backend="torch", coords=grid_coords)
-        grid_fix_loc = fix_loc.to(coordinate_dtype)
-        grid_fix_size = fix_size.to(coordinate_dtype)
+            mode="nearest", backend="torch", coords=coords)
 
         def float_direct():
-            return _torch_direct_nearest(
-                float_image, eager.sampling_grid, fix_loc, fix_size,
-                coordinate_dtype)
+            return direct_sampler(
+                float_image, fix_loc, fix_size, direct=True)
 
         def float_native():
-            return _sample_float_nearest(
-                float_image, eager.sampling_grid, fix_loc, fix_size)
+            return native_sampler(float_image, fix_loc, fix_size)
 
         def float_grid_sample():
-            sampled = grid_sampler(
-                float_image.to(coordinate_dtype), grid_fix_loc, grid_fix_size)
-            return sampled.to(image_dtype)
+            return grid_sampler(float_image, fix_loc, fix_size)
 
-        # Compile and validate each benchmark-only native specialization outside timing.
+        # Compile and validate each public native path outside timing.
         native_float = float_native()
         float_direct_reference = float_direct()
         torch.testing.assert_close(
             native_float, float_direct_reference, rtol=0.0, atol=0.0)
+        if native_sampler._last_backend != "cuda":
+            raise RuntimeError("native benchmark did not use the CUDA backend")
         grid_sample_reference = float_grid_sample()
         grid_mismatch_percent = (
             torch.count_nonzero(

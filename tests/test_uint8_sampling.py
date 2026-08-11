@@ -213,5 +213,115 @@ class TestNativeUint8Sampler(unittest.TestCase):
         torch.testing.assert_close(optimized, reference, rtol=0, atol=0)
 
 
+@unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
+class TestNativeFloatingSampler(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import cupy  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("CuPy is unavailable")
+        cls.device = "cuda:0"
+
+    def _compare(self, image_dtype, mode, noncontiguous=False):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.to(image_dtype).div_(255.0)
+        if noncontiguous:
+            image = image.repeat_interleave(2, dim=-1)[..., ::2]
+            self.assertFalse(image.is_contiguous())
+        reference_sampler = _sampler(mode, self.device, "torch")
+        native_sampler = _sampler(mode, self.device, "cuda")
+        native_sampler.coords = reference_sampler.coords
+        native_sampler.sampling_grid = reference_sampler.sampling_grid
+        reference = reference_sampler(
+            image, fix_loc, fix_size, direct=True)
+        native = native_sampler(image, fix_loc, fix_size)
+        self.assertEqual(native.dtype, image_dtype)
+        self.assertEqual(native_sampler._last_backend, "cuda")
+        if mode == "nearest":
+            self.assertTrue(torch.equal(native, reference))
+        elif image_dtype == torch.float16:
+            torch.testing.assert_close(native, reference, rtol=0, atol=5e-4)
+        elif image_dtype == torch.float32:
+            torch.testing.assert_close(native, reference, rtol=1e-6, atol=1e-6)
+        else:
+            torch.testing.assert_close(native, reference, rtol=1e-12, atol=1e-12)
+
+    def test_nearest_and_bilinear_all_supported_dtypes(self):
+        for image_dtype in (torch.float16, torch.float32, torch.float64):
+            with self.subTest(dtype=image_dtype, mode="nearest"):
+                self._compare(image_dtype, "nearest")
+            with self.subTest(dtype=image_dtype, mode="bilinear"):
+                self._compare(image_dtype, "bilinear")
+
+    def test_noncontiguous_inputs(self):
+        for image_dtype in (torch.float16, torch.float32, torch.float64):
+            with self.subTest(dtype=image_dtype):
+                self._compare(image_dtype, "nearest", noncontiguous=True)
+
+    def test_auto_selects_native_and_torch_forces_grid_sample(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.float().div_(255.0)
+        automatic = _sampler(device=self.device, backend="auto")
+        forced_torch = _sampler(device=self.device, backend="torch")
+        automatic(image, fix_loc, fix_size)
+        forced_torch(image, fix_loc, fix_size)
+        self.assertEqual(automatic._last_backend, "cuda")
+        self.assertEqual(forced_torch._last_backend, "torch_grid_sample")
+
+    def test_environment_override_forces_float_grid_sample(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.float().div_(255.0)
+        sampler = _sampler(device=self.device, backend="auto")
+        with mock.patch.dict(
+                os.environ, {"FOVI_GRID_SAMPLER_BACKEND": "torch"}):
+            sampler(image, fix_loc, fix_size)
+        self.assertEqual(sampler._last_backend, "torch_grid_sample")
+
+    def test_auto_falls_back_for_gradients(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.float().div_(255.0).requires_grad_()
+        sampler = _sampler(device=self.device, backend="auto")
+        output = sampler(image, fix_loc, fix_size)
+        self.assertEqual(sampler._last_backend, "torch_grid_sample")
+        output.sum().backward()
+        self.assertIsNotNone(image.grad)
+
+    def test_cuda_rejects_gradients(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.float().div_(255.0).requires_grad_()
+        sampler = _sampler(device=self.device, backend="cuda")
+        with self.assertRaisesRegex(RuntimeError, "no required gradients"):
+            sampler(image, fix_loc, fix_size)
+
+    def test_auto_falls_back_when_native_dependency_is_unavailable(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.float().div_(255.0)
+        sampler = _sampler(device=self.device, backend="auto")
+        with mock.patch("fovi.sensing.samplers.warnings.warn") as warn:
+            with mock.patch.object(
+                    sampler, "_native_float_sample",
+                    side_effect=ImportError("missing")):
+                output = sampler(image, fix_loc, fix_size)
+        self.assertIn("using grid_sample", warn.call_args.args[0])
+        self.assertEqual(output.dtype, torch.float32)
+        self.assertEqual(sampler._last_backend, "torch_grid_sample")
+
+    def test_bfloat16_auto_uses_float32_grid_sample_fallback(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.to(torch.bfloat16).div_(255.0)
+        sampler = _sampler(device=self.device, backend="auto")
+        output = sampler(image, fix_loc, fix_size)
+        self.assertEqual(output.dtype, torch.bfloat16)
+        self.assertEqual(sampler._last_backend, "torch_grid_sample")
+
+    def test_float64_return_coords_preserves_compute_dtype(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        image = image.double().div_(255.0)
+        sampler = _sampler(device=self.device, backend="cuda")
+        _, grid = sampler(image, fix_loc, fix_size, return_coords=True)
+        self.assertEqual(grid.dtype, torch.float64)
+
+
 if __name__ == "__main__":
     unittest.main()

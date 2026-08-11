@@ -64,8 +64,8 @@ class RetinalTransform(nn.Module):
             post_transforms (callable, optional): Post-processing transforms. Defaults to None.
             sigma (float, optional): Standard deviation for Gaussian color decay. Defaults to None.
             no_color_val (bool, optional): Whether to disable color in eval mode. Defaults to False.
-            sampler_backend (str, optional): Integer sampler backend (``auto``, ``torch``,
-                or ``cuda``). Defaults to ``auto``.
+            sampler_backend (str, optional): Sampler backend (``auto``, ``torch``, or
+                ``cuda``) for both uint8 and floating inputs. Defaults to ``auto``.
             **kwargs: Additional arguments passed to warping function.
         """
         super().__init__()
