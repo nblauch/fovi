@@ -4,9 +4,9 @@ Run from the repository root::
 
     python benchmarks/benchmark_uint8_sampling.py --device cuda:0
 
-The float baseline includes the full-frame uint8-to-unit-float conversion that a camera
-stream otherwise pays before ``torch.grid_sample``.  ``native + compact unit`` includes the
-small conversion performed by ``RetinalTransform`` after native nearest sampling.
+Every measured path returns unit-range float output.  The PyTorch direct-index and native
+paths convert only the compact sampled tensor; the ``grid_sample`` baseline converts the
+full camera frame before sampling.
 """
 
 import argparse
@@ -49,11 +49,11 @@ def benchmark_case(height, width, output_resolution, device):
         16.0, 0.5, output_resolution, device=device, mode="nearest", backend="torch",
         coords=eager.coords)
 
-    def eager_sample():
-        return eager(image, fix_loc, fix_size)
-
     def native_sample():
         return native(image, fix_loc, fix_size)
+
+    def eager_unit():
+        return eager(image, fix_loc, fix_size).float().div_(255.0)
 
     def native_unit():
         return native(image, fix_loc, fix_size).float().div_(255.0)
@@ -65,10 +65,9 @@ def benchmark_case(height, width, output_resolution, device):
     native_sample()
     torch.cuda.synchronize()
     results = {
-        "eager gather": _measure(eager_sample),
-        "native": _measure(native_sample),
-        "native + compact unit": _measure(native_unit),
-        "full float + grid_sample": _measure(float_grid_sample),
+        "PyTorch direct + compact conversion": _measure(eager_unit),
+        "native + compact conversion": _measure(native_unit),
+        "full-frame conversion + grid_sample": _measure(float_grid_sample),
     }
     return eager.sampling_grid.shape[2], results
 
@@ -91,7 +90,7 @@ def main():
             height, width, args.output_resolution, args.device)
         print(f"\n{label} ({height}x{width}), sampled points={points}")
         for name, milliseconds in results.items():
-            print(f"  {name:26s} {milliseconds:8.4f} ms")
+            print(f"  {name:38s} {milliseconds:8.4f} ms")
 
 
 if __name__ == "__main__":
