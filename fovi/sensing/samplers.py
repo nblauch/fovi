@@ -1,3 +1,6 @@
+import os
+import warnings
+
 import torch
 import torch.nn as nn
 from tqdm import tqdm
@@ -46,6 +49,60 @@ class BaseGridSampler(nn.Module):
         out_grid = out_grid.unsqueeze(0).unsqueeze(0)
         return out_grid
 
+    def _prepare_sampling_args(self, img, fix_loc, fixation_size):
+        """Return batched float32 fixation tensors on ``img.device``.
+
+        The integer sampling backends consume these directly.  Keeping this conversion in
+        one place also makes standalone samplers accept the numpy/list fixation forms that
+        ``RetinalTransform`` historically normalizes for them.
+        """
+        batch = img.shape[0]
+        fix_loc = torch.as_tensor(fix_loc, device=img.device, dtype=torch.float32)
+        fixation_size = torch.as_tensor(
+            fixation_size, device=img.device, dtype=torch.float32)
+        while fix_loc.ndim > 2 and fix_loc.shape[1] == 1:
+            fix_loc = fix_loc.squeeze(1)
+        while fixation_size.ndim > 2 and fixation_size.shape[1] == 1:
+            fixation_size = fixation_size.squeeze(1)
+        if fix_loc.ndim == 1:
+            fix_loc = fix_loc.unsqueeze(0).expand(batch, -1)
+        if fixation_size.ndim == 0:
+            fixation_size = fixation_size.repeat(2)
+        if fixation_size.ndim == 1:
+            if fixation_size.numel() == 2:
+                fixation_size = fixation_size.unsqueeze(0).expand(batch, -1)
+            elif fixation_size.numel() == batch:
+                fixation_size = fixation_size.unsqueeze(1).expand(-1, 2)
+        if fix_loc.shape != (batch, 2):
+            raise ValueError(f"fix_loc must have shape ({batch}, 2), got {tuple(fix_loc.shape)}")
+        if fixation_size.shape != (batch, 2):
+            raise ValueError(
+                f"fixation_size must have shape ({batch}, 2), got {tuple(fixation_size.shape)}")
+        return fix_loc.contiguous(), fixation_size.contiguous()
+
+    def _direct_pixel_coords(self, img_shape, fix_loc, fixation_size):
+        """Compute canonical pixel-boundary coordinates for integer sampling."""
+        height, width = img_shape
+        base = self.sampling_grid[0, 0].to(
+            device=fix_loc.device, dtype=torch.float32)
+        pixel_x = (
+            base[None, :, 0] * (fixation_size[:, None, 1] * 0.5)
+            + fix_loc[:, None, 1] * width
+        )
+        pixel_y = (
+            base[None, :, 1] * (fixation_size[:, None, 0] * 0.5)
+            + fix_loc[:, None, 0] * height
+        )
+        return pixel_x, pixel_y
+
+    def _direct_grid(self, img_shape, fix_loc, fixation_size):
+        """Return a grid_sample-format grid describing the direct pixel coordinates."""
+        height, width = img_shape
+        pixel_x, pixel_y = self._direct_pixel_coords(img_shape, fix_loc, fixation_size)
+        return torch.stack(
+            (2.0 * pixel_x / width - 1.0, 2.0 * pixel_y / height - 1.0), dim=-1
+        ).unsqueeze(1)
+
 
 @add_to_all(__all__)
 class GridSampler(BaseGridSampler):
@@ -56,7 +113,9 @@ class GridSampler(BaseGridSampler):
     to sample from the foveated sampling grid.
     """
     
-    def __init__(self, fov, cmf_a, resolution, device='cuda', dtype=torch.float, mode='nearest', style='isotropic', coords=None, isotropic_plotting_type='v1like'):
+    def __init__(self, fov, cmf_a, resolution, device='cuda', dtype=torch.float,
+                 mode='nearest', style='isotropic', coords=None,
+                 isotropic_plotting_type='v1like', backend='auto', output_dtype=None):
         """
         Initialize the GridSampler.
         
@@ -69,6 +128,11 @@ class GridSampler(BaseGridSampler):
             mode (str, optional): Sampling mode ('nearest' or 'bilinear'). Defaults to 'nearest'.
             style (str, optional): Sampling style. Defaults to 'isotropic'.
             coords (SamplingCoords, optional): Pre-computed sampling coordinates. Defaults to None.
+            backend (str, optional): Integer sampling backend: ``auto``, ``torch``, or
+                ``cuda``. Floating inputs continue to use ``torch.grid_sample``.
+            output_dtype (torch.dtype, optional): Optional dtype for the compact output.
+                This never rescales values. Nearest sampling otherwise preserves dtype;
+                bilinear integer sampling naturally produces float32.
         """
         super().__init__()
         self.fov = fov
@@ -78,6 +142,17 @@ class GridSampler(BaseGridSampler):
         self.dtype = dtype
         self.mode = mode
         self.style = style
+        if mode not in ('nearest', 'bilinear'):
+            raise ValueError(f"Unsupported sampling mode {mode!r}")
+        if backend not in ('auto', 'torch', 'cuda'):
+            raise ValueError("backend must be one of 'auto', 'torch', or 'cuda'")
+        if mode == 'bilinear' and output_dtype is not None and not output_dtype.is_floating_point:
+            raise ValueError("bilinear sampling requires a floating output dtype")
+        self.backend = backend
+        self.output_dtype = output_dtype
+        self._last_backend = None
+        self._native_error = None
+        self._native_sample_fn = None
         
         if coords is None:
             self.coords = SamplingCoords(fov, cmf_a, resolution, device=device, style=style, dtype=dtype, isotropic_plotting_type=isotropic_plotting_type)
@@ -88,7 +163,97 @@ class GridSampler(BaseGridSampler):
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
 
-    def forward(self, img, fix_loc=None, fixation_size=None, return_coords=False):
+    def _requested_backend(self):
+        requested = os.environ.get('FOVI_GRID_SAMPLER_BACKEND', self.backend)
+        if requested not in ('auto', 'torch', 'cuda'):
+            raise ValueError(
+                "FOVI_GRID_SAMPLER_BACKEND/backend must be one of 'auto', 'torch', or 'cuda'"
+            )
+        return requested
+
+    def _torch_direct_sample(self, img, fix_loc, fixation_size):
+        """Direct moving-grid gather used as the canonical-coordinate oracle."""
+        height, width = img.shape[-2:]
+        pixel_x, pixel_y = self._direct_pixel_coords(
+            (height, width), fix_loc, fixation_size)
+        batch_index = torch.arange(img.shape[0], device=img.device)[:, None]
+        image_hwc = img.permute(0, 2, 3, 1)
+
+        def gather(y, x):
+            valid = (x >= 0) & (x < width) & (y >= 0) & (y < height)
+            x = x.clamp(0, width - 1)
+            y = y.clamp(0, height - 1)
+            values = image_hwc[batch_index, y, x].permute(0, 2, 1)
+            return values, valid
+
+        if self.mode == 'nearest':
+            # align_corners=False maps a boundary coordinate p to source-center p - 0.5;
+            # round-to-even matches grid_sample's nearest tie convention.
+            values, valid = gather(
+                torch.round(pixel_y - 0.5).long(), torch.round(pixel_x - 0.5).long())
+            return values * valid[:, None, :].to(values.dtype)
+
+        source_x = pixel_x - 0.5
+        source_y = pixel_y - 0.5
+        x0 = torch.floor(source_x).long()
+        y0 = torch.floor(source_y).long()
+        wx = source_x - x0
+        wy = source_y - y0
+        arithmetic_dtype = torch.float32 if img.dtype == torch.uint8 else img.dtype
+        out = torch.zeros(
+            (img.shape[0], img.shape[1], pixel_x.shape[1]),
+            device=img.device, dtype=arithmetic_dtype)
+        for yy, xx, weight in (
+            (y0, x0, (1.0 - wy) * (1.0 - wx)),
+            (y0, x0 + 1, (1.0 - wy) * wx),
+            (y0 + 1, x0, wy * (1.0 - wx)),
+            (y0 + 1, x0 + 1, wy * wx),
+        ):
+            values, valid = gather(yy, xx)
+            out.add_(
+                values.to(arithmetic_dtype)
+                * (weight * valid).to(arithmetic_dtype)[:, None, :])
+        return out
+
+    def _native_uint8_sample(self, img, fix_loc, fixation_size):
+        if self._native_sample_fn is None:
+            from .grid_sample_cuda import sample_uint8
+            self._native_sample_fn = sample_uint8
+        return self._native_sample_fn(
+            img, self.sampling_grid, fix_loc, fixation_size, mode=self.mode)
+
+    def _sample_uint8(self, img, fix_loc, fixation_size):
+        requested = self._requested_backend()
+        can_native = img.is_cuda and not (
+            fix_loc.requires_grad or fixation_size.requires_grad
+            or self.sampling_grid.requires_grad)
+        if requested == 'cuda' and not can_native:
+            raise RuntimeError(
+                "cuda uint8 sampling requires CUDA input and non-differentiable coordinates"
+            )
+        if requested != 'torch' and can_native and (
+                requested == 'cuda' or self._native_error is None):
+            try:
+                sampled = self._native_uint8_sample(img, fix_loc, fixation_size)
+                self._last_backend = 'cuda'
+                return sampled
+            except Exception as exc:
+                if requested == 'cuda':
+                    raise
+                self._native_error = exc
+                warnings.warn(
+                    f"native uint8 sampler unavailable ({exc}); using Torch gather",
+                    RuntimeWarning, stacklevel=2)
+        self._last_backend = 'torch_gather'
+        return self._torch_direct_sample(img, fix_loc, fixation_size)
+
+    def _convert_output(self, sampled):
+        if self.output_dtype is not None and sampled.dtype != self.output_dtype:
+            sampled = sampled.to(self.output_dtype)
+        return sampled
+
+    def forward(self, img, fix_loc=None, fixation_size=None, return_coords=False,
+                direct=False):
         """
         Forward pass for grid sampling.
         
@@ -101,11 +266,37 @@ class GridSampler(BaseGridSampler):
         Returns:
             torch.Tensor: Sampled image tensor.
         """
-        # Transform relative fixation grid to absolute image coordinates (col, row)
-        grid = self._transform_fix_grid(img.shape[-2:], fix_loc, fixation_size)
-        
-        # Apply grid sampling
-        sampled = torch.nn.functional.grid_sample(img, grid, mode=self.mode, align_corners=False).squeeze(2)
+        if not isinstance(img, torch.Tensor):
+            raise TypeError("GridSampler input must be a torch.Tensor")
+        if img.ndim != 4:
+            raise ValueError(f"GridSampler expects NCHW input, got shape {tuple(img.shape)}")
+
+        if img.dtype == torch.uint8:
+            fix_loc_t, fixation_size_t = self._prepare_sampling_args(
+                img, fix_loc, fixation_size)
+            sampled = self._sample_uint8(img, fix_loc_t, fixation_size_t)
+            sampled = self._convert_output(sampled)
+            grid = None
+            if return_coords:
+                grid = self._direct_grid(img.shape[-2:], fix_loc_t, fixation_size_t)
+        elif direct:
+            fix_loc_t, fixation_size_t = self._prepare_sampling_args(
+                img, fix_loc, fixation_size)
+            sampled = self._torch_direct_sample(img, fix_loc_t, fixation_size_t)
+            self._last_backend = 'torch_direct'
+            sampled = self._convert_output(sampled)
+            grid = None
+            if return_coords:
+                grid = self._direct_grid(img.shape[-2:], fix_loc_t, fixation_size_t)
+        else:
+            if not img.is_floating_point():
+                raise TypeError(
+                    f"integer sampling currently supports torch.uint8, got {img.dtype}")
+            grid = self._transform_fix_grid(img.shape[-2:], fix_loc, fixation_size)
+            sampled = torch.nn.functional.grid_sample(
+                img, grid, mode=self.mode, align_corners=False).squeeze(2)
+            self._last_backend = 'torch_grid_sample'
+            sampled = self._convert_output(sampled)
         
         if return_coords:
             return sampled, grid
@@ -127,7 +318,9 @@ class GridSampler(BaseGridSampler):
 
     def __repr__(self):
         """String representation of the GridSampler."""
-        return f'GridSampler(fov={self.fov}, cmf_a={self.cmf_a}, style={self.style}, resolution={self.resolution}, mode={self.mode}, n={len(self.coords)})'
+        return (f'GridSampler(fov={self.fov}, cmf_a={self.cmf_a}, style={self.style}, '
+                f'resolution={self.resolution}, mode={self.mode}, backend={self.backend}, '
+                f'output_dtype={self.output_dtype}, n={len(self.coords)})')
     
 
 @add_to_all(__all__)
@@ -140,7 +333,10 @@ class KNNGridSampler(BaseGridSampler):
     - coords: akin to retinal ganglion cells: there are less of them, and they integrate over a local pool of photoreceptors (highres_coords)
     """
     
-    def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1, fixation_size=3000, k=None, style='isotropic', sample_cortex=True, dtype=torch.float, device='cuda', isotropic_plotting_type='v1like'):
+    def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1,
+                 fixation_size=3000, k=None, style='isotropic', sample_cortex=True,
+                 dtype=torch.float, device='cuda', isotropic_plotting_type='v1like',
+                 backend='auto', output_dtype=None):
         """
         Initialize the KNNGridSampler.
         
@@ -168,6 +364,16 @@ class KNNGridSampler(BaseGridSampler):
 
         self.pooler = KNNPoolingLayer(k, self.highres_coords, self.coords, mode='avg', device=device, sample_cortex=sample_cortex)
 
+        if output_dtype is not None and not output_dtype.is_floating_point:
+            raise ValueError("KNN pooling requires a floating output dtype")
+        self.input_sampler = GridSampler(
+            fov, cmf_a_mult * cmf_a, res_mult * resolution, device=device, dtype=dtype,
+            mode='nearest', style=style, coords=self.highres_coords,
+            isotropic_plotting_type=isotropic_plotting_type, backend=backend)
+        self.backend = backend
+        self.output_dtype = output_dtype
+        self._last_backend = None
+
         self.sampling_grid = self._prep_grid_for_grid_sample(self.highres_coords.cartesian)
         self.out_sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
 
@@ -185,7 +391,7 @@ class KNNGridSampler(BaseGridSampler):
 
         self.rf_sizes = self.coords.get_scatter_sizes()
 
-    def forward(self, img, fix_loc=None, fixation_size=None):
+    def forward(self, img, fix_loc=None, fixation_size=None, direct=False):
         """
         Forward pass for KNN grid sampling.
         
@@ -199,14 +405,19 @@ class KNNGridSampler(BaseGridSampler):
         """
         if not isinstance(img, torch.Tensor):
             img = TF.to_tensor(img).unsqueeze(0)
-        img = img.to(self.device).to(self.dtype)
-            
-        # account for fixation location, size, and possible bounding box
-        fix_grid = self._transform_fix_grid(img.shape[-2:], fix_loc, fixation_size)
-        # do the first layer of sampling
-        ret_samples = torch.nn.functional.grid_sample(img, fix_grid, mode='nearest').squeeze(2)
+        img = img.to(self.device)
+
+        # Sample integer images before casting, so only the compact photoreceptor array is
+        # promoted for the arithmetic required by KNN pooling.
+        ret_samples = self.input_sampler(
+            img, fix_loc=fix_loc, fixation_size=fixation_size,
+            direct=direct).to(self.dtype)
+        self._last_backend = self.input_sampler._last_backend
         # pool to get the final retinal samples
         pooled_samples = self.pooler(ret_samples)
+
+        if self.output_dtype is not None:
+            pooled_samples = pooled_samples.to(self.output_dtype)
 
         return pooled_samples
 

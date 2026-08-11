@@ -43,6 +43,7 @@ class RetinalTransform(nn.Module):
                  sigma=None,
                  no_color_val=False,
                  isotropic_plotting_type='v1like',
+                 sampler_backend='auto',
                  **kwargs, # passed to the sampler
                  ):
         """
@@ -63,6 +64,8 @@ class RetinalTransform(nn.Module):
             post_transforms (callable, optional): Post-processing transforms. Defaults to None.
             sigma (float, optional): Standard deviation for Gaussian color decay. Defaults to None.
             no_color_val (bool, optional): Whether to disable color in eval mode. Defaults to False.
+            sampler_backend (str, optional): Integer sampler backend (``auto``, ``torch``,
+                or ``cuda``). Defaults to ``auto``.
             **kwargs: Additional arguments passed to warping function.
         """
         super().__init__()
@@ -101,13 +104,13 @@ class RetinalTransform(nn.Module):
         self.foveal_color = GaussianColorDecay(sigma)
 
         if sampler == 'gaussian_pooling':
-            self.sampler = GaussianKNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, **kwargs)
+            self.sampler = GaussianKNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
         elif sampler == 'pooling':
-            self.sampler = KNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, **kwargs)
+            self.sampler = KNNGridSampler(self.fov, self.cmf_a, resolution, fixation_size=self.fixation_size, device=device, style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
         elif sampler == 'grid_nn':
-            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='nearest', style=style, isotropic_plotting_type=isotropic_plotting_type)
+            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='nearest', style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
         elif sampler == 'grid_bilinear':
-            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='bilinear', style=style, isotropic_plotting_type=isotropic_plotting_type)
+            self.sampler = GridSampler(self.fov, self.cmf_a, resolution, device=device, mode='bilinear', style=style, isotropic_plotting_type=isotropic_plotting_type, backend=sampler_backend, **kwargs)
 
         else:
             raise ValueError(f'Invalid sampler: {sampler}')
@@ -130,7 +133,9 @@ class RetinalTransform(nn.Module):
         Forward pass of the retinal transform.
 
         Args:
-            x (torch.Tensor): Input tensor.
+            x (torch.Tensor): NCHW input tensor. Floating inputs retain their existing
+                value-range semantics; uint8 inputs are interpreted as the equivalent
+                unit-range image and converted after sampling whenever semantics permit.
             fix_loc (torch.Tensor or tuple): Fixation location.
             fixation_size (int, optional): Fixation size. Defaults to None.
             **kwargs: Additional arguments.
@@ -145,6 +150,7 @@ class RetinalTransform(nn.Module):
         # check fix_loc
         fix_loc = self._check_fix_loc(fix_loc, x.shape[0])
 
+        input_is_uint8 = x.dtype == torch.uint8
         apply_pre = self.pre_transforms is not None and self.training
         if apply_pre and not kwargs and self._fast_pre_transforms_supported():
             # Fast path: sample first (nearest-neighbor), then apply the pointwise pre-warp
@@ -156,8 +162,22 @@ class RetinalTransform(nn.Module):
         else:
             if apply_pre:
                 self._announce_pre_transform_execution(fast=False)
+                if input_is_uint8:
+                    # Reference semantics: camera uint8 represents the same unit-range
+                    # image that ToTorchImage currently supplies before RetinalTransform.
+                    x = self._uint8_to_unit(x)
                 x = self.pre_transforms(x.clone())
-            x = self.sampler(x, fix_loc=fix_loc, fixation_size=fixation_size, **kwargs)
+            sample_kwargs = kwargs
+            if input_is_uint8 and apply_pre:
+                # The image has been converted because pre-warp transforms needed it, but
+                # its sampling coordinates must retain the canonical raw-input definition.
+                sample_kwargs = {**kwargs, 'direct': True}
+            x = self.sampler(
+                x, fix_loc=fix_loc, fixation_size=fixation_size, **sample_kwargs)
+            if input_is_uint8 and not apply_pre:
+                # No pre-warp operation needs the full image, so convert only the compact
+                # sampled tensor.  Bilinear and pooling outputs remain native-scale float.
+                x = self._uint8_to_unit(x)
 
         if self.post_transforms is not None and self.training:
             x = self.post_transforms(x.unsqueeze(3)).clone().squeeze(3)
@@ -172,6 +192,15 @@ class RetinalTransform(nn.Module):
             x = x.reshape(x.shape[0], x.shape[1], self.resolution, self.resolution)
 
         return x.to(self.dtype)
+
+    def _uint8_to_unit(self, x):
+        """Convert native uint8-scale values to the current unit-float contract.
+
+        This deliberately mirrors the tensor path in ``ToTorchImage``: cast to the target
+        dtype first, then divide by 255.  It is representation conversion, not statistical
+        normalization; normalization remains in the supplied transform pipelines.
+        """
+        return x.to(dtype=self.dtype).div_(255.0)
 
     # ------------------------------------------------------------------
     # Sample-then-augment fast path for pre-warp transforms
@@ -271,12 +300,28 @@ class RetinalTransform(nn.Module):
         - RNG draws (bernoulli masks + per-image jitter parameters) have identical shapes
           and order, leaving the CUDA generator stream identical to the reference path.
         """
-        grid = self.sampler._transform_fix_grid(x.shape[-2:], fix_loc, fixation_size)
-        sampled = torch.nn.functional.grid_sample(
-            x, grid, mode=self.sampler.mode, align_corners=False).squeeze(2)
-        mask = torch.nn.functional.grid_sample(
-            self._padding_mask_src(x), grid, mode=self.sampler.mode,
-            align_corners=False).squeeze(2)
+        input_is_uint8 = x.dtype == torch.uint8
+        if input_is_uint8:
+            sampled = self.sampler(
+                x, fix_loc=fix_loc, fixation_size=fixation_size)
+            sampled = self._uint8_to_unit(sampled)
+            fix_loc_t, fixation_size_t = self.sampler._prepare_sampling_args(
+                x, fix_loc, fixation_size)
+            pixel_x, pixel_y = self.sampler._direct_pixel_coords(
+                x.shape[-2:], fix_loc_t, fixation_size_t)
+            sample_x = torch.round(pixel_x - 0.5)
+            sample_y = torch.round(pixel_y - 0.5)
+            mask = (
+                (sample_x >= 0) & (sample_x < x.shape[-1])
+                & (sample_y >= 0) & (sample_y < x.shape[-2])
+            )[:, None, :].to(sampled.dtype)
+        else:
+            grid = self.sampler._transform_fix_grid(x.shape[-2:], fix_loc, fixation_size)
+            sampled = torch.nn.functional.grid_sample(
+                x, grid, mode=self.sampler.mode, align_corners=False).squeeze(2)
+            mask = torch.nn.functional.grid_sample(
+                self._padding_mask_src(x), grid, mode=self.sampler.mode,
+                align_corners=False).squeeze(2)
 
         s4 = sampled.unsqueeze(3)  # (B, C, N, 1): a 4D "image" for the batch transforms
         for t in self.pre_transforms.transforms:
@@ -286,6 +331,8 @@ class RetinalTransform(nn.Module):
                 idx = t.idx
                 sel = s4.index_select(0, idx)
                 full_sel = x.index_select(0, idx)
+                if input_is_uint8:
+                    full_sel = self._uint8_to_unit(full_sel)
                 sel = _color_jitter_points(sel, full_sel, t.h, t.s, t.v, t.c)
                 s4 = s4.index_copy(0, idx, sel.to(dtype=s4.dtype))
             elif isinstance(t, fastT.RandomGrayscale):
