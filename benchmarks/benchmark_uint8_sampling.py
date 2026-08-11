@@ -6,10 +6,13 @@ Run from the repository root::
 
 Every measured path returns unit-range float output.  The PyTorch direct-index and native
 paths convert only the compact sampled tensor; the ``grid_sample`` baseline converts the
-full camera frame before sampling.  A second table starts with an already-float32 input and
-times sampling alone.  Two regimes are reported: a fixed foveated sampling resolution
-across every input size, and a scale-matched regime targeting one sampled point per 4x4
-input region (16x fewer points than the input image).
+full camera frame before sampling.  Additional tables start with already-floating inputs
+and preserve float32 coordinate math for float16, native math for float32/float64, and the
+input dtype at output.  PyTorch grid_sample requires input and grid dtypes to match, so its
+correctness-preserving float16 path includes full-frame float32 promotion and a compact
+output cast.  Two regimes are reported: a fixed foveated sampling resolution across every
+input size, and a scale-matched regime targeting one sampled point per 4x4 input region
+(16x fewer points than the input image).
 """
 
 import argparse
@@ -27,6 +30,13 @@ INPUT_CASES = (
     ("1080p", 1080, 1920),
     ("4K", 2160, 3840),
     ("16K", 8640, 15360),
+)
+
+FLOAT_CASES = (
+    ("float16 (float32 math; grid_sample promotes input)",
+     torch.float16, torch.float32),
+    ("float32", torch.float32, torch.float32),
+    ("float64", torch.float64, torch.float64),
 )
 
 
@@ -72,6 +82,30 @@ def _sampling_coords(output_resolution, device):
     return SimpleNamespace(cartesian=cartesian, polar=polar)
 
 
+def _torch_direct_nearest(
+        image, sampling_grid, fix_loc, fix_size, coordinate_dtype):
+    """Eager direct-index reference with an explicit coordinate compute dtype."""
+    height, width = image.shape[-2:]
+    base = sampling_grid[0, 0].to(
+        device=image.device, dtype=coordinate_dtype)
+    fix_loc = fix_loc.to(device=image.device, dtype=coordinate_dtype)
+    fix_size = fix_size.to(device=image.device, dtype=coordinate_dtype)
+    pixel_x = (
+        base[None, :, 0] * (fix_size[:, None, 1] * 0.5)
+        + fix_loc[:, None, 1] * width)
+    pixel_y = (
+        base[None, :, 1] * (fix_size[:, None, 0] * 0.5)
+        + fix_loc[:, None, 0] * height)
+    x = torch.round(pixel_x - 0.5).long()
+    y = torch.round(pixel_y - 0.5).long()
+    valid = (x >= 0) & (x < width) & (y >= 0) & (y < height)
+    x = x.clamp(0, width - 1)
+    y = y.clamp(0, height - 1)
+    batch_index = torch.arange(image.shape[0], device=image.device)[:, None]
+    values = image.permute(0, 2, 3, 1)[batch_index, y, x].permute(0, 2, 1)
+    return values * valid[:, None, :].to(values.dtype)
+
+
 def benchmark_case(height, width, output_resolution, device, iterations):
     image = torch.randint(
         0, 256, (1, 3, height, width), dtype=torch.uint8, device=device)
@@ -85,12 +119,11 @@ def benchmark_case(height, width, output_resolution, device, iterations):
     native = GridSampler(
         16.0, 0.5, output_resolution, device=device, mode="nearest", backend="cuda",
         coords=eager.coords)
-    float_sampler = GridSampler(
+    converted_sampler = GridSampler(
         16.0, 0.5, output_resolution, device=device, mode="nearest", backend="torch",
         coords=eager.coords)
-    float_image = image.float().div_(255.0)
 
-    from fovi.sensing.grid_sample_cuda import _sample_float32_nearest
+    from fovi.sensing.grid_sample_cuda import _sample_float_nearest
 
     def native_sample():
         return native(image, fix_loc, fix_size)
@@ -102,25 +135,11 @@ def benchmark_case(height, width, output_resolution, device, iterations):
         return native(image, fix_loc, fix_size).float().div_(255.0)
 
     def converted_grid_sample():
-        return float_sampler(image.float().div_(255.0), fix_loc, fix_size)
+        return converted_sampler(
+            image.float().div_(255.0), fix_loc, fix_size)
 
-    def float_direct():
-        return eager(float_image, fix_loc, fix_size, direct=True)
-
-    def float_native():
-        return _sample_float32_nearest(
-            float_image, eager.sampling_grid, fix_loc, fix_size)
-
-    def float_grid_sample():
-        return float_sampler(float_image, fix_loc, fix_size)
-
-    # Compile native kernels and validate the benchmark-only float specialization outside
-    # measurements. Public GridSampler float behavior remains grid_sample unless direct=True.
+    # Compile the uint8 kernel outside measurements.
     native_sample()
-    native_float = float_native()
-    float_direct_reference = float_direct()
-    torch.testing.assert_close(
-        native_float, float_direct_reference, rtol=0.0, atol=0.0)
     torch.cuda.synchronize()
     uint8_results = {
         "PyTorch direct + compact conversion": _measure(eager_unit, iterations),
@@ -128,11 +147,51 @@ def benchmark_case(height, width, output_resolution, device, iterations):
         "full-frame conversion + grid_sample": _measure(
             converted_grid_sample, iterations),
     }
-    float_results = {
-        "PyTorch direct": _measure(float_direct, iterations),
-        "native float32": _measure(float_native, iterations),
-        "grid_sample": _measure(float_grid_sample, iterations),
-    }
+    float_results = {}
+    for dtype_label, image_dtype, coordinate_dtype in FLOAT_CASES:
+        float_image = image.to(image_dtype).div_(255.0)
+        grid_coords = SimpleNamespace(
+            cartesian=coords.cartesian.to(coordinate_dtype),
+            polar=coords.polar.to(coordinate_dtype))
+        grid_sampler = GridSampler(
+            16.0, 0.5, output_resolution, device=device, dtype=coordinate_dtype,
+            mode="nearest", backend="torch", coords=grid_coords)
+        grid_fix_loc = fix_loc.to(coordinate_dtype)
+        grid_fix_size = fix_size.to(coordinate_dtype)
+
+        def float_direct():
+            return _torch_direct_nearest(
+                float_image, eager.sampling_grid, fix_loc, fix_size,
+                coordinate_dtype)
+
+        def float_native():
+            return _sample_float_nearest(
+                float_image, eager.sampling_grid, fix_loc, fix_size)
+
+        def float_grid_sample():
+            sampled = grid_sampler(
+                float_image.to(coordinate_dtype), grid_fix_loc, grid_fix_size)
+            return sampled.to(image_dtype)
+
+        # Compile and validate each benchmark-only native specialization outside timing.
+        native_float = float_native()
+        float_direct_reference = float_direct()
+        torch.testing.assert_close(
+            native_float, float_direct_reference, rtol=0.0, atol=0.0)
+        grid_sample_reference = float_grid_sample()
+        grid_mismatch_percent = (
+            torch.count_nonzero(
+                grid_sample_reference != float_direct_reference).item()
+            * 100.0 / float_direct_reference.numel())
+        torch.cuda.synchronize()
+        float_results[dtype_label] = {
+            "timings": {
+                "PyTorch direct": _measure(float_direct, iterations),
+                "native fused": _measure(float_native, iterations),
+                "grid_sample": _measure(float_grid_sample, iterations),
+            },
+            "grid_mismatch_percent": grid_mismatch_percent,
+        }
     return eager.sampling_grid.shape[2], uint8_results, float_results
 
 
@@ -148,9 +207,14 @@ def _print_case(
     print("  uint8 input -> unit float output")
     for name, milliseconds in uint8_results.items():
         print(f"    {name:38s} {milliseconds:8.4f} ms")
-    print("  pre-existing float32 input")
-    for name, milliseconds in float_results.items():
-        print(f"    {name:38s} {milliseconds:8.4f} ms")
+    print("  pre-existing floating input")
+    for dtype_label, result in float_results.items():
+        print(f"    {dtype_label}")
+        for name, milliseconds in result["timings"].items():
+            print(f"      {name:36s} {milliseconds:8.4f} ms")
+        print(
+            "      grid_sample/direct value mismatch "
+            f"{result['grid_mismatch_percent']:8.4f}%")
 
 
 def main():
