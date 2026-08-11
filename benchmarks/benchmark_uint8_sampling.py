@@ -2,7 +2,7 @@
 
 Run from the repository root::
 
-    python benchmarks/benchmark_uint8_sampling.py --device cuda:0
+    python benchmarks/benchmark_uint8_sampling.py --device cuda:0 --batch-size 512
 
 Every measured path returns unit-range float output.  The PyTorch direct-index and native
 paths convert only the compact sampled tensor; the ``grid_sample`` baseline converts the
@@ -82,11 +82,18 @@ def _sampling_coords(output_resolution, device):
     return SimpleNamespace(cartesian=cartesian, polar=polar)
 
 
-def benchmark_case(height, width, output_resolution, device, iterations):
+def benchmark_case(
+        height, width, output_resolution, device, iterations, batch_size=1):
+    # Each case can have a very different allocation profile. Release cached blocks from
+    # the previous untimed case so a large dtype conversion is not defeated by allocator
+    # fragmentation even when its live tensors fit on the device.
+    torch.cuda.empty_cache()
     image = torch.randint(
-        0, 256, (1, 3, height, width), dtype=torch.uint8, device=device)
-    fix_loc = torch.tensor([[0.47, 0.53]], device=device)
-    fix_size = torch.tensor([[min(height, width), min(height, width)]], device=device)
+        0, 256, (batch_size, 3, height, width), dtype=torch.uint8, device=device)
+    fix_loc = torch.tensor([[0.47, 0.53]], device=device).expand(batch_size, -1)
+    fix_size = torch.tensor(
+        [[min(height, width), min(height, width)]], device=device
+    ).expand(batch_size, -1)
 
     coords = _sampling_coords(output_resolution, device)
     eager = GridSampler(
@@ -156,6 +163,7 @@ def benchmark_case(height, width, output_resolution, device, iterations):
             torch.count_nonzero(
                 grid_sample_reference != float_direct_reference).item()
             * 100.0 / float_direct_reference.numel())
+        del native_float, float_direct_reference, grid_sample_reference
         torch.cuda.synchronize()
         float_results[dtype_label] = {
             "timings": {
@@ -165,14 +173,18 @@ def benchmark_case(height, width, output_resolution, device, iterations):
             },
             "grid_mismatch_percent": grid_mismatch_percent,
         }
+        del (
+            float_direct, float_native, float_grid_sample, direct_sampler,
+            native_sampler, grid_sampler, float_image)
+        torch.cuda.empty_cache()
     return eager.sampling_grid.shape[2], uint8_results, float_results
 
 
 def _print_case(
         label, height, width, output_resolution, device, iterations,
-        target_points=None):
+        batch_size=1, target_points=None):
     points, uint8_results, float_results = benchmark_case(
-        height, width, output_resolution, device, iterations)
+        height, width, output_resolution, device, iterations, batch_size)
     target = "" if target_points is None else f", target points={target_points}"
     print(
         f"\n{label} ({height}x{width}), sampling resolution={output_resolution}, "
@@ -196,6 +208,11 @@ def main():
     parser.add_argument("--output-resolution", type=int, default=64)
     parser.add_argument("--downsample-per-side", type=int, default=4)
     parser.add_argument("--iterations", type=int, default=30)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--inputs", nargs="+", choices=[case[0] for case in INPUT_CASES],
+        default=[case[0] for case in INPUT_CASES],
+        help="input resolutions to benchmark (default: all)")
     args = parser.parse_args()
     if not torch.cuda.is_available():
         raise RuntimeError("this benchmark requires CUDA")
@@ -203,29 +220,36 @@ def main():
         raise ValueError("--downsample-per-side must be positive")
     if args.iterations < 1:
         raise ValueError("--iterations must be positive")
+    if args.batch_size < 1:
+        raise ValueError("--batch-size must be positive")
 
     print(f"device: {torch.cuda.get_device_name(torch.device(args.device))}")
+    print(f"batch size: {args.batch_size}")
     print(f"timing: median of 5 repeats, {args.iterations} iterations per repeat")
     print(
         f"\nFixed foveated sampling resolution: {args.output_resolution} "
         "(sample count is independent of input resolution)")
     for label, height, width in INPUT_CASES:
+        if label not in args.inputs:
+            continue
         _print_case(
             label, height, width, args.output_resolution, args.device,
-            args.iterations)
+            args.iterations, batch_size=args.batch_size)
 
     ratio = args.downsample_per_side
     print(
         f"\nScale-matched sampling: {ratio}x downsampling per side "
         f"({ratio * ratio}x fewer sampled points)")
     for label, height, width in INPUT_CASES:
+        if label not in args.inputs:
+            continue
         target_points = (height // ratio) * (width // ratio)
         output_resolution, _ = find_desired_res(
             16.0, 0.5, target_points, "isotropic", device=args.device,
             bounds=(1, 4096), force_less_than=True, quiet=True)
         _print_case(
             label, height, width, output_resolution, args.device, args.iterations,
-            target_points=target_points)
+            batch_size=args.batch_size, target_points=target_points)
 
 
 if __name__ == "__main__":
