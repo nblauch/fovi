@@ -1,8 +1,10 @@
-"""CuPy/NVRTC kernels for sampling CUDA uint8 images at moving foveated grids.
+"""CuPy/NVRTC kernels for sampling CUDA images at moving foveated grids.
 
 The public sampler owns coordinate preparation and backend selection.  This module is a
 small optional implementation detail: it accepts raw Torch storage and launches on Torch's
 current CUDA stream without constructing a CuPy array or a full-resolution float tensor.
+The float32 nearest specialization is private and exists to benchmark the fused kernel;
+public float sampling remains on ``torch.grid_sample``.
 """
 
 from __future__ import annotations
@@ -47,6 +49,44 @@ extern "C" __global__ void fovi_uint8_nearest(
         const int x = __float2int_rn(pixel_x - 0.5f);
         const int y = __float2int_rn(pixel_y - 0.5f);
         unsigned char value = 0;
+        if ((unsigned int)x < (unsigned int)width &&
+            (unsigned int)y < (unsigned int)height) {
+            const long long offset = (long long)b * stride_b + (long long)c * stride_c
+                                   + (long long)y * stride_h + (long long)x * stride_w;
+            value = image[offset];
+        }
+        output[linear] = value;
+    }
+}
+
+extern "C" __global__ void fovi_float32_nearest(
+    const float* __restrict__ image,
+    const float* __restrict__ base_grid,
+    const float* __restrict__ fix_loc,
+    const float* __restrict__ fix_size,
+    float* __restrict__ output,
+    long long stride_b, long long stride_c,
+    long long stride_h, long long stride_w,
+    int batch, int channels, int height, int width, int points)
+{
+    const long long total = (long long)batch * channels * points;
+    for (long long linear = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+         linear < total; linear += (long long)blockDim.x * gridDim.x) {
+        const int n = linear % points;
+        const int c = (linear / points) % channels;
+        const int b = linear / ((long long)points * channels);
+
+        const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
+        const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
+        const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
+        const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
+        const float pixel_x = __fadd_rn(
+            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+        const float pixel_y = __fadd_rn(
+            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+        const int x = __float2int_rn(pixel_x - 0.5f);
+        const int y = __float2int_rn(pixel_y - 0.5f);
+        float value = 0.0f;
         if ((unsigned int)x < (unsigned int)width &&
             (unsigned int)y < (unsigned int)height) {
             const long long offset = (long long)b * stride_b + (long long)c * stride_c
@@ -130,7 +170,9 @@ def _kernel(name, device):
                 module = cp.RawModule(
                     code=_SOURCE,
                     options=("--std=c++14",),
-                    name_expressions=("fovi_uint8_nearest", "fovi_uint8_bilinear"),
+                    name_expressions=(
+                        "fovi_uint8_nearest", "fovi_uint8_bilinear",
+                        "fovi_float32_nearest"),
                 )
                 _MODULES[device.index] = module
             kernel = module.get_function(name)
@@ -195,6 +237,51 @@ def sample_uint8(image, base_grid, fix_loc, fix_size, mode="nearest"):
     )
     stream = _current_stream(device)
     kernel = _kernel(f"fovi_uint8_{mode}", device)
+    if cp.cuda.runtime.getDevice() == device.index:
+        with stream:
+            kernel((blocks,), (threads,), args)
+    else:  # pragma: no cover - multi-GPU context mismatch
+        with cp.cuda.Device(device.index), stream:
+            kernel((blocks,), (threads,), args)
+    return output
+
+
+def _sample_float32_nearest(image, base_grid, fix_loc, fix_size):
+    """Benchmark the fused native nearest kernel with a CUDA float32 image."""
+    if image.dtype != torch.float32 or not image.is_cuda:
+        raise RuntimeError(
+            "native float32 sampling requires a CUDA torch.float32 tensor")
+    if image.ndim != 4:
+        raise ValueError(f"expected NCHW image, got {tuple(image.shape)}")
+
+    device = image.device
+    base_grid = base_grid[0, 0]
+    if (base_grid.device != device or base_grid.dtype != torch.float32
+            or not base_grid.is_contiguous()):
+        base_grid = base_grid.to(device=device, dtype=torch.float32).contiguous()
+    if (fix_loc.device != device or fix_loc.dtype != torch.float32
+            or not fix_loc.is_contiguous()):
+        fix_loc = fix_loc.to(device=device, dtype=torch.float32).contiguous()
+    if (fix_size.device != device or fix_size.dtype != torch.float32
+            or not fix_size.is_contiguous()):
+        fix_size = fix_size.to(device=device, dtype=torch.float32).contiguous()
+    batch, channels, height, width = image.shape
+    points = base_grid.shape[0]
+    output = torch.empty(
+        (batch, channels, points), device=device, dtype=torch.float32)
+
+    total = batch * channels * points
+    threads = 256
+    blocks = min((total + threads - 1) // threads, 4096)
+    args = (
+        _ptr(image), _ptr(base_grid), _ptr(fix_loc), _ptr(fix_size), _ptr(output),
+        np.int64(image.stride(0)), np.int64(image.stride(1)),
+        np.int64(image.stride(2)), np.int64(image.stride(3)),
+        np.int32(batch), np.int32(channels), np.int32(height), np.int32(width),
+        np.int32(points),
+    )
+    stream = _current_stream(device)
+    kernel = _kernel("fovi_float32_nearest", device)
     if cp.cuda.runtime.getDevice() == device.index:
         with stream:
             kernel((blocks,), (threads,), args)

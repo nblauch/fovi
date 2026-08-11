@@ -1,4 +1,4 @@
-"""Benchmark moving-grid uint8 retinal sampling.
+"""Benchmark moving-grid retinal sampling for uint8 and float32 inputs.
 
 Run from the repository root::
 
@@ -6,9 +6,10 @@ Run from the repository root::
 
 Every measured path returns unit-range float output.  The PyTorch direct-index and native
 paths convert only the compact sampled tensor; the ``grid_sample`` baseline converts the
-full camera frame before sampling.  Two regimes are reported: a fixed foveated sampling
-resolution across every input size, and a scale-matched regime targeting one sampled point
-per 4x4 input region (16x fewer points than the input image).
+full camera frame before sampling.  A second table starts with an already-float32 input and
+times sampling alone.  Two regimes are reported: a fixed foveated sampling resolution
+across every input size, and a scale-matched regime targeting one sampled point per 4x4
+input region (16x fewer points than the input image).
 """
 
 import argparse
@@ -17,8 +18,8 @@ from types import SimpleNamespace
 
 import torch
 
-from fovi.sensing.samplers import GridSampler
 from fovi.sensing.coords import _compute_isotropic_r_and_num_theta, find_desired_res
+from fovi.sensing.samplers import GridSampler
 
 
 INPUT_CASES = (
@@ -87,6 +88,9 @@ def benchmark_case(height, width, output_resolution, device, iterations):
     float_sampler = GridSampler(
         16.0, 0.5, output_resolution, device=device, mode="nearest", backend="torch",
         coords=eager.coords)
+    float_image = image.float().div_(255.0)
+
+    from fovi.sensing.grid_sample_cuda import _sample_float32_nearest
 
     def native_sample():
         return native(image, fix_loc, fix_size)
@@ -97,31 +101,56 @@ def benchmark_case(height, width, output_resolution, device, iterations):
     def native_unit():
         return native(image, fix_loc, fix_size).float().div_(255.0)
 
-    def float_grid_sample():
+    def converted_grid_sample():
         return float_sampler(image.float().div_(255.0), fix_loc, fix_size)
 
-    # Compile the native kernel outside measurements.
+    def float_direct():
+        return eager(float_image, fix_loc, fix_size, direct=True)
+
+    def float_native():
+        return _sample_float32_nearest(
+            float_image, eager.sampling_grid, fix_loc, fix_size)
+
+    def float_grid_sample():
+        return float_sampler(float_image, fix_loc, fix_size)
+
+    # Compile native kernels and validate the benchmark-only float specialization outside
+    # measurements. Public GridSampler float behavior remains grid_sample unless direct=True.
     native_sample()
+    native_float = float_native()
+    float_direct_reference = float_direct()
+    torch.testing.assert_close(
+        native_float, float_direct_reference, rtol=0.0, atol=0.0)
     torch.cuda.synchronize()
-    results = {
+    uint8_results = {
         "PyTorch direct + compact conversion": _measure(eager_unit, iterations),
         "native + compact conversion": _measure(native_unit, iterations),
-        "full-frame conversion + grid_sample": _measure(float_grid_sample, iterations),
+        "full-frame conversion + grid_sample": _measure(
+            converted_grid_sample, iterations),
     }
-    return eager.sampling_grid.shape[2], results
+    float_results = {
+        "PyTorch direct": _measure(float_direct, iterations),
+        "native float32": _measure(float_native, iterations),
+        "grid_sample": _measure(float_grid_sample, iterations),
+    }
+    return eager.sampling_grid.shape[2], uint8_results, float_results
 
 
 def _print_case(
         label, height, width, output_resolution, device, iterations,
         target_points=None):
-    points, results = benchmark_case(
+    points, uint8_results, float_results = benchmark_case(
         height, width, output_resolution, device, iterations)
     target = "" if target_points is None else f", target points={target_points}"
     print(
         f"\n{label} ({height}x{width}), sampling resolution={output_resolution}, "
         f"sampled points={points}{target}")
-    for name, milliseconds in results.items():
-        print(f"  {name:38s} {milliseconds:8.4f} ms")
+    print("  uint8 input -> unit float output")
+    for name, milliseconds in uint8_results.items():
+        print(f"    {name:38s} {milliseconds:8.4f} ms")
+    print("  pre-existing float32 input")
+    for name, milliseconds in float_results.items():
+        print(f"    {name:38s} {milliseconds:8.4f} ms")
 
 
 def main():
