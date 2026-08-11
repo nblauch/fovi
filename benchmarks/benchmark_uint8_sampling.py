@@ -4,10 +4,10 @@ Run from the repository root::
 
     python benchmarks/benchmark_uint8_sampling.py --device cuda:0 --batch-size 512
 
-Every measured path returns unit-range float output.  The PyTorch direct-index and native
+Every measured path returns unit-range float output.  The PyTorch direct-index and fused
 paths convert only the compact sampled tensor; the ``grid_sample`` baseline converts the
 full camera frame before sampling.  Additional tables start with already-floating inputs
-and preserve float32 coordinate math for float16, native math for float32/float64, and the
+and preserve float32 coordinate math for float16, dtype-native math for float32/float64, and the
 input dtype at output.  PyTorch grid_sample requires input and grid dtypes to match, so its
 correctness-preserving float16 path includes full-frame float32 promotion and a compact
 output cast.  Two regimes are reported: a fixed foveated sampling resolution across every
@@ -124,7 +124,7 @@ def benchmark_case(
     torch.cuda.synchronize()
     uint8_results = {
         "PyTorch direct + compact conversion": _measure(eager_unit, iterations),
-        "native + compact conversion": _measure(native_unit, iterations),
+        "fused + compact conversion": _measure(native_unit, iterations),
         "full-frame conversion + grid_sample": _measure(
             converted_grid_sample, iterations),
     }
@@ -151,13 +151,13 @@ def benchmark_case(
         def float_grid_sample():
             return grid_sampler(float_image, fix_loc, fix_size)
 
-        # Compile and validate each public native path outside timing.
+        # Compile and validate each public fused path outside timing.
         native_float = float_native()
         float_direct_reference = float_direct()
         torch.testing.assert_close(
             native_float, float_direct_reference, rtol=0.0, atol=0.0)
         if native_sampler._last_backend != "cuda":
-            raise RuntimeError("native benchmark did not use the CUDA backend")
+            raise RuntimeError("fused benchmark did not use the CUDA backend")
         grid_sample_reference = float_grid_sample()
         grid_mismatch_percent = (
             torch.count_nonzero(
@@ -168,7 +168,7 @@ def benchmark_case(
         float_results[dtype_label] = {
             "timings": {
                 "PyTorch direct": _measure(float_direct, iterations),
-                "native fused": _measure(float_native, iterations),
+                "fused": _measure(float_native, iterations),
                 "grid_sample": _measure(float_grid_sample, iterations),
             },
             "grid_mismatch_percent": grid_mismatch_percent,
