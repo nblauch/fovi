@@ -1,7 +1,9 @@
 """Correctness tests for native-scale uint8 foveated sampling."""
 
+import gc
 import os
 import unittest
+import weakref
 from unittest import mock
 
 import torch
@@ -93,6 +95,37 @@ class TestUint8SamplerContract(unittest.TestCase):
             sampler(image, fix_loc, fix_size)
         self.assertEqual(sampler._last_backend, "torch_gather")
 
+    def test_auto_fallback_cache_does_not_retain_inputs(self):
+        if not torch.cuda.is_available():
+            self.skipTest("requires CUDA to enter native auto-selection")
+
+        def exercise(image_dtype):
+            image, fix_loc, fix_size = _inputs("cuda:0")
+            method = "_native_uint8_sample"
+            if image_dtype != torch.uint8:
+                image = image.to(image_dtype).div_(255.0)
+                method = "_native_float_sample"
+            image_ref = weakref.ref(image)
+            sampler = _sampler(device="cuda:0", backend="auto")
+
+            def fail(*_args):
+                raise ImportError("missing")
+
+            with mock.patch.object(sampler, method, new=fail):
+                with mock.patch("fovi.sensing.samplers.warnings.warn"):
+                    output = sampler(image, fix_loc, fix_size)
+            del image, fix_loc, fix_size, output
+            return sampler, image_ref
+
+        for image_dtype in (torch.uint8, torch.float32):
+            with self.subTest(dtype=image_dtype):
+                sampler, image_ref = exercise(image_dtype)
+                gc.collect()
+                self.assertIsNone(image_ref())
+                self.assertTrue(all(
+                    isinstance(message, str)
+                    for message in sampler._native_errors.values()))
+
 
 class TestUint8RetinalTransform(unittest.TestCase):
     def test_no_transforms_returns_unit_float(self):
@@ -183,6 +216,51 @@ class TestNativeUint8Sampler(unittest.TestCase):
         image, _, _ = _inputs(self.device)
         self._compare(image, "nearest")
         self._compare(image, "bilinear")
+
+    def test_direct_true_forces_torch_oracle(self):
+        image, fix_loc, fix_size = _inputs(self.device)
+        for mode in ("nearest", "bilinear"):
+            with self.subTest(mode=mode):
+                reference_sampler = _sampler(
+                    mode, self.device, backend="torch")
+                sampler = _sampler(mode, self.device, backend="cuda")
+                sampler.coords = reference_sampler.coords
+                sampler.sampling_grid = reference_sampler.sampling_grid
+                reference = reference_sampler(
+                    image, fix_loc, fix_size, direct=True)
+                with mock.patch.object(
+                        sampler, "_native_uint8_sample",
+                        side_effect=AssertionError("fused path must not run")):
+                    output = sampler(
+                        image, fix_loc, fix_size, direct=True)
+                self.assertEqual(sampler._last_backend, "torch_direct")
+                torch.testing.assert_close(output, reference, rtol=0, atol=0)
+
+    def test_16k_nearest_coordinate_parity(self):
+        height, width = 8640, 15360
+        reference_sampler = GridSampler(
+            16.0, 0.5, 256, device=self.device, mode="nearest",
+            backend="torch")
+        sampler = GridSampler(
+            16.0, 0.5, 256, device=self.device, mode="nearest",
+            backend="cuda", coords=reference_sampler.coords)
+        fix_loc = torch.tensor([[0.47, 0.53]], device=self.device)
+        fix_size = torch.tensor([[height, height]], device=self.device)
+        x_pattern = (
+            torch.arange(width, device=self.device).remainder_(251)
+            .to(torch.uint8).view(1, 1, 1, width)
+            .expand(1, 1, height, width))
+        y_pattern = (
+            torch.arange(height, device=self.device).remainder_(251)
+            .to(torch.uint8).view(1, 1, height, 1)
+            .expand(1, 1, height, width))
+
+        for axis, image in (("x", x_pattern), ("y", y_pattern)):
+            with self.subTest(axis=axis):
+                reference = reference_sampler(
+                    image, fix_loc, fix_size, direct=True)
+                output = sampler(image, fix_loc, fix_size)
+                self.assertTrue(torch.equal(output, reference))
 
     def test_nhwc_camera_view_and_strided_slice(self):
         generator = torch.Generator(device=self.device).manual_seed(22)

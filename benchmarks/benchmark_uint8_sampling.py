@@ -110,7 +110,8 @@ def benchmark_case(
         return native(image, fix_loc, fix_size)
 
     def eager_unit():
-        return eager(image, fix_loc, fix_size).float().div_(255.0)
+        return eager(
+            image, fix_loc, fix_size, direct=True).float().div_(255.0)
 
     def native_unit():
         return native(image, fix_loc, fix_size).float().div_(255.0)

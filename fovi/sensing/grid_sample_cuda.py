@@ -44,10 +44,14 @@ extern "C" __global__ void fovi_uint8_nearest(
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
 
-        const float pixel_x = base_grid[2 * n] * (0.5f * fix_size[2 * b + 1])
-                            + fix_loc[2 * b + 1] * width;
-        const float pixel_y = base_grid[2 * n + 1] * (0.5f * fix_size[2 * b])
-                            + fix_loc[2 * b] * height;
+        const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
+        const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
+        const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
+        const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
+        const float pixel_x = __fadd_rn(
+            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+        const float pixel_y = __fadd_rn(
+            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
         const int x = __float2int_rn(pixel_x - 0.5f);
         const int y = __float2int_rn(pixel_y - 0.5f);
         unsigned char value = 0;
@@ -204,10 +208,14 @@ extern "C" __global__ void fovi_uint8_bilinear(
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
 
-        const float pixel_x = base_grid[2 * n] * (0.5f * fix_size[2 * b + 1])
-                            + fix_loc[2 * b + 1] * width;
-        const float pixel_y = base_grid[2 * n + 1] * (0.5f * fix_size[2 * b])
-                            + fix_loc[2 * b] * height;
+        const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
+        const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
+        const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
+        const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
+        const float pixel_x = __fadd_rn(
+            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+        const float pixel_y = __fadd_rn(
+            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
         const float source_x = pixel_x - 0.5f;
         const float source_y = pixel_y - 0.5f;
         const int x0 = __float2int_rd(source_x);

@@ -267,7 +267,8 @@ class GridSampler(BaseGridSampler):
             except Exception as exc:
                 if requested == 'cuda':
                     raise
-                self._native_errors[error_key] = exc
+                self._native_errors[error_key] = (
+                    f"{type(exc).__name__}: {exc}")
                 warnings.warn(
                     f"native uint8 sampler unavailable ({exc}); using Torch gather",
                     RuntimeWarning, stacklevel=2)
@@ -307,7 +308,8 @@ class GridSampler(BaseGridSampler):
             except Exception as exc:
                 if requested == 'cuda':
                     raise
-                self._native_errors[error_key] = exc
+                self._native_errors[error_key] = (
+                    f"{type(exc).__name__}: {exc}")
                 warnings.warn(
                     f"native floating sampler unavailable ({exc}); using grid_sample",
                     RuntimeWarning, stacklevel=2)
@@ -328,6 +330,8 @@ class GridSampler(BaseGridSampler):
             fix_loc (torch.Tensor, optional): Fixation location. Defaults to None.
             fixation_size (torch.Tensor, optional): Fixation size. Defaults to None.
             return_coords (bool, optional): Whether to return sampling coordinates. Defaults to False.
+            direct (bool, optional): Force the explicit Torch direct-index oracle.
+                Defaults to False.
             
         Returns:
             torch.Tensor: Sampled image tensor.
@@ -340,7 +344,13 @@ class GridSampler(BaseGridSampler):
         if img.dtype == torch.uint8:
             fix_loc_t, fixation_size_t = self._prepare_sampling_args(
                 img, fix_loc, fixation_size)
-            sampled = self._sample_uint8(img, fix_loc_t, fixation_size_t)
+            if direct:
+                sampled = self._torch_direct_sample(
+                    img, fix_loc_t, fixation_size_t)
+                self._last_backend = 'torch_direct'
+            else:
+                sampled = self._sample_uint8(
+                    img, fix_loc_t, fixation_size_t)
             grid = None
             if return_coords:
                 grid = self._direct_grid(img.shape[-2:], fix_loc_t, fixation_size_t)
