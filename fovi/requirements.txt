@@ -24,7 +24,7 @@ trimesh
 wandb
 numba
 plum-dispatch
-transformers
+transformers>=4.57.6
 cmasher
 ipywidgets
 fvcore
