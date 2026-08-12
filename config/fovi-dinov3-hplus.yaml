@@ -1,0 +1,12 @@
+# DINOv3-H+ counterpart to the published S+ recipe. The published models
+# differ only in backbone size/path and per-GPU batch size.
+defaults:
+  - fovi-dinov3-splus
+  - _self_
+
+training:
+  batch_size: 128
+
+pretrained_model:
+  variant: vith16plus
+  path: facebook/dinov3-vith16plus-pretrain-lvd1689m

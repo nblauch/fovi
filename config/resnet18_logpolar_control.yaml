@@ -1,0 +1,12 @@
+# Dense low-resolution ResNet-18 control matched to the RF2 FOVI recipe.
+defaults:
+  - fovi_resnet18_rf2
+  - _self_
+
+model:
+  arch: matched_resnet18
+  arch_spec: base
+  final_grid_size: 1
+
+saccades:
+  mode: logpolar_as_grid
