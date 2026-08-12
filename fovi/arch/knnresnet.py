@@ -112,11 +112,11 @@ class KNNResNetBasicBlock(nn.Module):
         self.norm2 = get_norm(norm_type, len(self.out_coords), out_channels, device=device)
 
         # downsample is a 1x1 conv on the input to use as the residual
-        if stride != 1:
+        if stride != 1 or in_channels != out_channels * self.expansion:
             self.downsample = nn.Sequential(
                 conv_layer(
                     in_channels=in_channels,
-                    out_channels=out_channels,
+                    out_channels=out_channels * self.expansion,
                     k=1,
                     in_coords=self.in_coords,
                     out_coords=self.out_coords,
@@ -124,7 +124,12 @@ class KNNResNetBasicBlock(nn.Module):
                     arch_flag=arch_flag,
                     device=device,
                     ),
-                get_norm(norm_type, len(self.out_coords), out_channels, device=device),
+                get_norm(
+                    norm_type,
+                    len(self.out_coords),
+                    out_channels * self.expansion,
+                    device=device,
+                ),
             )
         else:
             self.downsample = None
@@ -156,7 +161,134 @@ class KNNResNetBasicBlock(nn.Module):
         out = self.relu(out)
 
         return out
-    
+
+
+@add_to_all(__all__)
+class KNNResNetBottleneck(nn.Module):
+    """Bottleneck block for KNN-based ResNet-50-style architectures.
+
+    This follows torchvision's ResNet V1.5 layout: a 1x1 channel reduction,
+    a 3x3 spatial convolution carrying the stride, and a 1x1 expansion. Only
+    the spatial convolution uses a multi-point KNN neighborhood.
+    """
+
+    expansion = 4
+
+    def __init__(self, in_channels, out_channels, k, in_res, stride,
+                 fov, cmf_a,
+                 style='isotropic', conv_layer=KNNConvLayer, cart_res=None,
+                 norm_type='batch', arch_flag='',
+                 sample_cortex=True,
+                 device='cuda', auto_match_cart_resources=0,
+                 isotropic_plotting_type='v1like',
+                 fov_type='circular',
+                 ref_frame_mult=1,
+                 ):
+        super().__init__()
+
+        if ref_frame_mult != 1:
+            assert not len(arch_flag), 'ref_frame_mult is incompatible with arch_flag'
+
+        def _rfl(k_conv):
+            if ref_frame_mult == 1 or k_conv <= 1:
+                return None
+            return int(np.ceil(ref_frame_mult * np.sqrt(k_conv)))
+
+        self.in_coords, self.out_coords, self.out_cart_res = get_in_out_coords(
+            in_res,
+            fov,
+            cmf_a,
+            stride,
+            style=style,
+            auto_match_cart_resources=auto_match_cart_resources,
+            in_cart_res=cart_res,
+            device=device,
+            isotropic_plotting_type=isotropic_plotting_type,
+            fov_type=fov_type,
+        )
+
+        expanded_channels = out_channels * self.expansion
+
+        self.conv1 = conv_layer(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            k=1,
+            in_coords=self.in_coords,
+            out_coords=self.in_coords,
+            sample_cortex=sample_cortex,
+            arch_flag=arch_flag,
+            device=device,
+        )
+        self.norm1 = get_norm(
+            norm_type, len(self.in_coords), out_channels, device=device)
+
+        self.conv2 = conv_layer(
+            in_channels=out_channels,
+            out_channels=out_channels,
+            k=k,
+            in_coords=self.in_coords,
+            out_coords=self.out_coords,
+            sample_cortex=sample_cortex,
+            arch_flag=arch_flag,
+            device=device,
+            ref_frame_side_length=_rfl(k),
+        )
+        self.norm2 = get_norm(
+            norm_type, len(self.out_coords), out_channels, device=device)
+
+        self.conv3 = conv_layer(
+            in_channels=out_channels,
+            out_channels=expanded_channels,
+            k=1,
+            in_coords=self.out_coords,
+            out_coords=self.out_coords,
+            sample_cortex=sample_cortex,
+            arch_flag=arch_flag,
+            device=device,
+        )
+        self.norm3 = get_norm(
+            norm_type, len(self.out_coords), expanded_channels, device=device)
+
+        if stride != 1 or in_channels != expanded_channels:
+            self.downsample = nn.Sequential(
+                conv_layer(
+                    in_channels=in_channels,
+                    out_channels=expanded_channels,
+                    k=1,
+                    in_coords=self.in_coords,
+                    out_coords=self.out_coords,
+                    sample_cortex=sample_cortex,
+                    arch_flag=arch_flag,
+                    device=device,
+                ),
+                get_norm(
+                    norm_type, len(self.out_coords), expanded_channels,
+                    device=device),
+            )
+        else:
+            self.downsample = None
+
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        identity = x if self.downsample is None else self.downsample(x)
+
+        out = self.conv1(x)
+        out = self.norm1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.norm2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.norm3(out)
+
+        out += identity
+        out = self.relu(out)
+        return out
+
+
 
 @add_to_all(__all__)
 class KNNResNet(nn.Module):
@@ -315,7 +447,7 @@ class KNNResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
         self.out_coords = self.layer4[-1].out_coords
-        self.out_channels = 512
+        self.out_channels = 512 * block.expansion
         # reset in_channels to 3 for proper usage in SaccadeNet
         self.in_channels = 3
 
@@ -342,7 +474,7 @@ class KNNResNet(nn.Module):
 
 
         # convenience access to total number of output units
-        self.total_embed_dim = self.out_channels * block.expansion * self.out_coords.shape[0]
+        self.total_embed_dim = self.out_channels * self.out_coords.shape[0]
 
         # linear layer for classification: the forward flattens one entry per output
         # coordinate, and even an out_res=1 grid may hold more than one node.
