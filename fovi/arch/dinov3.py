@@ -13,6 +13,19 @@ from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioni
 __all__ = []
 
 
+def _get_dinov3_layers(model):
+    """Return transformer blocks across supported Transformers layouts."""
+    if hasattr(model, 'layer'):
+        return model.layer
+    if hasattr(model, 'model') and hasattr(model.model, 'layer'):
+        return model.model.layer
+    if hasattr(model, 'encoder') and hasattr(model.encoder, 'layer'):
+        return model.encoder.layer
+    raise AttributeError(
+        f"Cannot locate transformer layers on {type(model).__name__}"
+    )
+
+
 def _select_dinov3_output(output, output_mode, num_register_tokens):
     """Select a tensor view from the native Hugging Face model output."""
     if output_mode == 'pooled':
@@ -181,6 +194,8 @@ def prep_fovi_dinov3_finetuning(model, cfg, device='cuda', key='pretrained_model
         torch.nn.Module: The prepared model with appropriate parameters frozen/unfrozen.
     """
 
+    layers = _get_dinov3_layers(model)
+
     if cfg.get(key).freeze_backbone:
         for param in model.parameters():
             param.requires_grad = False
@@ -200,12 +215,12 @@ def prep_fovi_dinov3_finetuning(model, cfg, device='cuda', key='pretrained_model
             if layer == -1:
                 layer_module = model.embeddings.patch_embeddings
             else:
-                layer_module = model.layer[layer]
+                layer_module = layers[layer]
             for param in layer_module.parameters():
                 param.requires_grad = True       
 
     if cfg.get(key).unfreeze_all_norms:
-        for layer in model.layer:
+        for layer in layers:
             for ln in [layer.norm1, layer.norm2, layer.layer_scale1, layer.layer_scale2]:
                 for param in ln.parameters():
                     param.requires_grad = True   
@@ -218,7 +233,7 @@ def prep_fovi_dinov3_finetuning(model, cfg, device='cuda', key='pretrained_model
                 apply_lora(layer, r=cfg.get(key).lora.r, alpha=cfg.get(key).lora.alpha, device=device)
                 continue
             else:
-                layer = model.layer[ii]
+                layer = layers[ii]
             for sublayer in cfg.get(key).lora.sublayers:
                 parent, child = sublayer.split('.')
                 apply_lora(getattr(getattr(layer, parent), child), r=cfg.get(key).lora.r, alpha=cfg.get(key).lora.alpha, device=device)
