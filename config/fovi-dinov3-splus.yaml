@@ -27,9 +27,9 @@ model:
     mlp_ratio: 4.0
     dropout: 0.2
     pos_emb_type: rope
-    patch_overlap_factor: 1.5
+    patch_overlap_factor: null
     force_patches_less_than_matched: false
-    new_parameterization: false
+    new_parameterization: null
     partitioning_patches: KNN
 
 saccades:
@@ -92,7 +92,7 @@ training:
   from_checkpoint: 0
   eval_only: 0
   eval_freq: 1.0
-  batch_size: 256
+  batch_size: 512
   resolution: 256
   optimizer: adamw
   momentum: 0.9
@@ -107,7 +107,7 @@ training:
   lr_decay_factor: 0.1
   standard_probe_optim: 1
   label_smoothing: 0.0
-  distributed: 1
+  distributed: 0
   clip_grad: 0.0
   loss: supervised
   train_probes_only: 0
@@ -131,9 +131,7 @@ dist:
   nodes: 1
   port: null
   dist_url: null
-  distributed: 0
 
 pretrained_model:
   variant: vits16plus
   path: facebook/dinov3-vits16plus-pretrain-lvd1689m
-  unfreeze_patch_embed: null

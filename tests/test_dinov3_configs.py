@@ -44,7 +44,7 @@ class TestDINOv3Configs(unittest.TestCase):
             "facebook/dinov3-vits16plus-pretrain-lvd1689m",
         )
         self.assertEqual(cfg.model.vit.patch_size, 8)
-        self.assertEqual(cfg.model.vit.patch_overlap_factor, 1.5)
+        self.assertIsNone(cfg.model.vit.patch_overlap_factor)
         self.assertEqual(cfg.training.batch_size, 256)
         self.assertEqual(cfg.saccades.n_fixations_val, [1, 2, 3, 5, 10, 20])
         self.assertEqual(cfg.saccades.nonrandom_first, 1)
