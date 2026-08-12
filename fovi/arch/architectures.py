@@ -4,7 +4,11 @@ from functools import partial
 
 from .knnalexnet import KNNAlexNet
 from .alexnet import baseline_alexnet_kernels, alexnet2023_baseline
-from .knnresnet import KNNResNet
+from .knnresnet import (
+    KNNResNet,
+    KNNResNetBasicBlock,
+    KNNResNetBottleneck,
+)
 from .knn import KNNDepthwiseSeparableConvLayer, KNNConvLayer
 from .wrapper import BackboneProjectorWrapper
 from .knnvit import KNNViT
@@ -187,6 +191,7 @@ def fovi_resnet(cfg,
                         in_conv_stride=None,
                         in_pool_stride=None,
                         depthwise_sep_conv=False,
+                        block=KNNResNetBasicBlock,
                         layers=[2, 2, 2, 2],
                         device='cuda',
                         ):
@@ -213,6 +218,7 @@ def fovi_resnet(cfg,
         in_conv_stride=in_conv_stride,
         in_pool_stride=in_pool_stride,
         depthwise_sep_conv=depthwise_sep_conv,
+        block=block,
         layers=layers,
         device=device,
     )
@@ -224,6 +230,7 @@ def build_fovi_resnet_backbone(cfg,
                                in_conv_stride=None,
                                in_pool_stride=None,
                                depthwise_sep_conv=False,
+                               block=KNNResNetBasicBlock,
                                layers=[2, 2, 2, 2],
                                device='cuda'):
     """Construct the KNN ResNet backbone shared by scratch and pretrained models."""
@@ -232,6 +239,7 @@ def build_fovi_resnet_backbone(cfg,
     if in_pool_stride is None:
         in_pool_stride = cfg.model.get('stem_pool_stride', 2)
     return KNNResNet(
+                 block=block,
                  layers=layers,
                  in_conv_stride=in_conv_stride,
                  in_pool_stride=in_pool_stride,
@@ -264,6 +272,16 @@ def fovi_resnet9_lowres(*args, **kwargs):
 @add_to_all(__all__)
 def fovi_resnet18(*args, **kwargs):
     return fovi_resnet(*args, layers=[2, 2, 2, 2], **kwargs)
+
+
+@add_to_all(__all__)
+def fovi_resnet50(*args, **kwargs):
+    return fovi_resnet(
+        *args,
+        block=KNNResNetBottleneck,
+        layers=[3, 4, 6, 3],
+        **kwargs,
+    )
 
 
 @add_to_all(__all__)
@@ -641,6 +659,11 @@ ARCHITECTURE_REGISTRY.register(
 )
 
 ARCHITECTURE_REGISTRY.register(
+    'fovi_resnet50',
+    lambda cfg, device='cuda': fovi_resnet50(cfg, device=device)
+)
+
+ARCHITECTURE_REGISTRY.register(
     'fovi_resnet18_lora',
     lambda cfg, device='cuda': fovi_resnet18_lora(cfg, device=device)
 )
@@ -727,6 +750,7 @@ ARCHITECTURE_REGISTRY.register('saccadenet_resnet50_baseline', ARCHITECTURE_REGI
 ARCHITECTURE_REGISTRY.register('saccadenet_knnresnet9', ARCHITECTURE_REGISTRY.get('fovi_resnet9'))
 ARCHITECTURE_REGISTRY.register('saccadenet_knnresnet9_lowres', ARCHITECTURE_REGISTRY.get('fovi_resnet9_lowres'))
 ARCHITECTURE_REGISTRY.register('saccadenet_knnresnet18', ARCHITECTURE_REGISTRY.get('fovi_resnet18'))
+ARCHITECTURE_REGISTRY.register('saccadenet_knnresnet50', ARCHITECTURE_REGISTRY.get('fovi_resnet50'))
 ARCHITECTURE_REGISTRY.register('saccadenet_knnresnet18_lowres', ARCHITECTURE_REGISTRY.get('fovi_resnet18_lowres'))
 ARCHITECTURE_REGISTRY.register('saccadenet_knnresnet9_dwsep', ARCHITECTURE_REGISTRY.get('fovi_resnet9_dwsep'))
 ARCHITECTURE_REGISTRY.register('saccadenet_knnresnet9_dwsep_lowres', ARCHITECTURE_REGISTRY.get('fovi_resnet9_dwsep_lowres'))

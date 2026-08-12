@@ -1,0 +1,8 @@
+# RF2 FOVI ResNet-50 ImageNet recipe. This matches the published RF2
+# ResNet-18 recipe except for the bottleneck architecture.
+defaults:
+  - fovi_resnet18_rf2
+  - _self_
+
+model:
+  arch: fovi_resnet50
