@@ -919,6 +919,21 @@ def get_sampling_coords(
             coords, polar_coords, plotting_coords = get_logpolar_image_sampling_coords(
                 fov, cmf_a, res, device=device, force_n_points=None,
                 max_norm_rad=max_val, fov_type=fov_type)
+            if style == 'logpolar_as_grid':
+                # The shared log-polar generator is radius-major for flattened
+                # point-cloud consumers. Dense image consumers instead use the
+                # conventional image layout (height, width) = (angle, radius),
+                # so eccentricity runs along the horizontal axis.
+                grid_shape = (int(res), int(res), -1)
+                coords = (
+                    coords.reshape(grid_shape).transpose(0, 1)
+                    .reshape(-1, 2).contiguous())
+                polar_coords = (
+                    polar_coords.reshape(grid_shape).transpose(0, 1)
+                    .reshape(-1, 2).contiguous())
+                plotting_coords = (
+                    plotting_coords.reshape(grid_shape).transpose(0, 1)
+                    .reshape(-1, 2).contiguous())
         else:
             (coords, polar_coords, plotting_coords,
              masked_coords) = get_isotropic_sampling_coords(

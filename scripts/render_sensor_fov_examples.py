@@ -118,9 +118,9 @@ def render_grid(samples, style, path, dpi):
         # for display without changing the stored downstream representation.
         rgb = rgb.permute(2, 1, 0).flip(0)
     else:
-        # Native log-polar axes are cortical radius then angle. Transpose them
-        # for display so eccentricity runs horizontally.
-        rgb = rgb.permute(2, 1, 0)
+        # Native log-polar image axes are angle then eccentricity, so the
+        # ordinary CHW-to-HWC conversion already gives the intended display.
+        rgb = rgb.permute(1, 2, 0)
 
     fig, ax = plt.subplots(figsize=(6, 4), facecolor="black")
     ax.set_facecolor("black")

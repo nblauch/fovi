@@ -38,6 +38,8 @@ class TestWarpedCartesianControls(unittest.TestCase):
 
     def test_matched_resnets_use_dense_backbones(self):
         expected_widths = {
+            "resnet18_logpolar_control": 512,
+            "resnet50_logpolar_control": 2048,
             "resnet18_warped_cartesian_control": 512,
             "resnet50_warped_cartesian_control": 2048,
         }
