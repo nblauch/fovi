@@ -30,7 +30,7 @@ class TestLogPolarGridCoordinates(unittest.TestCase):
         self.assertTrue(coords.cartesian.is_contiguous())
         self.assertTrue(coords.polar.is_contiguous())
 
-    def test_dense_grid_transposes_the_flat_logpolar_order(self):
+    def test_flat_and_dense_logpolar_share_canonical_order(self):
         flat = SamplingCoords(
             16.0, 0.5, self.resolution, style="logpolar"
         )
@@ -40,16 +40,9 @@ class TestLogPolarGridCoordinates(unittest.TestCase):
 
         for name in ("cartesian", "polar", "plotting", "cortical", "valid_mask"):
             with self.subTest(name=name):
-                flat_value = getattr(flat, name)
-                tail_shape = flat_value.shape[1:]
-                expected = (
-                    flat_value.reshape(
-                        self.resolution, self.resolution, *tail_shape
-                    )
-                    .transpose(0, 1)
-                    .reshape_as(flat_value)
+                torch.testing.assert_close(
+                    getattr(grid, name), getattr(flat, name)
                 )
-                torch.testing.assert_close(getattr(grid, name), expected)
 
 
 class TestLogPolarRetinalTransform(unittest.TestCase):
@@ -75,7 +68,7 @@ class TestLogPolarRetinalTransform(unittest.TestCase):
 
         flat = flat_retina(image, fixation, 32)
         grid = grid_retina(image, fixation, 32)
-        expected = flat.reshape(1, 3, resolution, resolution).transpose(-2, -1)
+        expected = flat.reshape(1, 3, resolution, resolution)
 
         self.assertEqual(tuple(grid.shape), (1, 3, resolution, resolution))
         self.assertTrue(grid.is_contiguous())

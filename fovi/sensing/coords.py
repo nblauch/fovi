@@ -529,20 +529,35 @@ def get_isotropic_sampling_coords(
                 n_angles[this_idx] = n_angles[this_idx] + add
             assert n_angles.min() > 0, 'some radii have no angles'
                 
-    # compute angles and store coordinates
-    coords = []
-    polar_coords = []
-    for ii, radius_i in enumerate(radius):
-        n_angles_i = int(n_angles[ii].item())
-        angles = torch.arange(
-            n_angles_i, device=device, dtype=radius.dtype)
-        angles = angles * (2 * torch.pi / n_angles_i)
-        for angle in angles:
-            polar_coords.append(torch.stack([radius_i, angle]))
-            coords.append(torch.stack([radius_i*torch.cos(angle), radius_i*torch.sin(angle)]))
+    # Log-polar images are generated directly in row-major image order:
+    # angle is the outer (height) axis and eccentricity the inner (width) axis.
+    if constant_num_angles and force_n_points is None:
+        angles = torch.arange(res, device=device, dtype=radius.dtype)
+        angles = angles * (2 * torch.pi / res)
+        angle_grid, radius_grid = torch.meshgrid(
+            angles, radius, indexing='ij')
+        polar_coords = torch.stack(
+            (radius_grid, angle_grid), dim=-1).reshape(-1, 2)
+        radius_flat, angle_flat = polar_coords.unbind(dim=1)
+        coords = torch.stack((
+            radius_flat * torch.cos(angle_flat),
+            radius_flat * torch.sin(angle_flat)), dim=1)
+    else:
+        coords = []
+        polar_coords = []
+        for ii, radius_i in enumerate(radius):
+            n_angles_i = int(n_angles[ii].item())
+            angles = torch.arange(
+                n_angles_i, device=device, dtype=radius.dtype)
+            angles = angles * (2 * torch.pi / n_angles_i)
+            for angle in angles:
+                polar_coords.append(torch.stack([radius_i, angle]))
+                coords.append(torch.stack([
+                    radius_i * torch.cos(angle),
+                    radius_i * torch.sin(angle)]))
 
-    coords = torch.stack(coords)
-    polar_coords = torch.stack(polar_coords)
+        coords = torch.stack(coords)
+        polar_coords = torch.stack(polar_coords)
 
     masked_coords = coords.new_empty((0, 2))
     if fov_type == 'square' and filter_to_fov and int(res) > 1:
@@ -628,7 +643,10 @@ def get_logpolar_image_sampling_coords(
     """Convenience wrapper for log polar image sampling.
     
     Sample coordinates with the cortical magnification function of the complex log mapping w=log(z+a), where z=x+iy.
-    This is not isotropic, rather, it produces a square log polar image using an equal number of angular samples for all radii.
+    This is not isotropic, rather, it produces a square log polar image using
+    an equal number of angular samples for all radii. Flattened coordinates are
+    emitted in row-major image order with angle as height and eccentricity as
+    width.
     
     Args:
         fov (float): Field of view diameter in degrees.
@@ -919,21 +937,6 @@ def get_sampling_coords(
             coords, polar_coords, plotting_coords = get_logpolar_image_sampling_coords(
                 fov, cmf_a, res, device=device, force_n_points=None,
                 max_norm_rad=max_val, fov_type=fov_type)
-            if style == 'logpolar_as_grid':
-                # The shared log-polar generator is radius-major for flattened
-                # point-cloud consumers. Dense image consumers instead use the
-                # conventional image layout (height, width) = (angle, radius),
-                # so eccentricity runs along the horizontal axis.
-                grid_shape = (int(res), int(res), -1)
-                coords = (
-                    coords.reshape(grid_shape).transpose(0, 1)
-                    .reshape(-1, 2).contiguous())
-                polar_coords = (
-                    polar_coords.reshape(grid_shape).transpose(0, 1)
-                    .reshape(-1, 2).contiguous())
-                plotting_coords = (
-                    plotting_coords.reshape(grid_shape).transpose(0, 1)
-                    .reshape(-1, 2).contiguous())
         else:
             (coords, polar_coords, plotting_coords,
              masked_coords) = get_isotropic_sampling_coords(
