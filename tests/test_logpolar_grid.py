@@ -7,7 +7,11 @@ from transformers import DINOv3ViTConfig, DINOv3ViTModel
 
 from fovi.arch.alexnet import alexnet2023_baseline
 from fovi.arch.polar import PolarPadder
-from fovi.sensing.coords import SamplingCoords
+from fovi.sensing.coords import (
+    SamplingCoords,
+    get_isotropic_sampling_coords,
+    get_logpolar_image_sampling_coords,
+)
 from fovi.sensing.retina import RetinalTransform
 
 
@@ -43,6 +47,45 @@ class TestLogPolarGridCoordinates(unittest.TestCase):
                 torch.testing.assert_close(
                     getattr(grid, name), getattr(flat, name)
                 )
+
+    def test_refactor_matches_previous_coordinate_values(self):
+        for fov_type in ("circular", "square"):
+            with self.subTest(fov_type=fov_type):
+                previous = get_isotropic_sampling_coords(
+                    16.0,
+                    0.5,
+                    self.resolution,
+                    fov_type=fov_type,
+                    constant_num_angles=True,
+                    max_norm_rad=0.75,
+                    filter_to_fov=False,
+                )
+                canonical_order = (
+                    torch.arange(self.resolution**2)
+                    .reshape(self.resolution, self.resolution)
+                    .T.reshape(-1)
+                )
+                expected = tuple(
+                    value[canonical_order] for value in previous
+                )
+                actual = get_logpolar_image_sampling_coords(
+                    16.0,
+                    0.5,
+                    self.resolution,
+                    fov_type=fov_type,
+                    max_norm_rad=0.75,
+                )
+
+                for name, actual_value, expected_value in zip(
+                    ("cartesian", "polar", "plotting"), actual, expected
+                ):
+                    with self.subTest(coordinates=name):
+                        torch.testing.assert_close(
+                            actual_value,
+                            expected_value,
+                            rtol=0,
+                            atol=0,
+                        )
 
 
 class TestLogPolarRetinalTransform(unittest.TestCase):
