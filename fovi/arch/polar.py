@@ -27,7 +27,8 @@ class PolarPadder(nn.Module):
         
         Args:
             inputs (torch.Tensor): Input tensor of shape (batch, channels, height, width)
-                where height corresponds to radial and width to angular dimension.
+                where height corresponds to the angular dimension and width to
+                the radial (eccentricity) dimension.
                 
         Returns:
             torch.Tensor: Padded tensor with circular padding on angular dimension

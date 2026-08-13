@@ -1,5 +1,5 @@
 defaults:
-  - fovi-dinov3
+  - fovi-dinov3-splus
   - _self_
 
 saccades:

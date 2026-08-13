@@ -446,6 +446,52 @@ class SamplingCoords():
                 f'resolution={self.resolution}, style={self.style}, '
                 f'fov_type={self.fov_type!r})')
 
+
+def _get_sampling_plotting_coords(
+        coords, polar_coords, fov, cmf_a, plotting_type):
+    """Map visual-field coordinates into the requested plotting layout."""
+    assert plotting_type in ('v1like', 'schwartz', 'warp'), \
+        f"plotting_type must be one of 'v1like', 'schwartz', 'warp'; got {plotting_type!r}"
+
+    if plotting_type == 'warp':
+        r_norm = polar_coords[:, 0]
+        theta = polar_coords[:, 1]
+        r_deg = r_norm * (fov / 2.0)
+        rho_max = np.log((fov / 2.0 + cmf_a) / cmf_a)
+        rho = torch.log((r_deg + cmf_a) / cmf_a) / rho_max
+        return torch.stack(
+            [rho * torch.cos(theta), rho * torch.sin(theta)], dim=1)
+
+    hemi_inds = coords[:, 0] < 0
+    fov_coords = coords * (fov / 2)
+    plotting_coords = torch.log(
+        torch.abs(fov_coords[:, 0]) + 1j * fov_coords[:, 1] + cmf_a)
+    if plotting_type == 'v1like':
+        plotting_coords = torch.stack(
+            [plotting_coords.real, -plotting_coords.imag], 1)
+    else:
+        plotting_coords = torch.stack(
+            [plotting_coords.real, plotting_coords.imag], 1)
+
+    max_fov_rad = np.log(fov / 2 + cmf_a)
+    min_fov_rad = np.log(cmf_a)
+    std = torch.std(plotting_coords[:, 0]) * .5
+
+    if plotting_type == 'v1like':
+        plotting_coords[hemi_inds, 0] = (
+            std + max_fov_rad - plotting_coords[hemi_inds, 0])
+        plotting_coords[~hemi_inds, 0] = (
+            plotting_coords[~hemi_inds, 0] - (std + max_fov_rad))
+    else:
+        gap = std * 0.1
+        plotting_coords[~hemi_inds, 0] = (
+            plotting_coords[~hemi_inds, 0] - min_fov_rad + gap)
+        plotting_coords[hemi_inds, 0] = -(
+            plotting_coords[hemi_inds, 0] - min_fov_rad) - gap
+
+    return plotting_coords
+
+
 @add_to_all(__all__)
 def get_isotropic_sampling_coords(
         fov, cmf_a, res, fov_type='circular', device='cpu',
@@ -539,7 +585,9 @@ def get_isotropic_sampling_coords(
         angles = angles * (2 * torch.pi / n_angles_i)
         for angle in angles:
             polar_coords.append(torch.stack([radius_i, angle]))
-            coords.append(torch.stack([radius_i*torch.cos(angle), radius_i*torch.sin(angle)]))
+            coords.append(torch.stack([
+                radius_i * torch.cos(angle),
+                radius_i * torch.sin(angle)]))
 
     coords = torch.stack(coords)
     polar_coords = torch.stack(polar_coords)
@@ -577,44 +625,8 @@ def get_isotropic_sampling_coords(
             coords = coords[keep]
             polar_coords = polar_coords[keep]
 
-    hemi_inds = coords[:, 0] < 0
-
-    assert plotting_type in ('v1like', 'schwartz', 'warp'), \
-        f"plotting_type must be one of 'v1like', 'schwartz', 'warp'; got {plotting_type!r}"
-
-    if plotting_type == 'warp':
-        # log-polar radial warp in a disc 
-        # rho = log((r_deg + a)/a); rho_max = log((fov/2 + a)/a); plot_xy = (rho/rho_max) * (cos, sin)
-        r_norm = polar_coords[:, 0]
-        theta = polar_coords[:, 1]
-        r_deg = r_norm * (fov / 2.0)
-        rho_max = np.log((fov / 2.0 + cmf_a) / cmf_a)
-        rho = torch.log((r_deg + cmf_a) / cmf_a) / rho_max
-        plotting_coords = torch.stack([rho * torch.cos(theta), rho * torch.sin(theta)], dim=1)
-    else:
-        # use log(z+a) model to compute plotting coordinates (i.e. cortical visualization)
-        fov_coords = coords*(fov/2)
-        plotting_coords = torch.log(torch.abs(fov_coords[:,0]) + 1j*fov_coords[:,1] + cmf_a)
-        if plotting_type == 'v1like':
-            # V1-like: upper VF appears in lower plot (inverted Y)
-            plotting_coords = torch.stack([plotting_coords.real, -plotting_coords.imag],1)
-        else:
-            # upright: upper VF in upper plot (positive Y)
-            plotting_coords = torch.stack([plotting_coords.real, plotting_coords.imag],1)
-
-        max_fov_rad = np.log(fov/2 + cmf_a)
-        min_fov_rad = np.log(cmf_a)
-        std = torch.std(plotting_coords[:,0])*.5
-
-        if plotting_type == 'v1like':
-            # each hemifield's fovea faces outwards (toward plot edges), as in V1
-            plotting_coords[hemi_inds == 1,0] = std + max_fov_rad - plotting_coords[hemi_inds == 1,0]
-            plotting_coords[hemi_inds == 0,0] = plotting_coords[hemi_inds == 0,0] - (std + max_fov_rad)
-        else:
-            # each hemifield's fovea faces inwards (toward plot center); left VF on left, right VF on right
-            gap = std * 0.1
-            plotting_coords[hemi_inds == 0,0] = plotting_coords[hemi_inds == 0,0] - min_fov_rad + gap
-            plotting_coords[hemi_inds == 1,0] = -(plotting_coords[hemi_inds == 1,0] - min_fov_rad) - gap
+    plotting_coords = _get_sampling_plotting_coords(
+        coords, polar_coords, fov, cmf_a, plotting_type)
 
     result = (coords, polar_coords, plotting_coords)
     if return_masked_coords:
@@ -628,7 +640,10 @@ def get_logpolar_image_sampling_coords(
     """Convenience wrapper for log polar image sampling.
     
     Sample coordinates with the cortical magnification function of the complex log mapping w=log(z+a), where z=x+iy.
-    This is not isotropic, rather, it produces a square log polar image using an equal number of angular samples for all radii.
+    This is not isotropic, rather, it produces a square log polar image using
+    an equal number of angular samples for all radii. Flattened coordinates are
+    emitted in row-major image order with angle as height and eccentricity as
+    width.
     
     Args:
         fov (float): Field of view diameter in degrees.
@@ -645,10 +660,28 @@ def get_logpolar_image_sampling_coords(
             - torch.Tensor: Plotting coordinates in complex log space, useful for visualizing the sampling.
     """
     _validate_fov_type(fov_type, style='logpolar')
-    return get_isotropic_sampling_coords(
-        fov, cmf_a, res, fov_type=fov_type, device=device,
-        constant_num_angles=True, force_n_points=force_n_points,
-        max_norm_rad=max_norm_rad, filter_to_fov=False)
+    if force_n_points is not None:
+        return get_isotropic_sampling_coords(
+            fov, cmf_a, res, fov_type=fov_type, device=device,
+            constant_num_angles=True, force_n_points=force_n_points,
+            max_norm_rad=max_norm_rad, filter_to_fov=False)
+
+    radius, _ = _compute_isotropic_r_and_num_theta(
+        fov, cmf_a, res, fov_type=fov_type, device=device)
+    radius = radius * max_norm_rad
+    angles = torch.arange(res, device=device, dtype=radius.dtype)
+    angles = angles * (2 * torch.pi / res)
+    angle_grid, radius_grid = torch.meshgrid(
+        angles, radius, indexing='ij')
+    polar_coords = torch.stack(
+        (radius_grid, angle_grid), dim=-1).reshape(-1, 2)
+    radius_flat, angle_flat = polar_coords.unbind(dim=1)
+    coords = torch.stack((
+        radius_flat * torch.cos(angle_flat),
+        radius_flat * torch.sin(angle_flat)), dim=1)
+    plotting_coords = _get_sampling_plotting_coords(
+        coords, polar_coords, fov, cmf_a, 'v1like')
+    return coords, polar_coords, plotting_coords
 
 
 @add_to_all(__all__)

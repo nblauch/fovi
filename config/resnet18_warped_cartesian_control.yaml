@@ -1,0 +1,6 @@
+defaults:
+  - resnet18_logpolar_control
+  - _self_
+
+saccades:
+  mode: warped_cartesian_as_grid

@@ -1,4 +1,6 @@
+# DINOv3-S+ ImageNet recipe matching the published FOVI model.
 defaults:
+  - default
   - data: IN1000
   - pretrained_model: dinov3_lora_layers-1012345
   - _self_
@@ -8,7 +10,7 @@ model:
   # pooled: CLS only; tokens: CLS + registers + patches;
   # patch_tokens: patches only.
   output_mode: pooled
-  arch_spec: base_lowres
+  arch_spec: ''
   arch_flag: ''
   mlp: '1024'
   norm_mlp: 1
@@ -28,7 +30,7 @@ model:
     patch_overlap_factor: null
     force_patches_less_than_matched: false
     new_parameterization: null
-    partitioning_patches: 'KNN'
+    partitioning_patches: KNN
 
 saccades:
   color_sigma: null
@@ -54,9 +56,10 @@ saccades:
   fix_ior_width: 20
   add_aspect_variation: 0
   n_fixations: 4
-  n_fixations_val: 20
+  n_fixations_val: [1, 2, 3, 5, 10, 20]
   branches: 1
-  nonrandom_val: 0
+  nonrandom_first: 1
+
 transforms:
   where: pre_warp
   flip: 1
@@ -64,6 +67,7 @@ transforms:
   gray: 1
   blur: 0
   foveal_color: 0
+
 logging:
   folder: ''
   log_level: 2
@@ -75,6 +79,7 @@ logging:
     entity: nblauch
     experiment: null
     note: null
+
 validation:
   batch_size: 128
   do_roc: 0
@@ -82,6 +87,7 @@ validation:
   repeats: 1
   val_every: 1
   no_fov_color_val: 0
+
 training:
   from_checkpoint: 0
   eval_only: 0
@@ -118,9 +124,14 @@ training:
   allow_nans: 0
   subset: 1.0
   knn_only: false
+
 dist:
   world_size: 1
   ngpus: 1
   nodes: 1
-  port: '58492'
+  port: null
   dist_url: null
+
+pretrained_model:
+  variant: vits16plus
+  path: facebook/dinov3-vits16plus-pretrain-lvd1689m

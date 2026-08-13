@@ -20,7 +20,11 @@ from .pretrained_resnet import (
     prep_fovi_resnet_finetuning,
 )
 from .mlp import get_mlp
-from .resnet import resnet_ssl as _resnet_ssl
+from .resnet import (
+    resnet18 as _resnet18_backbone,
+    resnet50 as _resnet50_backbone,
+    resnet_ssl as _resnet_ssl,
+)
 from ..utils import HiddenPrints, add_to_all
 
 __all__ = []
@@ -185,6 +189,41 @@ def resnet34(*args, **kwargs):
 @add_to_all(__all__)
 def resnet50(*args, **kwargs):
     return resnet(*args, layers=50, **kwargs)
+
+
+def matched_resnet(cfg, backbone_fn, expansion, device='cuda'):
+    """Build a dense ResNet matched to the low-resolution FOVI controls.
+
+    The stem, max-pool, and residual-stage strides match the FOVI ResNet
+    ladder, while ``*_as_grid`` sensing supplies a conventional 2-D tensor to
+    standard convolutions. Log-polar grids retain angular wrap padding;
+    warped-Cartesian grids use ordinary Cartesian padding.
+    """
+    out_map_size = int(cfg.model.get('final_grid_size', 1) or 1)
+    polar = 'logpolar' in cfg.saccades.mode
+    backbone = backbone_fn(
+        pretrained=False,
+        polar=polar,
+        no_fc=True,
+        main_block_stride=2,
+        pool_stride=2,
+        out_map_size=out_map_size,
+        channel_mult=cfg.model.channel_mult,
+    )
+    final_planes = int(cfg.model.channel_mult * 512)
+    backbone.total_embed_dim = final_planes * expansion * out_map_size ** 2
+    return arch_wrapper(backbone, cfg, device=device)
+
+
+@add_to_all(__all__)
+def matched_resnet18(cfg, device='cuda'):
+    return matched_resnet(cfg, _resnet18_backbone, expansion=1, device=device)
+
+
+@add_to_all(__all__)
+def matched_resnet50(cfg, device='cuda'):
+    return matched_resnet(cfg, _resnet50_backbone, expansion=4, device=device)
+
 
 @add_to_all(__all__)
 def fovi_resnet(cfg,
@@ -640,6 +679,16 @@ ARCHITECTURE_REGISTRY.register(
 ARCHITECTURE_REGISTRY.register(
     'resnet50',
     lambda cfg, device='cuda': resnet50(cfg, device=device)
+)
+
+ARCHITECTURE_REGISTRY.register(
+    'matched_resnet18',
+    lambda cfg, device='cuda': matched_resnet18(cfg, device=device)
+)
+
+ARCHITECTURE_REGISTRY.register(
+    'matched_resnet50',
+    lambda cfg, device='cuda': matched_resnet50(cfg, device=device)
 )
 
 # Foveated ResNet architectures
