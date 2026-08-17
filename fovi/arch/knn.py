@@ -64,8 +64,9 @@ class KNNBaseLayer:
 
     def _mask_invalid_outputs(self, output):
         """Zero outputs whose entire KNN neighborhood is spatial padding."""
-        pad_token = getattr(
-            self, 'knn_pad_token_val', self.in_coords.shape[0])
+        pad_token = getattr(self, 'knn_pad_token_val', None)
+        if pad_token is None:
+            pad_token = self.in_coords.shape[0]
         valid_mask = ~torch.all(
             self.knn_indices_pad_token == pad_token, dim=0)
         if bool(valid_mask.all()):
