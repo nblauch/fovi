@@ -42,6 +42,12 @@ def _make_layer(
     indices = torch.randint(nin, (k, nout), generator=generator, device=device)
     indices.reshape(-1)[:: max(1, indices.numel() // 3)] = nin
     layer.knn_indices_pad_token = indices
+    layer.knn_pad_token_val = nin
+    output_valid_mask = ~torch.all(indices == nin, dim=0)
+    layer.register_buffer(
+        "_knn_output_valid_mask", output_valid_mask, persistent=False
+    )
+    layer._knn_all_outputs_valid = bool(output_valid_mask.all().item())
     rf_index = torch.randint(
         reference_points, (nout, k), generator=generator, device=device
     )
