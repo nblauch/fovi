@@ -523,6 +523,8 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
                               with gradients enabled, training-capable backends
                               (``torch_scatter``/``torch_compact`` and registered kernel
                               backends). ``baseline`` forces the reference path everywhere.
+        _precomputed_knns (tuple, optional): Internal override containing the
+                                            precomputed neighbor indices and distances.
     """
     
     def __init__(self, in_channels, out_channels, k, in_coords, out_coords, 
@@ -533,6 +535,7 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
                  ref_frame_side_length=None,
                  batch_size=None,
                  kernel_backend='auto',
+                 _precomputed_knns=None,
                  ):
         super().__init__()
         self.in_channels = in_channels
@@ -556,7 +559,28 @@ class KNNConvLayer(nn.Module, KNNBaseLayer):
         self.k = torch.minimum(torch.tensor(self.k), torch.tensor(self.in_coords.shape[0])) # ensure k is not greater than the number of input coordinates
         self._k = int(self.k.item())
 
-        self.knn_indices, self.knn_distances = self._compute_knns(batch_size)
+        if _precomputed_knns is None:
+            self.knn_indices, self.knn_distances = self._compute_knns(batch_size)
+        else:
+            knn_indices, knn_distances = _precomputed_knns
+            expected_shape = (self._k, self.out_coords.shape[0])
+            if tuple(knn_indices.shape) != expected_shape:
+                raise ValueError(
+                    "Precomputed KNN indices have shape "
+                    f"{tuple(knn_indices.shape)}; expected {expected_shape}"
+                )
+            if knn_indices.dtype != torch.long:
+                raise TypeError("Precomputed KNN indices must have dtype torch.long")
+            if knn_distances.shape != knn_indices.shape:
+                raise ValueError(
+                    "Precomputed KNN distances must match the indices shape"
+                )
+            if knn_distances.device != knn_indices.device:
+                raise ValueError(
+                    "Precomputed KNN indices and distances must be on the same device"
+                )
+            self.knn_indices = knn_indices
+            self.knn_distances = knn_distances
 
         self._set_knn_padding_metadata()
 

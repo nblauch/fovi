@@ -240,18 +240,25 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
 @add_to_all(__all__)
 class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
     @staticmethod
-    def _minimum_k_covering_inputs(distances, num_inputs):
+    def _stable_neighbor_order(distances):
+        """Order neighbors by distance, breaking ties by candidate index."""
+        return torch.argsort(distances, dim=0, stable=True)
+
+    @classmethod
+    def _minimum_k_covering_inputs(
+            cls, distances, num_inputs, neighbor_order=None):
         num_outputs = distances.shape[1]
         lower_bound = max(1, math.ceil(num_inputs / num_outputs))
         upper_bound = min(num_inputs, distances.shape[0])
+        if neighbor_order is None:
+            neighbor_order = cls._stable_neighbor_order(distances)
+        elif neighbor_order.shape != distances.shape:
+            raise ValueError(
+                "Neighbor order must have the same shape as the distances"
+            )
 
         def covers_all_inputs(num_neighbors):
-            indices = torch.topk(
-                distances,
-                num_neighbors,
-                dim=0,
-                largest=False,
-            ).indices
+            indices = neighbor_order[:num_neighbors]
             covered = torch.unique(indices[indices < num_inputs])
             return covered.numel() == num_inputs
 
@@ -331,14 +338,30 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
 
         k = int(len(in_coords) / len(out_coords)) # set temporary k for use in geodesic dist computation, if necessary
         KNNConvLayer.__init__(self, in_channels, embed_dim, k, in_coords, out_coords, device=device, sample_cortex=sample_cortex, **kwargs) # temporary init to set distances
-        self.distances = self._compute_all_distances()
+        distances = self._compute_all_distances()
+        neighbor_order = self._stable_neighbor_order(distances)
 
         k = self._minimum_k_covering_inputs(
-            self.distances,
+            distances,
             len(in_coords),
+            neighbor_order=neighbor_order,
         )
+        knn_indices = neighbor_order[:k]
+        knn_distances = torch.gather(distances, 0, knn_indices)
 
-        KNNConvLayer.__init__(self, in_channels, embed_dim, k, in_coords, out_coords, device=device, sample_cortex=sample_cortex, **kwargs)
+        KNNConvLayer.__init__(
+            self,
+            in_channels,
+            embed_dim,
+            k,
+            in_coords,
+            out_coords,
+            device=device,
+            sample_cortex=sample_cortex,
+            _precomputed_knns=(knn_indices, knn_distances),
+            **kwargs,
+        )
+        self.distances = distances
 
         print(f'minimum k to use all inputs: {k}')
         

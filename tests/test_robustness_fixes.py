@@ -40,14 +40,53 @@ class TestMinimumFullCoverageNeighborhood(unittest.TestCase):
         )
 
         self.assertEqual(k, 4)
-        selected = torch.topk(
+        selected = KNNPartitioningPatchEmbedding._stable_neighbor_order(
             distances,
-            k,
-            dim=0,
-            largest=False,
-        ).indices
+        )[:k]
         covered = torch.unique(selected[selected < 5])
         torch.testing.assert_close(covered, torch.arange(5))
+
+    def test_equal_distances_are_ordered_by_candidate_index(self):
+        distances = torch.tensor([
+            [0.0, 1.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+            [1.0, 0.0],
+        ])
+
+        order = KNNPartitioningPatchEmbedding._stable_neighbor_order(
+            distances,
+        )
+
+        torch.testing.assert_close(order, torch.tensor([
+            [0, 2],
+            [1, 3],
+            [2, 0],
+            [3, 1],
+        ]))
+
+    def test_final_neighborhoods_use_the_coverage_search_order(self):
+        layer = KNNPartitioningPatchEmbedding(
+            in_channels=1,
+            embed_dim=2,
+            in_res=8,
+            fov=1.0,
+            cmf_a=0.036,
+            style="isotropic",
+            auto_match_cart_resources=True,
+            in_cart_res=8,
+            cart_patch_size=4,
+            device="cpu",
+            sample_cortex=False,
+            ref_frame_side_length=2,
+        )
+
+        expected = layer._stable_neighbor_order(layer.distances)[:layer._k]
+        torch.testing.assert_close(layer.knn_indices, expected)
+        torch.testing.assert_close(
+            layer.knn_distances,
+            torch.gather(layer.distances, 0, expected),
+        )
 
     def test_raises_when_supported_k_cannot_cover_all_inputs(self):
         distances = torch.tensor([
