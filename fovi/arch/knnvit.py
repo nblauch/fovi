@@ -239,6 +239,42 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
 
 @add_to_all(__all__)
 class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
+    @staticmethod
+    def _stable_neighbor_order(distances):
+        """Order neighbors by distance, breaking ties by candidate index."""
+        return torch.argsort(distances, dim=0, stable=True)
+
+    @classmethod
+    def _minimum_k_covering_inputs(
+            cls, distances, num_inputs, neighbor_order=None):
+        num_outputs = distances.shape[1]
+        lower_bound = max(1, math.ceil(num_inputs / num_outputs))
+        upper_bound = min(num_inputs, distances.shape[0])
+        if neighbor_order is None:
+            neighbor_order = cls._stable_neighbor_order(distances)
+        elif neighbor_order.shape != distances.shape:
+            raise ValueError(
+                "Neighbor order must have the same shape as the distances"
+            )
+
+        def covers_all_inputs(num_neighbors):
+            indices = neighbor_order[:num_neighbors]
+            covered = torch.unique(indices[indices < num_inputs])
+            return covered.numel() == num_inputs
+
+        if not covers_all_inputs(upper_bound):
+            raise RuntimeError(
+                "No supported KNN size covers every non-padding input"
+            )
+
+        while lower_bound < upper_bound:
+            candidate = (lower_bound + upper_bound) // 2
+            if covers_all_inputs(candidate):
+                upper_bound = candidate
+            else:
+                lower_bound = candidate + 1
+        return lower_bound
+
     def __init__(self, 
                 in_channels: int,
                 embed_dim: int,
@@ -256,6 +292,8 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
                 sample_cortex='geodesic',
                 isotropic_plotting_type='v1like',
                 fov_type='circular',
+                in_coords=None,
+                out_coords=None,
                  **kwargs,
                  ):
         """Initialize KNN partitioning patch embedding layer.
@@ -275,37 +313,55 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
             transposed: Whether to transpose output
             max_coord_val: Maximum coordinate value
             sample_cortex: Cortex sampling method
+            fov_type: Shape of the sampled field of view
+            in_coords: Optional precomputed input coordinates
+            out_coords: Optional precomputed output coordinates
             **kwargs: Additional arguments passed to parent class
         """    
 
         stride = cart_patch_size # match number of tokens exactly with cartesian version
 
-        in_coords, out_coords, out_cart_res = get_in_out_coords(
-            in_res, fov, cmf_a, stride, style=style,
-            auto_match_cart_resources=auto_match_cart_resources,
-            in_cart_res=in_cart_res, device=device,
-            force_out_match_less_than=force_patches_less_than_matched,
-            max_out_coord_val=max_coord_val,
-            isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type)
+        if (in_coords is None) != (out_coords is None):
+            raise ValueError(
+                "in_coords and out_coords must either both be provided or both be omitted"
+            )
+        if in_coords is None:
+            in_coords, out_coords, _ = get_in_out_coords(
+                in_res, fov, cmf_a, stride, style=style,
+                auto_match_cart_resources=auto_match_cart_resources,
+                in_cart_res=in_cart_res, device=device,
+                force_out_match_less_than=force_patches_less_than_matched,
+                max_out_coord_val=max_coord_val,
+                isotropic_plotting_type=isotropic_plotting_type,
+                fov_type=fov_type,
+            )
 
-        # compute a partitioning, then use the maximum RF size to set k
         k = int(len(in_coords) / len(out_coords)) # set temporary k for use in geodesic dist computation, if necessary
         KNNConvLayer.__init__(self, in_channels, embed_dim, k, in_coords, out_coords, device=device, sample_cortex=sample_cortex, **kwargs) # temporary init to set distances
-        self.distances = self._compute_all_distances()
+        distances = self._compute_all_distances()
+        neighbor_order = self._stable_neighbor_order(distances)
 
-        distances_nopad = self.distances[:(len(in_coords))] # don't need padding coords in partition
-        partitioning = torch.argmin(distances_nopad, 1)
-        rfs = []
-        for ii in range(len(out_coords)):
-            rf = torch.argwhere(partitioning == ii).squeeze()
-            dists = self.distances[rf,ii]
-            max_dist = dists.max()
-            new_rf = torch.argwhere(self.distances[:,ii] < max_dist).reshape(-1)
-            rfs.append(new_rf)
-        k = torch.max(torch.tensor([len(rf) for rf in rfs])).item()
+        k = self._minimum_k_covering_inputs(
+            distances,
+            len(in_coords),
+            neighbor_order=neighbor_order,
+        )
+        knn_indices = neighbor_order[:k]
+        knn_distances = torch.gather(distances, 0, knn_indices)
 
-        KNNConvLayer.__init__(self, in_channels, embed_dim, k, in_coords, out_coords, device=device, sample_cortex=sample_cortex, **kwargs)
+        KNNConvLayer.__init__(
+            self,
+            in_channels,
+            embed_dim,
+            k,
+            in_coords,
+            out_coords,
+            device=device,
+            sample_cortex=sample_cortex,
+            _precomputed_knns=(knn_indices, knn_distances),
+            **kwargs,
+        )
+        self.distances = distances
 
         print(f'minimum k to use all inputs: {k}')
         
