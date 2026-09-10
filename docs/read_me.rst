@@ -8,10 +8,10 @@ an interface to deep vision models, including CNNs and ViTs.
 We provide an interactive walkthrough of the methods and results at
 https://nblauch.github.io/fovi/
 
-The package refactor is currently ``2.0.0.dev0``; stable 2.0 will
-accompany PyPI publication. The pre-refactor source is the 1.0 baseline.
-Main can advance between releases; record a Git commit for reproducible
-source installs. See `versions and
+Version **2.0.0** introduces the sensing, model, and training package
+boundaries. The pre-refactor source is the 1.0 baseline. Main can
+advance between releases; record a Git commit for reproducible source
+installs. See `versions and
 releases <https://nblauch.github.io/fovi/releases.html>`__.
 
 🛠️ Install
@@ -26,8 +26,8 @@ For published releases, choose the capabilities you need:
    pip install 'fovi[training]'     # models, training utilities, and research tools
    pip install 'fovi[all]'          # identical dependencies to fovi[models,training]
 
-The first PyPI release is 2.0.0. For the current development checkout,
-clone the repository, activate your Python environment, and install from
+The first PyPI release is 2.0.0. To work from a source checkout, clone
+the repository, activate your Python environment, and install from
 source:
 
 .. code:: bash

@@ -120,4 +120,4 @@ after moving any of those implementations. Built-in loader runtime checks requir
 native installation; installing only the models extra does not provide that runtime.
 
 See [pretrained output parity](pretrained_parity.md) for the cross-checkout inference
-procedure, and [versions and releases](releases.md) for the 1.0 baseline and pending 2.0 release.
+procedure, and [versions and releases](releases.md) for the 1.0 baseline and 2.0 release.

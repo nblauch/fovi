@@ -4,9 +4,8 @@ The pre-refactor code is the **1.0 baseline**, at commit
 `2916774285399ea9d04026c65a828e9c1aef9923`. This names the historical source baseline;
 it does not imply that a 1.0 package was published to PyPI.
 
-The package-boundary refactor is under development as **2.0.0.dev0**. The first stable
-**2.0.0** release will coincide with PyPI availability. Merging the refactor does not
-constitute that release.
+**2.0.0** is the first stable release of the package-boundary refactor and the first
+PyPI release. Release tags identify the source used to build the published artifacts.
 
 ## Main between releases
 
@@ -57,7 +56,7 @@ See [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/).
 
 ## Change history
 
-### Unreleased — 2.0.0.dev0
+### 2.0.0
 
 - Separate sensing/KNN, model, and training dependency boundaries within one distribution.
 - Add `models`, `training`, and `all` extras. Base installs include CuPy and
