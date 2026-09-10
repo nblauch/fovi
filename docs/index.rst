@@ -28,10 +28,7 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
 
    api/fovi.utils
    api/fovi.demo
-   api/fovi.fovinet
-   api/fovi.hub
    api/fovi.paths
-   api/fovi.probes
    api/fovi.trainer
    api/fovi.visualizer
 

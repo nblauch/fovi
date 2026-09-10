@@ -341,6 +341,11 @@ def main() -> None:
     # Find all subpackages and modules
     modules, subpackages = find_all_modules("fovi", str(fovi_path))
 
+    current_modules = {"fovi", *(name for name, _ in modules + subpackages)}
+    for rst_file in api_dir.glob("fovi*.rst"):
+        if rst_file.stem not in current_modules:
+            rst_file.unlink()
+
     # Generate RST for all modules
     for module_name, _ in modules:
         generate_module_rst(module_name, api_dir)

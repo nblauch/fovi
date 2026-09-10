@@ -30,7 +30,7 @@ jobs:
         run: |
           python -c "from importlib.util import find_spec; assert find_spec('ffcv') is None"
           python -c "import torch; import cupy; import warp"
-          python -m pytest -q tests/test_package_boundaries.py tests/test_model_loading.py tests/test_dinov3_checkpoint_compat.py tests/test_robustness_fixes.py
+          python -m pytest -q tests/test_package_boundaries.py tests/test_model_loading.py tests/test_dinov3_checkpoint_compat.py tests/test_robustness_fixes.py tests/test_trainer_eval_only.py
       - name: Build and check distribution metadata
         run: |
           python -m build --wheel

@@ -95,15 +95,13 @@ def probe_models() -> None:
             )
         ),
     )
-    from fovi import FoviNet, get_model_from_base_fn
-    from fovi.arch.knnresnet import KNNResNet as LegacyResNet
-    from fovi.models import FoviNet as NewFoviNet
+    from fovi.models import FoviNet, get_model_from_base_fn
     from fovi.models.knnresnet import KNNResNet
     from fovi.models.loading import load_config
     from fovi.trainer import load_config as legacy_load_config
 
-    assert FoviNet is NewFoviNet
-    assert LegacyResNet is KNNResNet
+    assert FoviNet.__module__ == "fovi.models.fovinet"
+    assert KNNResNet.__module__ == "fovi.models.knnresnet"
     assert legacy_load_config is load_config
     assert get_model_from_base_fn.__module__ == "fovi.models.loading"
 

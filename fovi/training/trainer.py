@@ -144,10 +144,13 @@ class Trainer:
         self.val_dataset = cfg.data.val_dataset
         self.index_labels = 1
 
-        self.train_loader = self.create_train_loader(cfg.data.train_dataset, subset=cfg.data.subset)
+        self.train_loader = None
+        self.num_train_examples = 0
+        if not cfg.training.eval_only:
+            self.train_loader = self.create_train_loader(cfg.data.train_dataset, subset=cfg.data.subset)
+            self.num_train_examples = self.train_loader.indices.shape[0]
         self.val_loader = self.create_val_loader(cfg.data.val_dataset, subset=cfg.data.subset)
 
-        self.num_train_examples = self.train_loader.indices.shape[0]
         self.num_classes = cfg.data.num_classes
         print("NUM TRAINING EXAMPLES:", self.num_train_examples)
 
@@ -190,7 +193,8 @@ class Trainer:
 
         self.max_steps = cfg.training.epochs * self.num_train_examples // (self.batch_size * self.world_size)
 
-        self.create_optimizer()
+        if not cfg.training.eval_only:
+            self.create_optimizer()
 
         # Load models if checkpoint exists
         if load_checkpoint:
@@ -521,6 +525,8 @@ class Trainer:
         Returns:
             dict: Training statistics for all epochs
         """
+        if self.cfg.training.eval_only:
+            raise RuntimeError("Cannot train a Trainer configured with eval_only=True")
         # We scale the number of max steps w.t the number of examples in the training set
         self.max_steps = self.cfg.training.epochs * self.num_train_examples // (self.batch_size * self.world_size)
         all_stats = None
@@ -610,13 +616,13 @@ class Trainer:
                 return
         self.start_epoch = ckpt["epoch"]
         self.model_.load_state_dict(ckpt["model"])
-        if 'optimizer' in ckpt:
+        if not self.cfg.training.eval_only and 'optimizer' in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer"])
         if not self.cfg.training.train_probes_only: # train_probes_only means train_probes_only_from_scratch
             self.probes.load_state_dict(ckpt["probes"])
-            if 'optimizer_probes' in ckpt:
+            if not self.cfg.training.eval_only and 'optimizer_probes' in ckpt:
                 self.optimizer_probes.load_state_dict(ckpt["optimizer_probes"])
-            if self.lr_schedule and hasattr(self.lr_scheduler, 'load_state_dict') and 'lr_scheduler' in ckpt:
+            if not self.cfg.training.eval_only and self.lr_schedule and hasattr(self.lr_scheduler, 'load_state_dict') and 'lr_scheduler' in ckpt:
                 self.lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
         else:
             # training probes only from checkpoint

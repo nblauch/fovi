@@ -45,15 +45,26 @@ Training without FFCV requires external training code or a Trainer subclass
 that supplies both loaders; selecting `training` does not introduce a new
 automatic data-loading backend.
 
-Old architecture modules, `fovi.fovinet`, `fovi.probes`, and `fovi.hub` forward to the new
-implementations. This preserves class identity and existing pickle/configuration paths.
-Old training utility modules and `fovi.visualizer` similarly forward to their new locations.
-Root exports such as `fovi.FoviNet` and `fovi.get_model_from_base_fn` are lazy compatibility
-exports. `from fovi.trainer import load_config` still works without importing the trainer;
-new code should import it from `fovi.models.loading`.
+For validation or activation extraction, set `training.eval_only=True` and
+`data.train_dataset=None`. The Trainer creates only the validation loader and
+restores weights without optimizer state. Calling `train()` in this mode raises.
 
-Prefer explicit imports. The historical root wildcard exports remain available,
-but `from fovi import *` also resolves the trainer and therefore needs the
+Complete-model imports must use `fovi.models`. The old architecture modules,
+`fovi.fovinet`, `fovi.probes`, `fovi.hub`, and root model exports have been removed.
+For example, replace `fovi.arch.knnvit` with `fovi.models.knnvit`, import `FoviNet`
+from `fovi.models`, and import checkpoint helpers from `fovi.models.loading`.
+KNN primitives such as `fovi.arch.knn` remain in their existing locations.
+
+This is a Python import-path change, not a checkpoint-key change. Published Hub
+state dictionaries and the DINO/LoRA compatibility hook do not depend on these
+aliases. Old scripts, dotted configuration targets, and pickled whole-model objects
+using the removed paths need migration; prefer saving model state dictionaries.
+
+Old training utility modules, root trainer exports, and `fovi.visualizer` still
+forward to their new locations. `from fovi.trainer import load_config` also remains
+available; new code should import it from `fovi.models.loading`.
+
+Prefer explicit imports. `from fovi import *` resolves the trainer and needs the
 training dependencies and configured research paths. A plain `import fovi`
 does not resolve those exports.
 

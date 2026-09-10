@@ -44,7 +44,7 @@ def download_model(
         huggingface_hub.utils.RevisionNotFoundError: If the specified revision doesn't exist.
 
     Example:
-        >>> from fovi.hub import download_model
+        >>> from fovi.models.hub import download_model
         >>> model_path = download_model('fovi-dinov3-splus_a-2.78_res-64_in1k')
         >>> print(model_path)
         /home/user/.cache/fovi/fovi-dinov3-splus_a-2.78_res-64_in1k

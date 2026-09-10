@@ -21,9 +21,6 @@ fovi package
    :caption: Modules
 
    fovi.demo
-   fovi.fovinet
-   fovi.hub
    fovi.paths
-   fovi.probes
    fovi.trainer
    fovi.visualizer
