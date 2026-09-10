@@ -16,7 +16,7 @@ from omegaconf import DictConfig
 from numba.core.config import NUMBA_NUM_THREADS
 
 from fovi.utils import get_random_name
-from fovi.trainer import Trainer
+from fovi.training import Trainer
 
 @hydra.main(version_base=None, config_path="../config", config_name="default")
 def main(cfg: DictConfig):

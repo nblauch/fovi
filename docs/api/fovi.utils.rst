@@ -16,10 +16,7 @@ fovi.utils package
    :maxdepth: 4
    :caption: Modules
 
-   fovi.utils.fastaugs.functional
-   fovi.utils.fastaugs.functional_tensor
-   fovi.utils.fastaugs.loader
-   fovi.utils.fastaugs.transforms
+   fovi.utils.backup
    fovi.utils.flops
    fovi.utils.image
    fovi.utils.knnprobe
@@ -27,4 +24,3 @@ fovi.utils package
    fovi.utils.losses
    fovi.utils.lr_scheduling
    fovi.utils.std_transforms
-

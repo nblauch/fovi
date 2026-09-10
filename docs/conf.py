@@ -12,6 +12,8 @@
 #
 import os
 import sys
+from pathlib import Path
+import runpy
 sys.path.insert(0, os.path.abspath('..'))
 
 # -- Project information -----------------------------------------------------
@@ -21,7 +23,7 @@ license = 'MIT'
 author = 'Nicholas M. Blauch, George A. Alvarez, Talia Konkle'
 
 # The full version, including alpha/beta/rc tags
-release = '0.1.0'
+release = runpy.run_path(Path(__file__).resolve().parents[1] / 'fovi/_version.py')['__version__']
 
 # -- General configuration ---------------------------------------------------
 
@@ -78,6 +80,13 @@ autodoc_default_options = {
 autodoc_docstring_signature = True
 autodoc_preserve_defaults = True
 
+# Document training APIs without compiling the native dataset runtime or installing
+# experiment tooling. Models and numerical APIs use their real implementations.
+autodoc_mock_imports = [
+    'ffcv', 'torchmetrics', 'wandb', 'pandas', 'numba', 'sklearn',
+    'fvcore', 'seaborn', 'cmasher', 'plotly', 'ipywidgets',
+]
+
 # Napoleon settings
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
@@ -113,4 +122,4 @@ nbsphinx_timeout = 60  # Timeout for notebook execution
 #     <p class="admonition-title">Note</p>
 #     <p>This page was generated from a Jupyter notebook.</p>
 #     </div>
-# """ 
+# """

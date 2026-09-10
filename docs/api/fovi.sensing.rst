@@ -11,8 +11,8 @@ fovi.sensing package
    :caption: Modules
 
    fovi.sensing.coords
+   fovi.sensing.grid_sample_cuda
    fovi.sensing.manifold
    fovi.sensing.policies
    fovi.sensing.retina
    fovi.sensing.samplers
-

@@ -4,16 +4,24 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fovi"
-version = "0.0.0"
 description = "A foveated interface for deep vision models"
 requires-python = ">=3.9"
-dynamic = ["dependencies"]
+dynamic = ["version", "dependencies", "optional-dependencies"]
 
-[project.optional-dependencies]
-warp = ["warp-lang>=1.12"]
+[tool.hatch.version]
+path = "fovi/_version.py"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.metadata.hooks.requirements_txt]
 files = ["fovi/requirements.txt"]
+
+[tool.hatch.metadata.hooks.requirements_txt.optional-dependencies]
+models = ["requirements-models.txt"]
+training = ["requirements-models.txt", "requirements-training.txt"]
+all = ["requirements-models.txt", "requirements-training.txt"]
+warp = ["requirements-warp.txt"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fovi"]

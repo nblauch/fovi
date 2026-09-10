@@ -1,0 +1,10 @@
+fovi.models.alexnet
+===================
+
+.. automodule:: fovi.models.alexnet
+   :members:
+   :undoc-members:
+   :show-inheritance:
+   :imported-members:
+   :special-members: __init__
+   :exclude-members: __weakref__

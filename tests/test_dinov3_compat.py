@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from torch import nn
 
-from fovi.arch.dinov3 import _get_dinov3_layers
+from fovi.models.dinov3 import _get_dinov3_layers
 
 
 class TestDINOv3LayerCompatibility(unittest.TestCase):

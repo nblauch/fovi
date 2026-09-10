@@ -1,10 +1,6 @@
-import os
-import shutil
-from ..paths import SAVE_DIR, SLOW_DIR
+"""Compatibility import for :mod:`fovi.training.utils.backup`."""
 
-def backup_model(base_fn):
-    shutil.copytree(f"{SAVE_DIR}/logs/{base_fn}", f"{SLOW_DIR}/logs/{base_fn}", dirs_exist_ok=True)
+import sys
+from importlib import import_module
 
-def backup_models(base_fns):
-    for base_fn in base_fns:
-        backup_model(base_fn)
+sys.modules[__name__] = import_module("fovi.training.utils.backup")
