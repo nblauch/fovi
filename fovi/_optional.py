@@ -10,5 +10,5 @@ def require_dependencies(extra: str, modules: tuple[str, ...]) -> None:
         raise ModuleNotFoundError(
             f"Missing dependencies for fovi[{extra}]: {', '.join(missing)}. "
             f"Install with `pip install 'fovi[{extra}]'`. "
-            "See the installation guide for native FFCV prerequisites when using training."
+            "See the installation guide for native prerequisites when using fovi[ffcv]."
         )

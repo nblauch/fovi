@@ -1,5 +1,9 @@
 import torch
 from typing import Any, Dict, Mapping, Optional, Sequence, Type, Union
+from .._optional import require_dependencies
+
+require_dependencies("ffcv", ("ffcv",))
+
 from ffcv.pipeline.compiler import Compiler
 from ffcv.pipeline.operation import Operation
 from ffcv.fields.base import Field

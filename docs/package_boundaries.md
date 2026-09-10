@@ -1,14 +1,19 @@
 # Package boundaries and migration
 
 `fovi` is one distribution. Install `fovi` for sensing and KNN layers, `fovi[models]` for
-complete networks, and `fovi[training]` for model and training dependencies. `fovi[all]`
-is exactly the union selected by `fovi[models,training]`; the independent `warp` extra
+complete networks, and `fovi[training]` for model and training dependencies without FFCV.
+`fovi[ffcv]` adds the native FFCV-SSL loader dependency. `fovi[all]`
+is exactly the union selected by `fovi[models,training,ffcv]`; the independent `warp` extra
 retains its previous meaning and is not implicitly included in `all`.
 
 The model and training requirement files are reused when building extras metadata, so their
 dependency lists have a single source of truth. The wheel includes every namespace, even
 when its optional dependencies are not installed. Missing capability dependencies raise an
 error containing the appropriate installation command.
+
+The models extra requires PyTorch 2.5 or later for the public state-dict
+pre-load hook used by DINO checkpoint compatibility. This is an API minimum;
+the validated full dependency environment is recorded in the parity report.
 
 ## Imports
 
@@ -30,12 +35,34 @@ Shared numerical and image transforms remain in `fovi.utils` and `fovi.utils.fas
 Importing those transforms no longer attempts to load FFCV. Plotly/video helpers import their
 optional dependencies only when called.
 
+Pure-Torch losses and schedulers can be imported without the training extra.
+Each helper requires only the libraries it uses. Importing `Trainer` requires
+the training dependencies and research paths, but does not import FFCV.
+Its built-in `create_train_loader` and `create_val_loader` methods require
+`fovi[ffcv]` and raise with an installation command when it is missing.
+Training without FFCV requires external training code or a Trainer subclass
+that supplies both loaders; selecting `training` does not introduce a new
+automatic data-loading backend.
+
 Old architecture modules, `fovi.fovinet`, `fovi.probes`, and `fovi.hub` forward to the new
 implementations. This preserves class identity and existing pickle/configuration paths.
 Old training utility modules and `fovi.visualizer` similarly forward to their new locations.
 Root exports such as `fovi.FoviNet` and `fovi.get_model_from_base_fn` are lazy compatibility
 exports. `from fovi.trainer import load_config` still works without importing the trainer;
 new code should import it from `fovi.models.loading`.
+
+Prefer explicit imports. The historical root wildcard exports remain available,
+but `from fovi import *` also resolves the trainer and therefore needs the
+training dependencies and configured research paths. A plain `import fovi`
+does not resolve those exports.
+
+Incidental imports from the old root are not public re-exports: import
+`HiddenPrints` from `fovi.utils`, storage paths from `fovi.paths`, and `OmegaConf`
+from `omegaconf`. Import submodules explicitly rather than assuming that
+`import fovi` populates every `fovi.arch` attribute. `fovi.trainer.get_relative_path`
+was an internal loader helper and has been removed. Request `FlashLoader`
+explicitly from `fovi.training.loader`; wildcard imports of image transforms
+do not pull in a data loader.
 
 ## Inference configuration and checkpoints
 
@@ -77,7 +104,7 @@ python scripts/check_distribution.py dist/fovi-*.whl
 Boundary tests start fresh processes without research environment variables and reject
 imports across the sensing/model/training boundaries. Loading tests restore local CPU
 checkpoints without network access or training. Run the existing sensing and model tests
-after moving any of those implementations. Training runtime checks require a working FFCV-SSL
+after moving any of those implementations. Built-in loader runtime checks require a working FFCV-SSL
 native installation; installing only the models extra does not provide that runtime.
 
 See [pretrained output parity](pretrained_parity.md) for the cross-checkout inference

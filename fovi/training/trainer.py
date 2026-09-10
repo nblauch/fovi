@@ -1,3 +1,7 @@
+from .._optional import require_dependencies
+
+require_dependencies("training", ("torchmetrics", "wandb", "pandas", "numba", "sklearn"))
+
 import torch
 from torch.amp import autocast, GradScaler
 from torch import nn
@@ -31,16 +35,6 @@ import wandb
 import inspect
 from omegaconf import DictConfig, OmegaConf
 from ..utils.fastaugs import transforms as fastT
-
-import ffcv
-import ffcv.transforms
-from ffcv.pipeline.operation import Operation
-from ffcv.loader import OrderOption
-from ffcv.transforms import ToTensor, ToDevice, Squeeze
-from ffcv.fields.rgb_image import CenterCropRGBImageDecoder
-from ffcv.fields.basics import IntDecoder
-from ffcv.fields import IntField, RGBImageField
-from .loader import FlashLoader
 
 from .utils.lr_scheduling import LARS, CosineDecayWithWarmup
 from ..models.probes import FoviNetProbes
@@ -290,6 +284,15 @@ class Trainer:
         Returns:
             FlashLoader: Configured data loader for training
         """
+        require_dependencies("ffcv", ("ffcv",))
+        import ffcv
+        from ffcv.pipeline.operation import Operation
+        from ffcv.loader import OrderOption
+        from ffcv.transforms import ToTensor, ToDevice, Squeeze
+        from ffcv.fields.basics import IntDecoder
+        from ffcv.fields import IntField, RGBImageField
+        from .loader import FlashLoader
+
         img_device = 'cpu' if self.cfg.training.load_cpu else self.device
         train_path = Path(train_dataset)
         assert train_path.is_file()
@@ -380,6 +383,15 @@ class Trainer:
         Returns:
             FlashLoader: Configured data loader for validation
         """
+        require_dependencies("ffcv", ("ffcv",))
+        from ffcv.pipeline.operation import Operation
+        from ffcv.loader import OrderOption
+        from ffcv.transforms import ToTensor, ToDevice, Squeeze
+        from ffcv.fields.rgb_image import CenterCropRGBImageDecoder
+        from ffcv.fields.basics import IntDecoder
+        from ffcv.fields import IntField, RGBImageField
+        from .loader import FlashLoader
+
         img_device = 'cpu' if self.cfg.training.load_cpu else self.device
 
         val_path = Path(val_dataset)

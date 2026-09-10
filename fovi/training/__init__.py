@@ -6,15 +6,9 @@ from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from .._optional import require_dependencies
-
 if TYPE_CHECKING:
     from .loading import get_trainer_from_base_fn
     from .trainer import Trainer
-
-require_dependencies(
-    "training", ("ffcv", "torchmetrics", "wandb", "pandas", "numba", "sklearn")
-)
 
 __all__ = ["Trainer", "get_trainer_from_base_fn"]
 

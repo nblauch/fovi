@@ -17,8 +17,9 @@ git clone https://github.com/nblauch/fovi.git
 cd fovi
 pip install -e .                 # sensing, sampling grids, KNN layers
 pip install -e '.[models]'       # complete models and checkpoint loading
-pip install -e '.[training]'     # models plus datasets, trainers, and research tools
-pip install -e '.[all]'          # identical dependencies to .[models,training]
+pip install -e '.[training]'     # models, training utilities, and research tools; no FFCV
+pip install -e '.[training,ffcv]' # built-in FFCV data-loading workflow
+pip install -e '.[all]'          # identical dependencies to .[models,training,ffcv]
 ```
 
 Choose one installation command. All source ships in the same package; extras select dependencies.
@@ -27,12 +28,14 @@ require model registries, Transformers, FFCV, or experiment tracking. Importing 
 `fovi.sensing`, and primitive `fovi.arch` modules does not import models or training or require
 research storage environment variables.
 
-Training uses the FFCV-SSL fork pinned in `requirements-training.txt`. Install its native build
-prerequisites before selecting `training` or `all`, using an environment compatible with that fork:
+The built-in loaders use the FFCV-SSL fork pinned in `requirements-ffcv.txt`.
+The `ffcv` extra installs the `ffcv-ssl` distribution, imported in Python as `ffcv`.
+Install its native build prerequisites before selecting `ffcv` or `all`, using an
+environment compatible with that fork:
 
 ```bash
 conda install pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
-pip install -e '.[training]'
+pip install -e '.[training,ffcv]'
 ```
 
 For existing configurations, set `FOVI_SAVE_DIR` and `FOVI_DATASETS_DIR` before importing the

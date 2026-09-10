@@ -7,7 +7,6 @@ from email import message_from_bytes
 from pathlib import Path
 from zipfile import ZipFile
 
-from packaging.markers import default_environment
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
@@ -36,25 +35,28 @@ def check_wheel(path: Path) -> None:
     assert set(metadata.get_all("Provides-Extra", [])) == {
         "models",
         "training",
+        "ffcv",
         "all",
         "warp",
     }
     for python_version in ("3.9", "3.12"):
-        environment = default_environment()
-        environment["python_version"] = python_version
         selected: dict[str, set[tuple[str, str, str | None]]] = {}
-        for extra in ("", "models", "training", "all", "warp"):
-            environment["extra"] = extra
+        for extra in ("", "models", "training", "ffcv", "all", "warp"):
+            environment = {"python_version": python_version, "extra": extra}
             selected[extra] = {
                 (canonicalize_name(req.name), str(req.specifier), req.url)
                 for req in requirements
                 if req.marker is None or req.marker.evaluate(environment)
             }
-        assert selected["all"] == selected["models"] | selected["training"]
+        assert (
+            selected["all"]
+            == selected["models"] | selected["training"] | selected["ffcv"]
+        )
         assert selected["models"] <= selected["training"]
         base_names = {name for name, _, _ in selected[""]}
         assert not base_names & {
             "ffcv",
+            "ffcv-ssl",
             "timm",
             "transformers",
             "wandb",
@@ -69,9 +71,10 @@ def check_wheel(path: Path) -> None:
             "scikit-image",
             "cupy-cuda12x",
         } <= base_names
-        assert "ffcv" in {name for name, _, _ in selected["training"]}
+        assert "ffcv-ssl" not in {name for name, _, _ in selected["training"]}
+        assert "ffcv-ssl" in {name for name, _, _ in selected["ffcv"]}
     print(
-        f"Validated source contents and base/models/training/all/warp metadata: {path}"
+        f"Validated source contents and base/models/training/ffcv/all/warp metadata: {path}"
     )
 
 

@@ -1,5 +1,4 @@
 cmasher
-ffcv @ git+https://github.com/facebookresearch/FFCV-SSL.git@6458e33f0753e7a35bc639517a763350a0fc2177
 fvcore
 imageio
 imageio-ffmpeg

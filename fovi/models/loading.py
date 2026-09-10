@@ -10,6 +10,7 @@ from typing import Union
 
 import hydra
 import torch
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 from torch import nn
 
@@ -76,10 +77,21 @@ def load_config(
     elif (base_dir / "config.yaml").is_file():
         cfg = OmegaConf.load(base_dir / "config.yaml")
     elif Path(f"{base_dir}.yaml").is_file():
-        with hydra.initialize_config_dir(
-            version_base=None, config_dir=str(Path(folder).resolve())
-        ):
-            cfg = hydra.compose(config_name=f"{base_fn}.yaml")
+        # Model defaults resolve against their own directory, even inside a
+        # Hydra application. Preserve its live singleton, including on failure.
+        application_hydra = GlobalHydra.instance()
+        application_state = application_hydra.hydra
+        application_hydra.clear()
+        try:
+            with hydra.initialize_config_dir(
+                version_base=None, config_dir=str(Path(folder).resolve())
+            ):
+                cfg = hydra.compose(config_name=f"{base_fn}.yaml")
+        finally:
+            application_hydra.clear()
+            if application_state is not None:
+                application_hydra.initialize(application_state)
+            GlobalHydra.set_instance(application_hydra)
     else:
         with (base_dir / "params.json").open() as stream:
             cfg = OmegaConf.create(json.load(stream))
@@ -168,6 +180,11 @@ def get_model_from_base_fn(
             with open_dict(cfg):
                 OmegaConf.update(cfg, key, value)
         if "logging.base_fn" in kwargs and "logging.folder" not in kwargs:
+            if "FOVI_SAVE_DIR" not in os.environ:
+                raise ValueError(
+                    "Overriding logging.base_fn requires an explicit logging.folder "
+                    "override or the FOVI_SAVE_DIR environment variable."
+                )
             cfg.logging.folder = str(
                 Path(os.environ["FOVI_SAVE_DIR"]) / "logs" / cfg.logging.base_fn
             )

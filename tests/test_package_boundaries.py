@@ -112,7 +112,7 @@ def probe_missing_extra(extra: str) -> None:
     from fovi import _optional
 
     original_find_spec = _optional.find_spec
-    missing_module = {"models": "timm", "training": "ffcv"}[extra]
+    missing_module = {"models": "timm", "training": "wandb", "ffcv": "ffcv"}[extra]
 
     def find_spec(name: str) -> importlib.machinery.ModuleSpec | None:
         if name == missing_module:
@@ -121,11 +121,67 @@ def probe_missing_extra(extra: str) -> None:
 
     _optional.find_spec = find_spec
     with pytest.raises(ModuleNotFoundError, match=f"pip install 'fovi\\[{extra}\\]'"):
-        __import__(f"fovi.{extra}")
+        __import__(
+            {
+                "models": "fovi.models",
+                "training": "fovi.training.trainer",
+                "ffcv": "fovi.training.loader",
+            }[extra]
+        )
+
+
+def probe_training_helpers() -> None:
+    sys.meta_path.insert(
+        0,
+        RejectImports(
+            ("ffcv", "wandb", "torchmetrics", "timm", "transformers", "fovi.paths")
+        ),
+    )
+    import torch
+    from fovi.training.utils.losses import BarlowTwinsLoss
+    from fovi.training.utils.lr_scheduling import LARS
+    from fovi.utils.losses import BarlowTwinsLoss as LegacyLoss
+
+    assert BarlowTwinsLoss is LegacyLoss
+    parameter = torch.nn.Parameter(torch.ones(2))
+    optimizer = LARS([parameter], lr=0.1)
+    parameter.sum().backward()
+    optimizer.step()
+    assert torch.all(parameter < 1)
+
+
+def probe_training_without_ffcv() -> None:
+    os.environ["FOVI_SAVE_DIR"] = os.getcwd()
+    os.environ["FOVI_SLOW_DIR"] = os.getcwd()
+    os.environ["FOVI_DATASETS_DIR"] = os.getcwd()
+    from fovi import _optional
+
+    original_find_spec = _optional.find_spec
+    _optional.find_spec = lambda name: (
+        None if name == "ffcv" else original_find_spec(name)
+    )
+    sys.meta_path.insert(0, RejectImports(("ffcv",)))
+    from fovi import Trainer
+    from fovi.training.trainer import Trainer as NewTrainer
+
+    assert Trainer is NewTrainer
+    trainer = Trainer.__new__(Trainer)
+    for loader in (trainer.create_train_loader, trainer.create_val_loader):
+        with pytest.raises(ModuleNotFoundError, match=r"fovi\[ffcv\]"):
+            loader("unused")
 
 
 @pytest.mark.parametrize(
-    "capability", ["core", "models", "missing-models", "missing-training"]
+    "capability",
+    [
+        "core",
+        "models",
+        "training-helpers",
+        "training-without-ffcv",
+        "missing-models",
+        "missing-training",
+        "missing-ffcv",
+    ],
 )
 def test_import_boundary(capability: str, tmp_path: Path) -> None:
     env = os.environ.copy()
@@ -150,4 +206,9 @@ if __name__ == "__main__":
     if sys.argv[1].startswith("missing-"):
         probe_missing_extra(sys.argv[1].removeprefix("missing-"))
     else:
-        {"core": probe_core, "models": probe_models}[sys.argv[1]]()
+        {
+            "core": probe_core,
+            "models": probe_models,
+            "training-helpers": probe_training_helpers,
+            "training-without-ffcv": probe_training_without_ffcv,
+        }[sys.argv[1]]()

@@ -33,7 +33,7 @@ is a separate follow-up covering:
 
 - Distribution of the pinned FFCV-SSL dependency. Its current Git URL is rejected by
   PyPI, including when declared in an extra. Preserve the required training behavior and
-  `fovi[all] == fovi[models,training]` when choosing its distribution mechanism.
+  `fovi[all] == fovi[models,training,ffcv]` when choosing its distribution mechanism.
 - Package name availability, release metadata, and wheel/sdist installation checks in
   environments with only the selected extras.
 - A trusted publisher workflow, a release tag, and publication of 2.0.0.
@@ -47,7 +47,7 @@ and [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/).
 ### Unreleased — 2.0.0.dev0
 
 - Separate sensing/KNN, model, and training dependency boundaries within one distribution.
-- Add `models`, `training`, and `all` extras; retain the independent `warp` extra.
+- Add `models`, `training`, `ffcv`, and `all` extras; retain the independent `warp` extra.
 - Move complete networks and inference loading to `fovi.models`, and training to
   `fovi.training`, with compatibility imports at the old paths.
 - Restore pretrained models without constructing a trainer, importing FFCV, or requiring

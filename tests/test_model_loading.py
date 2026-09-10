@@ -73,6 +73,62 @@ def test_standalone_hydra_config(tmp_path: Path) -> None:
     assert key is None
 
 
+@pytest.mark.parametrize("broken", [False, True])
+def test_nested_hydra_composition_preserves_application(
+    tmp_path: Path, broken: bool
+) -> None:
+    import hydra
+    from hydra.core.global_hydra import GlobalHydra
+    from hydra.errors import MissingConfigException
+
+    application = tmp_path / "application"
+    model = tmp_path / "model"
+    application.mkdir()
+    model.mkdir()
+    (application / "app.yaml").write_text("owner: application\n")
+    (model / "width.yaml").write_text("value: 4\n")
+    (model / "network.yaml").write_text(
+        "defaults: [missing]\n" if broken else "defaults: [width]\n"
+    )
+    with hydra.initialize_config_dir(version_base=None, config_dir=str(application)):
+        original = GlobalHydra.instance()
+        if broken:
+            with pytest.raises(MissingConfigException):
+                load_config("network", False, model)
+        else:
+            cfg, _, _ = load_config("network", False, model)
+            assert cfg.value == 4
+        assert GlobalHydra.instance() is original
+        assert hydra.compose(config_name="app").owner == "application"
+
+
+def test_logging_override_explains_missing_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("FOVI_SAVE_DIR", raising=False)
+    (tmp_path / "model.yaml").write_text(
+        "width: 2\nlogging: {base_fn: old, use_wandb: false}\n"
+    )
+    with pytest.raises(ValueError, match="logging.folder.*FOVI_SAVE_DIR"):
+        get_model_from_base_fn(
+            "model",
+            load=False,
+            device="cpu",
+            model_dirs=[tmp_path],
+            fovinet_cls=LocalModel,
+            **{"logging.base_fn": "new"},
+        )
+    model = get_model_from_base_fn(
+        "model",
+        load=False,
+        device="cpu",
+        model_dirs=[tmp_path],
+        fovinet_cls=LocalModel,
+        **{"logging.base_fn": "new", "logging.folder": str(tmp_path / "logs")},
+    )
+    assert model.weight.shape == (2,)
+
+
 def test_existing_broken_local_model_does_not_download(tmp_path: Path) -> None:
     (tmp_path / "model").mkdir()
     with pytest.raises(FileNotFoundError, match="params.json"):
