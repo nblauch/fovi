@@ -2,8 +2,8 @@ import unittest
 
 import torch
 
-from fovi.arch.architectures import ARCHITECTURE_REGISTRY
-from fovi.arch.knnresnet import KNNResNet, KNNResNetBottleneck
+from fovi.models.architectures import ARCHITECTURE_REGISTRY
+from fovi.models.knnresnet import KNNResNet, KNNResNetBottleneck
 
 
 class TestKNNResNet50(unittest.TestCase):

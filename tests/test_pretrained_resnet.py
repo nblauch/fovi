@@ -7,8 +7,8 @@ from omegaconf import OmegaConf
 from torch import nn
 from torchvision.models import resnet18
 
-from fovi.arch.knnresnet import KNNResNet
-from fovi.arch.pretrained_resnet import (
+from fovi.models.knnresnet import KNNResNet
+from fovi.models.pretrained_resnet import (
     flattened_basic_blocks,
     load_torchvision_resnet_backbone,
     prep_fovi_resnet_finetuning,

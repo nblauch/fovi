@@ -4,38 +4,77 @@ Welcome to the `fovi` codebase, a PyTorch library for implementing foveated visi
 
 We provide an interactive walkthrough of the methods and results at https://nblauch.github.io/fovi/
 
+Version **2.0.0** introduces the sensing, model, and training package boundaries.
+The pre-refactor source is the 1.0 baseline. Main can advance between releases; record a Git
+commit for reproducible source installs. See [versions and releases](https://nblauch.github.io/fovi/docs/releases.html).
+
 ## 🛠️ Install
 
-First, create a fresh conda environment:
-```
-conda create -n fovi python=3.9 # 3.9 is only necessary if using ffcv, see below
-conda activate fovi
+For published releases, choose the capabilities you need:
+
+```bash
+pip install fovi                 # sensing, sampling grids, KNN layers
+pip install 'fovi[models]'       # complete models and checkpoint loading
+pip install 'fovi[training]'     # models, training utilities, and research tools
+pip install 'fovi[all]'          # identical dependencies to fovi[models,training]
 ```
 
-Clone the repo and enter it:
-```
+To work from a source checkout, clone the
+repository, activate your Python environment, and install from source:
+
+```bash
 git clone https://github.com/nblauch/fovi.git
 cd fovi
+pip install -e .                 # sensing, sampling grids, KNN layers
+pip install -e '.[models]'       # complete models and checkpoint loading
+pip install -e '.[training]'     # models, training utilities, and research tools; no FFCV
+pip install -e '.[all]'          # identical dependencies to .[models,training]
 ```
 
-Now, for installing our package. The easiest installation is without `ffcv`, as `ffcv` rquires Python 3.9 and other harder dependencies. Installing without it will allow you to use everything in our code-base except the training functionality that leverages `ffcv`. If you want training functionality with `ffcv`, see below. You could also use your own training scripts with our models. 
+Choose one installation command. All source ships in the same package; extras select dependencies.
+The base includes PyTorch, torchvision, geometry/image-processing libraries, CuPy, and Warp, but does not
+require model registries, Transformers, FFCV, or experiment tracking. Importing `fovi`,
+`fovi.sensing`, and primitive `fovi.arch` modules does not import models or training or require
+research storage environment variables.
 
-For the easy install, with your new environment activated, just do:
-```
-# from within the fovi repo
-pip install -e . # this will automatically install fovi/requirements.txt
-```
+FFCV is an external prerequisite for the built-in training and validation loaders.
+It is installed manually, including when using `all`. Trainer subclasses or external
+training scripts can supply other data loaders.
 
-To install with `ffcv` to allow fast training, we first follow the instructions to install `ffcv-ssl`, which has stricter requirements, and then install `fovi` and its requirements. With your `fovi` conda environment activated, do:
-```
+See [package boundaries and migration](https://nblauch.github.io/fovi/docs/package_boundaries.html) for public import paths.
+
+### Manual FFCV installation
+
+The built-in loaders use the FFCV-SSL fork pinned in `requirements-ffcv.txt`, imported
+in Python as `ffcv`. This file is for manual installation and is not part of fovi's
+package dependency metadata. Install its native build prerequisites in an environment
+compatible with that fork, then install it from the repository root:
+
+```bash
 conda install pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
-pip install git+https://github.com/facebookresearch/FFCV-SSL.git
-# from within the fovi repo
-pip install -e .
+pip install -e '.[training]'
+pip install --no-build-isolation -r requirements-ffcv.txt
 ```
 
-To use flash attention, install per the typical approach:
-```
+For a release installed from PyPI, use `requirements-ffcv.txt` from its matching
+Git release tag. The same native prerequisites apply.
+
+### Research storage directories
+
+Base sensing/KNN use and pretrained inference with `fovi[models]` do not require
+any `FOVI_*_DIR` environment variables. Installing the training extra does not
+change this behavior.
+
+Before importing `Trainer` or `fovi.paths`, set `FOVI_SAVE_DIR` for checkpoints and
+logs and `FOVI_DATASETS_DIR` for datasets. Optionally, set `FOVI_SLOW_DIR` for large
+storage (defaults to `FOVI_SAVE_DIR`) and `FOVI_FIGS_DIR` for figures (defaults to
+the `figures` subdirectory of `FOVI_SLOW_DIR`).
+
+### Optional Flash Attention
+
+To use Flash Attention, install it separately:
+
+```bash
 pip install packaging ninja
 pip install flash-attn --no-build-isolation
 ```
@@ -54,12 +93,28 @@ Pretrained models are hosted on [HuggingFace Hub](https://huggingface.co/fovi-py
 | [`fovi-resnet18_a-0.5_res-64_rfmult-2_in1k`](https://huggingface.co/fovi-pytorch/fovi-resnet18_a-0.5_res-64_rfmult-2_in1k) | ~179 MB | ResNet18, high foveation (a=0.5), rfmult=2 |
 
 ```python
-from fovi import get_model_from_base_fn
+import torch
+from fovi.models import get_model_from_base_fn
 
 # Models are automatically downloaded from HuggingFace Hub on first use
-model = get_model_from_base_fn('fovi-dinov3-splus_a-2.78_res-64_in1k')
+model = get_model_from_base_fn(
+    'fovi-dinov3-splus_a-2.78_res-64_in1k', device='cuda'
+).eval()
+
+# RGB uint8 images, batch/channel/height/width; coordinates are normalized row/column.
+images = torch.randint(0, 256, (1, 3, 256, 256), dtype=torch.uint8, device='cuda')
+with torch.inference_mode():
+    embeddings, layers, retinal_samples = model(
+        images, setting='supervised', fixations=[(0.5, 0.5)],
+        n_fixations=1, do_postproc=False,
+    )
+    logits = model.head(embeddings)
 ```
 
+Inference uses `.[models]` and needs no FFCV, datasets, trainer, or `FOVI_*_DIR`
+environment variables. The checkpoint configuration retains its historical `training`
+section for model dimensions and preprocessing; reading that data does not import the
+training runtime.
 
 ## 📝 Example notebooks
 
@@ -87,6 +142,7 @@ To do so:
 
 ```bash
 # Install documentation dependencies
+pip install -e '.[models]'
 pip install -r requirements-docs.txt
 
 # Generate documentation
@@ -146,8 +202,8 @@ with color-coded speedup tables across all GPUs). `--report-from` renders either
 from existing JSON without re-running.
 Useful knobs: `--cache-dir` points model loading at a local Hugging Face cache (offline
 friendly); env vars `FOVI_KNN_BACKEND=baseline`, `FOVI_KNN_POOL_BACKEND=baseline`, and
-`FOVI_KNN_WORK_THRESHOLD` override backend selection globally. Missing optional
-dependencies (cupy/warp) degrade gracefully and are annotated in the output. The harness
+`FOVI_KNN_WORK_THRESHOLD` override backend selection globally. The harness records
+backend availability and any unavailable CUDA runtime/compiler support. The harness
 itself is the reproducible evidence — run the commands above to regenerate every number
 on your own hardware; final published results will live in the project's PR/release
 notes.
@@ -155,12 +211,11 @@ notes.
 ### Manual optimization test gate
 
 GPU CI is not currently enabled. Before merging changes to the optimized kernels or retinal
-sampling path, run the complete gate manually on a CUDA 12 Ampere-or-newer machine. Install
-the optional Warp backend when it is part of the change; without it, its tests report as
-skipped.
+sampling path, run the complete gate manually on a CUDA 12 Ampere-or-newer machine.
+The standard installation includes both CuPy and Warp kernel dependencies.
 
 ```bash
-pip install -e ".[warp]"
+pip install -e .
 python -m unittest discover -s tests -p 'test_knn*.py' -v
 python -m unittest discover -s tests -p 'test_retinal_sampling.py' -v
 ```

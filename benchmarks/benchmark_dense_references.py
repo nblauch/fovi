@@ -15,7 +15,7 @@ Per-model dense variants:
   (fovi/arch/resnet.py) is NOT used: its __init__ calls the torchvision parent without
   block/layers (line ~262) and raises TypeError — reported to the arch owners.
 - alexnet: the repo's own dense spec the KNN kernels were derived from:
-  fovi.arch.alexnet.get_backbone(kernels=baseline_alexnet_kernels['base_lowres']) —
+  fovi.models.alexnet.get_backbone(kernels=baseline_alexnet_kernels['base_lowres']) —
   the 64x64-adapted kernel/stride ladder (k11 s2 stem).
 - dinov3: the SAME HF checkpoint config built with dense patch embedding
   (get_model_from_base_fn(..., load=False, model.vit.partitioning_patches=None)): the
@@ -52,15 +52,15 @@ def build(name, device):
 
         return torchvision.models.resnet18(num_classes=1000).to(device), torch.float16
     if name == "alexnet":
-        from fovi.arch.alexnet import baseline_alexnet_kernels, get_backbone
+        from fovi.models.alexnet import baseline_alexnet_kernels, get_backbone
 
         return get_backbone(kernels=baseline_alexnet_kernels["base_lowres"]).to(device), torch.float16
     if name in ("dinov3", "dinov3_hplus"):
         # Build the DENSE backbone directly via build_fovi_dinov3 (the dense patch-embed
         # branch is gated on 'as_grid' in saccades.mode; FoviNet's RetinalTransform rejects
         # such modes, so we bypass FoviNet entirely — trunk-only reference, no projector).
-        from fovi import find_config
-        from fovi.arch.dinov3 import build_fovi_dinov3
+        from fovi.models.loading import find_config
+        from fovi.models.dinov3 import build_fovi_dinov3
         from fovi.arch.knn import KNNConvLayer
 
         cfgname = {"dinov3": "fovi-dinov3-splus_a-2.78_res-64_in1k",

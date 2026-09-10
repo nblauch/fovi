@@ -1,0 +1,13 @@
+cmasher
+fvcore
+imageio
+imageio-ffmpeg
+ipywidgets
+matplotlib
+numba
+pandas
+plotly
+scikit-learn
+seaborn
+torchmetrics
+wandb

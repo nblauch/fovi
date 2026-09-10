@@ -5,7 +5,7 @@ import unittest
 import torch
 from torch import nn
 
-from fovi.arch.knnvit import KNNPartitioningPatchEmbedding
+from fovi.models.knnvit import KNNPartitioningPatchEmbedding
 from fovi.utils.lora import apply_lora
 
 

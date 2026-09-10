@@ -5,7 +5,7 @@ import unittest
 import torch
 from transformers import DINOv3ViTConfig, DINOv3ViTModel
 
-from fovi.arch.alexnet import alexnet2023_baseline
+from fovi.models.alexnet import alexnet2023_baseline
 from fovi.arch.polar import PolarPadder
 from fovi.sensing.coords import (
     SamplingCoords,

@@ -5,59 +5,152 @@ Welcome to the ``fovi`` codebase, a PyTorch library for implementing
 foveated vision. This library provides tools for foveated sampling and
 an interface to deep vision models, including CNNs and ViTs.
 
+We provide an interactive walkthrough of the methods and results at
+https://nblauch.github.io/fovi/
+
+Version **2.0.0** introduces the sensing, model, and training package
+boundaries. The pre-refactor source is the 1.0 baseline. Main can
+advance between releases; record a Git commit for reproducible source
+installs. See `versions and
+releases <https://nblauch.github.io/fovi/docs/releases.html>`__.
+
 🛠️ Install
 ----------
 
-First, create a fresh conda environment:
+For published releases, choose the capabilities you need:
 
-::
+.. code:: bash
 
-      conda create -n fovi python=3.9
-      conda activate fovi
+   pip install fovi                 # sensing, sampling grids, KNN layers
+   pip install 'fovi[models]'       # complete models and checkpoint loading
+   pip install 'fovi[training]'     # models, training utilities, and research tools
+   pip install 'fovi[all]'          # identical dependencies to fovi[models,training]
 
-To download pretrained models from our repo, you will need ``git lfs``,
-which is used for “large file storage”. Then clone the repo and enter
-it:
+To work from a source checkout, clone the repository, activate your
+Python environment, and install from source:
 
-::
+.. code:: bash
 
-   conda install git-lfs
-   git lfs install
    git clone https://github.com/nblauch/fovi.git
    cd fovi
+   pip install -e .                 # sensing, sampling grids, KNN layers
+   pip install -e '.[models]'       # complete models and checkpoint loading
+   pip install -e '.[training]'     # models, training utilities, and research tools; no FFCV
+   pip install -e '.[all]'          # identical dependencies to .[models,training]
 
-Now, for installing our package. The easiest installation is without
-``ffcv``, as ``ffcv`` rquires Python 3.9 and other harder dependencies.
-Installing without it will allow you to use everything in our code-base
-except the training functionality that leverages ``ffcv``. If you want
-training functionality with ``ffcv``, see below. You could also use your
-own training scripts with our models.
+Choose one installation command. All source ships in the same package;
+extras select dependencies. The base includes PyTorch, torchvision,
+geometry/image-processing libraries, CuPy, and Warp, but does not
+require model registries, Transformers, FFCV, or experiment tracking.
+Importing ``fovi``, ``fovi.sensing``, and primitive ``fovi.arch``
+modules does not import models or training or require research storage
+environment variables.
 
-For the easy install, with your new environment activated, just do:
+FFCV is an external prerequisite for the built-in training and
+validation loaders. It is installed manually, including when using
+``all``. Trainer subclasses or external training scripts can supply
+other data loaders.
 
-::
+See `package boundaries and
+migration <https://nblauch.github.io/fovi/docs/package_boundaries.html>`__
+for public import paths.
 
-   # from within the fovi repo
-   pip install -e . # this will automatically install fovi/requirements.txt
+Manual FFCV installation
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-To install with ``ffcv`` to allow fast training, we first follow the
-instructions to install ``ffcv-ssl``, which has stricter requirements,
-and then install ``fovi`` and its requirements. With your ``fovi`` conda
-environment activated, do:
+The built-in loaders use the FFCV-SSL fork pinned in
+``requirements-ffcv.txt``, imported in Python as ``ffcv``. This file is
+for manual installation and is not part of fovi’s package dependency
+metadata. Install its native build prerequisites in an environment
+compatible with that fork, then install it from the repository root:
 
-::
+.. code:: bash
 
    conda install pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
-   pip install git+https://github.com/facebookresearch/FFCV-SSL.git
-   # from within the fovi repo
-   pip install -e .
+   pip install -e '.[training]'
+   pip install --no-build-isolation -r requirements-ffcv.txt
 
-To use flash attention, install per the typical approach:
+For a release installed from PyPI, use ``requirements-ffcv.txt`` from
+its matching Git release tag. The same native prerequisites apply.
 
-::
+Research storage directories
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Base sensing/KNN use and pretrained inference with ``fovi[models]`` do
+not require any ``FOVI_*_DIR`` environment variables. Installing the
+training extra does not change this behavior.
+
+Before importing ``Trainer`` or ``fovi.paths``, set ``FOVI_SAVE_DIR``
+for checkpoints and logs and ``FOVI_DATASETS_DIR`` for datasets.
+Optionally, set ``FOVI_SLOW_DIR`` for large storage (defaults to
+``FOVI_SAVE_DIR``) and ``FOVI_FIGS_DIR`` for figures (defaults to the
+``figures`` subdirectory of ``FOVI_SLOW_DIR``).
+
+Optional Flash Attention
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+To use Flash Attention, install it separately:
+
+.. code:: bash
 
    pip install packaging ninja
    pip install flash-attn --no-build-isolation
+
+🤗 Pretrained Models
+--------------------
+
+Pretrained models are hosted on `HuggingFace
+Hub <https://huggingface.co/fovi-pytorch>`__ and are automatically
+downloaded on first use:
+
++---------------------------------------------------------------------------------------------------------------------------------+---------------+-----------------------------------+
+| Model                                                                                                                           | Size          | Description                       |
++=================================================================================================================================+===============+===================================+
+| ```fovi-dinov3-hplus_a-2.78_res-64_in1k`` <https://huggingface.co/fovi-pytorch/fovi-dinov3-hplus_a-2.78_res-64_in1k>`__         | ~3.4 GB       | ViT-H/16+ backbone, high          |
+|                                                                                                                                 |               | foveation (a=2.78)                |
++---------------------------------------------------------------------------------------------------------------------------------+---------------+-----------------------------------+
+| ```fovi-dinov3-splus_a-2.78_res-64_in1k`` <https://huggingface.co/fovi-pytorch/fovi-dinov3-splus_a-2.78_res-64_in1k>`__         | ~131 MB       | ViT-S/16+ backbone, high          |
+|                                                                                                                                 |               | foveation (a=2.78)                |
++---------------------------------------------------------------------------------------------------------------------------------+---------------+-----------------------------------+
+| ```fovi-dinov3-splus_a-60.94_res-64_in1k`` <https://huggingface.co/fovi-pytorch/fovi-dinov3-splus_a-60.94_res-64_in1k>`__       | ~131 MB       | ViT-S/16+ backbone, low foveation |
+|                                                                                                                                 |               | (a=60.94)                         |
++---------------------------------------------------------------------------------------------------------------------------------+---------------+-----------------------------------+
+| ```fovi-alexnet_a-0.5_res-64_rfmult-1_in1k`` <https://huggingface.co/fovi-pytorch/fovi-alexnet_a-0.5_res-64_rfmult-1_in1k>`__   | ~24 MB        | AlexNet, high foveation (a=0.5),  |
+|                                                                                                                                 |               | rfmult=1 (matched resolution      |
+|                                                                                                                                 |               | kernel reference frame)           |
++---------------------------------------------------------------------------------------------------------------------------------+---------------+-----------------------------------+
+| ```fovi-alexnet_a-0.5_res-64_rfmult-2_in1k`` <https://huggingface.co/fovi-pytorch/fovi-alexnet_a-0.5_res-64_rfmult-2_in1k>`__   | ~69 MB        | AlexNet, high foveation (a=0.5),  |
+|                                                                                                                                 |               | rfmult=2 (default                 |
+|                                                                                                                                 |               | higher-resolution kernel          |
+|                                                                                                                                 |               | reference frame)                  |
++---------------------------------------------------------------------------------------------------------------------------------+---------------+-----------------------------------+
+| ```fovi-resnet18_a-0.5_res-64_rfmult-2_in1k`` <https://huggingface.co/fovi-pytorch/fovi-resnet18_a-0.5_res-64_rfmult-2_in1k>`__ | ~179 MB       | ResNet18, high foveation (a=0.5), |
+|                                                                                                                                 |               | rfmult=2                          |
++---------------------------------------------------------------------------------------------------------------------------------+---------------+-----------------------------------+
+
+.. code:: python
+
+   import torch
+   from fovi.models import get_model_from_base_fn
+
+   # Models are automatically downloaded from HuggingFace Hub on first use
+   model = get_model_from_base_fn(
+       'fovi-dinov3-splus_a-2.78_res-64_in1k', device='cuda'
+   ).eval()
+
+   # RGB uint8 images, batch/channel/height/width; coordinates are normalized row/column.
+   images = torch.randint(0, 256, (1, 3, 256, 256), dtype=torch.uint8, device='cuda')
+   with torch.inference_mode():
+       embeddings, layers, retinal_samples = model(
+           images, setting='supervised', fixations=[(0.5, 0.5)],
+           n_fixations=1, do_postproc=False,
+       )
+       logits = model.head(embeddings)
+
+Inference uses ``.[models]`` and needs no FFCV, datasets, trainer, or
+``FOVI_*_DIR`` environment variables. The checkpoint configuration
+retains its historical ``training`` section for model dimensions and
+preprocessing; reading that data does not import the training runtime.
 
 📝 Example notebooks
 --------------------
@@ -81,19 +174,22 @@ intermediate activations from a model, and explore the Trainer class
 📚 Documentation
 ----------------
 
-We can automatically generate comprehensive documentation from the
+The docs are hosted at: https://nblauch.github.io/fovi/docs/
+
+You can also build locally. Docs are generated semi-automatically from
 source code and docstrings. The documentation includes:
 
--  **API Reference**: Complete documentation of all functions, classes,
-   and modules
--  **User Guide**: Installation, quickstart, and usage examples
--  **Developer Guide**: Contributing guidelines and development setup
+- **API Reference**: Complete documentation of all functions, classes,
+  and modules
+- **User Guide**: Installation, quickstart, and usage examples
+- **Developer Guide**: Contributing guidelines and development setup
 
 To do so:
 
 .. code:: bash
 
    # Install documentation dependencies
+   pip install -e '.[models]'
    pip install -r requirements-docs.txt
 
    # Generate documentation
@@ -105,8 +201,106 @@ To do so:
    # View documentation on a remote cluster (need to forward the port separately, this is done automatically in VScode/Cursor)
    python -m http.server 8000 --directory docs/_build/html
 
+⚡ Benchmarking: optimized vs baseline
+--------------------------------------
+
+FOVI’s **KNN convolution and KNN pooling** ship with optimized CUDA
+kernels (selected automatically); this is the optimization under test.
+The native CUDA convolution requires CUDA 12 and an Ampere-or-newer GPU.
+CuPy is installed automatically with FOVI; older NVIDIA GPUs use the
+portable Torch/Warp fallback rather than attempting to compile an
+unsupported native kernel. Python 3.9 installations resolve to CuPy 13,
+preserving compatibility with FFCV; newer Python versions may use CuPy
+14. ``benchmarks/benchmark_final_comparison.py`` is the single entry
+point that measures what they buy you — every FOVI model variant runs in
+two arms (``baseline`` = the reference conv/pool kernels, ``optimized``
+= the shipped optimized conv/pool kernels, with output-parity columns)
+against two clearly-labeled dense references:
+
+- **logpolar@64** — the matched foveated *control*: the same fixations,
+  retina, and augmentation feeding a standard Conv2d/ViT (a
+  log-polar-warped 64x64 input, with the necessary circular padding)
+  instead of KNNConv, so only the backbone differs from the foveated
+  model — run one warped pass per fixation (matched sample count).
+- **dense@256** — the *native-resolution* pipeline a non-foveated system
+  needs (ResNet18/AlexNet/ViT-S+16 on the full 256x256 image), run
+  exactly **once per image**: the foveated design trades one expensive
+  full-res pass for a few cheap glances, so cells are labeled
+  ``(images, n_fixations)`` and per-image columns are emitted so you can
+  apply either normalization.
+
+.. code:: bash
+
+   # from the repo root (defaults: all 5 variants, 10 & 128 images, 1 & 4 fixations,
+   # train + inference, both dense references). Write both report formats alongside:
+   python benchmarks/benchmark_final_comparison.py --device 0 \
+       --report-out results.md --html-out results.html
+
+   # a quick look at one model:
+   python benchmarks/benchmark_final_comparison.py --models resnet18_rf1 --batch 10 --repeats 5
+
+   # render reports from already-collected JSON (one file per GPU), no re-benchmarking:
+   python benchmarks/benchmark_final_comparison.py \
+       --report-from run_ada.jsonl run_h100.jsonl --html-out results.html
+
+Output: one JSON-lines record per cell (timings under both protocols —
+CUDA-event median/min and wall throughput — memory, parity vs the
+baseline arm, per-layer backend routing), followed by a printed summary
+table with ``xd@64`` and ``xd@256`` speed ratios. ``--report-out``
+writes a human-readable Markdown summary; ``--html-out`` writes a
+self-contained interactive page (select batch, fixations,
+train/inference, scope, and the reference — logpolar@64 tracks the
+fixation count, dense@256 is always one native pass — with color-coded
+speedup tables across all GPUs). ``--report-from`` renders either format
+from existing JSON without re-running. Useful knobs: ``--cache-dir``
+points model loading at a local Hugging Face cache (offline friendly);
+env vars ``FOVI_KNN_BACKEND=baseline``,
+``FOVI_KNN_POOL_BACKEND=baseline``, and ``FOVI_KNN_WORK_THRESHOLD``
+override backend selection globally. The harness records backend
+availability and any unavailable CUDA runtime/compiler support. The
+harness itself is the reproducible evidence — run the commands above to
+regenerate every number on your own hardware; final published results
+will live in the project’s PR/release notes.
+
+Manual optimization test gate
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GPU CI is not currently enabled. Before merging changes to the optimized
+kernels or retinal sampling path, run the complete gate manually on a
+CUDA 12 Ampere-or-newer machine. The standard installation includes both
+CuPy and Warp kernel dependencies.
+
+.. code:: bash
+
+   pip install -e .
+   python -m unittest discover -s tests -p 'test_knn*.py' -v
+   python -m unittest discover -s tests -p 'test_retinal_sampling.py' -v
+
+Set ``FOVI_TEST_DEVICE=<index>`` to select a particular GPU. The gate
+covers baseline and automatic routing, forward/backward parity,
+FP16/BF16 autocast, fused convolution and pooling, Warp, inference
+tensors, graph capture, and retinal-sampling equivalence.
+
 🏛️ Citation
 -----------
 
-Blauch, N.M., Alvarez, G.A., Konkle, T. (2025). FOVI: A
-biologically-inspired foveated interface for deep vision models. arXiv.
+Blauch, N. M., Alvarez, G. A., & Konkle, T. (2026). FOVI: a
+biologically-inspired foveated interface for deep vision models.
+Proceedings of the 43rd International Conference on Machine Learning
+(ICML). https://arxiv.org/abs/2602.03766
+
+🙏 Acknowledgements
+-------------------
+
+Originally developed at the Kempner Institute at Harvard University.
+Ongoing support provided by NVIDIA.
+
+.. raw:: html
+
+   <p align="left">
+
+    
+
+.. raw:: html
+
+   </p>

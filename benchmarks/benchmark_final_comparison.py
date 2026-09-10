@@ -192,7 +192,7 @@ def run_fovi_variant(name, args, models_bench, retina_cls, availability, device)
     if kind == "local":
         model = mb.build_local_model(spec, str(device))
     else:
-        from fovi import get_model_from_base_fn
+        from fovi.models import get_model_from_base_fn
 
         model = get_model_from_base_fn(spec, device=str(device), quiet=True)
     model.eval()
@@ -323,19 +323,19 @@ def build_dense256(family, device):
         # Same resnet implementation as logpolar@64 (repo ResNet, torchvision-standard
         # main_block_stride=2) but native 256x256 and non-polar — so the ONLY differences
         # from the foveated control are input resolution and the circular padding.
-        from fovi.arch.resnet import resnet18 as resnet18_backbone
+        from fovi.models.resnet import resnet18 as resnet18_backbone
 
         return resnet18_backbone(pretrained=False, polar=False, no_fc=False,
                                  num_classes=1000, main_block_stride=2).to(device), torch.float16
     if family == "alexnet":
-        from fovi.arch.alexnet import baseline_alexnet_kernels, get_backbone
+        from fovi.models.alexnet import baseline_alexnet_kernels, get_backbone
 
         # The repo's 'base' spec: canonical AlexNet k11/s4 stem (the native-resolution
         # member of the family base_lowres was derived from) — documented choice.
         return get_backbone(kernels=baseline_alexnet_kernels["base"]).to(device), torch.float16
     if family in DINOV3_DENSE_CFG:
-        from fovi import find_config
-        from fovi.arch.dinov3 import build_fovi_dinov3
+        from fovi.models.loading import find_config
+        from fovi.models.dinov3 import build_fovi_dinov3
         from fovi.arch.knn import KNNConvLayer
 
         cfg, _, _ = find_config(DINOV3_DENSE_CFG[family], load=False)
@@ -377,13 +377,13 @@ def _register_dense_arches():
     global _DENSE_ARCHES_REGISTERED
     if _DENSE_ARCHES_REGISTERED:
         return
-    from fovi.arch.architectures import ARCHITECTURE_REGISTRY, arch_wrapper
+    from fovi.models.architectures import ARCHITECTURE_REGISTRY, arch_wrapper
 
     def dense_alexnet(cfg, device="cuda"):
         return ARCHITECTURE_REGISTRY.get("alexnet2023")(cfg, device=device).to(device)
 
     def dense_resnet18(cfg, device="cuda"):
-        from fovi.arch.resnet import resnet18 as resnet18_backbone, get_repr_size
+        from fovi.models.resnet import resnet18 as resnet18_backbone, get_repr_size
         # main_block_stride=2 matches BOTH torchvision resnet18 AND the fovi KNNResNet
         # (knnresnet.py:264-266 strides layers 2-4 by 2, ending at ~2 nodes). The repo
         # ResNet default main_block_stride=1 keeps an 11x11=121-unit tail — ~60x the KNN
@@ -419,8 +419,8 @@ def build_dense_fovinet(family, device):
     is the established control recipe (cf. config/lp-cnn-alexnet.yaml,
     config/dinov3_logpolar_control.yaml)."""
     from omegaconf import OmegaConf
-    from fovi import find_config
-    from fovi.fovinet import FoviNet
+    from fovi.models.loading import find_config
+    from fovi.models.fovinet import FoviNet
     import benchmark_knn_conv_models as mb
     _register_dense_arches()
     kind, spec = DENSE64_CFG[family]

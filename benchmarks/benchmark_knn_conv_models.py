@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.amp import GradScaler, autocast
 
-from fovi import get_model_from_base_fn
+from fovi.models import get_model_from_base_fn
 from fovi.arch.knn import KNNConvLayer
 from fovi.arch.knn_optimization import VALID_BACKENDS
 
@@ -67,10 +67,10 @@ def build_local_model(name, device):
     recipe (fp16 AMP + GradScaler, batch 128, 4 fixations, adamw) as a documented assumption.
     """
     from omegaconf import OmegaConf
-    from fovi.fovinet import FoviNet
-    from fovi.arch import ARCHITECTURE_REGISTRY
-    from fovi.arch.architectures import arch_wrapper, rescale_fov
-    from fovi.arch.knnresnet import KNNResNet
+    from fovi.models.fovinet import FoviNet
+    from fovi.models import ARCHITECTURE_REGISTRY
+    from fovi.models.architectures import arch_wrapper, rescale_fov
+    from fovi.models.knnresnet import KNNResNet
 
     if name not in ("resnet18", "resnet18_rf1", "resnet18_rf2"):
         raise ValueError(f"unknown local model {name!r}")

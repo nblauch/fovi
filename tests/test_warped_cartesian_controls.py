@@ -6,7 +6,7 @@ import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
-from fovi.arch.architectures import ARCHITECTURE_REGISTRY
+from fovi.models.architectures import ARCHITECTURE_REGISTRY
 from fovi.arch.knn import KNNBaseLayer
 
 

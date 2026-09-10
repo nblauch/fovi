@@ -1,7 +1,5 @@
 import numpy as np
 from PIL import Image
-import imageio
-import plotly.io as pio
 import os
 
 
@@ -33,6 +31,11 @@ def plotly_fig_to_frame(fig):
     Returns:
         PIL.Image.Image: The figure as a PIL Image.
     """
+    from .._optional import require_dependencies
+
+    require_dependencies("training", ("plotly",))
+    import plotly.io as pio
+
     pio.write_image(fig, 'tmp.png')  # Save as PNG
     frame = Image.open('tmp.png')
     os.remove('tmp.png')
@@ -89,6 +92,11 @@ def save_frames_as_video(frames, output_path, fps=2):
         output_path (str): Path to save the output video file.
         fps (int, optional): Frames per second for the video. Defaults to 2.
     """
+    from .._optional import require_dependencies
+
+    require_dependencies("training", ("imageio",))
+    import imageio
+
     frames = [Image.fromarray(frame) if not isinstance(frame, Image.Image) else frame for frame in frames]
     imageio.mimsave(output_path, frames, fps=fps, codec='libx264')
 

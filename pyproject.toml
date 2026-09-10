@@ -4,16 +4,30 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fovi"
-version = "0.0.0"
 description = "A foveated interface for deep vision models"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Nicholas Blauch"}]
 requires-python = ">=3.9"
-dynamic = ["dependencies"]
+dynamic = ["version", "dependencies", "optional-dependencies"]
 
-[project.optional-dependencies]
-warp = ["warp-lang>=1.12"]
+[project.urls]
+Homepage = "https://github.com/nblauch/fovi"
+Documentation = "https://nblauch.github.io/fovi/docs/"
+Repository = "https://github.com/nblauch/fovi"
+Issues = "https://github.com/nblauch/fovi/issues"
+
+[tool.hatch.version]
+path = "fovi/_version.py"
 
 [tool.hatch.metadata.hooks.requirements_txt]
 files = ["fovi/requirements.txt"]
+
+[tool.hatch.metadata.hooks.requirements_txt.optional-dependencies]
+models = ["requirements-models.txt"]
+training = ["requirements-models.txt", "requirements-training.txt"]
+all = ["requirements-models.txt", "requirements-training.txt"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fovi"]

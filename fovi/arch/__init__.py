@@ -1,1 +1,4 @@
-from .architectures import ARCHITECTURE_REGISTRY
+"""KNN layers and shared neural-network primitives.
+
+Complete architectures live in :mod:`fovi.models`.
+"""

@@ -1,0 +1,7 @@
+accelerate
+huggingface_hub
+hydra-core
+omegaconf
+timm
+torch>=2.5
+transformers>=4.57.6

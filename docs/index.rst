@@ -9,6 +9,8 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
 
    read_me
    quickstart
+   package_boundaries
+   releases
 
 .. toctree::
    :maxdepth: 2
@@ -16,7 +18,8 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
 
    api/fovi.sensing
    api/fovi.arch
-   api/fovi.trainer
+   api/fovi.models
+   api/fovi.training
 
 .. toctree::
    :maxdepth: 2
@@ -24,9 +27,8 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
 
    api/fovi.utils
    api/fovi.demo
-   api/fovi.fovinet
    api/fovi.paths
-   api/fovi.probes
+   api/fovi.trainer
    api/fovi.visualizer
 
 
