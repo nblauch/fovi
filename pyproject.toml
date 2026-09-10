@@ -15,7 +15,7 @@ path = "fovi/_version.py"
 allow-direct-references = true
 
 [tool.hatch.metadata.hooks.requirements_txt]
-files = ["fovi/requirements.txt"]
+files = ["fovi/requirements.txt", "requirements-warp.txt"]
 
 [tool.hatch.metadata.hooks.requirements_txt.optional-dependencies]
 models = ["requirements-models.txt"]

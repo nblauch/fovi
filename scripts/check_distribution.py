@@ -32,7 +32,8 @@ def check_wheel(path: Path) -> None:
         assert expected_files <= set(wheel.namelist()), (
             "Missing package source in wheel"
         )
-    assert set(metadata.get_all("Provides-Extra", [])) == {
+    extras = set(metadata.get_all("Provides-Extra", []))
+    assert extras == {
         "models",
         "training",
         "ffcv",
@@ -41,17 +42,18 @@ def check_wheel(path: Path) -> None:
     }
     for python_version in ("3.9", "3.12"):
         selected: dict[str, set[tuple[str, str, str | None]]] = {}
-        for extra in ("", "models", "training", "ffcv", "all", "warp"):
+        for extra in ("", *sorted(extras)):
             environment = {"python_version": python_version, "extra": extra}
             selected[extra] = {
                 (canonicalize_name(req.name), str(req.specifier), req.url)
                 for req in requirements
                 if req.marker is None or req.marker.evaluate(environment)
             }
-        assert (
-            selected["all"]
-            == selected["models"] | selected["training"] | selected["ffcv"]
-        )
+        all_dependencies = set(selected[""])
+        for extra in extras - {"all"}:
+            all_dependencies.update(selected[extra])
+        assert selected["all"] == all_dependencies, "all must include every extra"
+        assert selected["warp"] == selected[""], "Warp must be installed by plain fovi"
         assert selected["models"] <= selected["training"]
         base_names = {name for name, _, _ in selected[""]}
         assert not base_names & {
@@ -70,6 +72,7 @@ def check_wheel(path: Path) -> None:
             "trimesh",
             "scikit-image",
             "cupy-cuda12x",
+            "warp-lang",
         } <= base_names
         assert "ffcv-ssl" not in {name for name, _, _ in selected["training"]}
         assert "ffcv-ssl" in {name for name, _, _ in selected["ffcv"]}

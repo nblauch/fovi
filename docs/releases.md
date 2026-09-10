@@ -47,7 +47,8 @@ and [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/).
 ### Unreleased — 2.0.0.dev0
 
 - Separate sensing/KNN, model, and training dependency boundaries within one distribution.
-- Add `models`, `training`, `ffcv`, and `all` extras; retain the independent `warp` extra.
+- Add `models`, `training`, `ffcv`, and `all` extras. Base installs include CuPy and
+  Warp; the historical `warp` extra is redundant. `all` includes every optional dependency.
 - Move complete networks and inference loading to `fovi.models`, and training to
   `fovi.training`, with compatibility imports at the old paths.
 - Restore pretrained models without constructing a trainer, importing FFCV, or requiring

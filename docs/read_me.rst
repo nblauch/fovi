@@ -25,31 +25,35 @@ capabilities you need:
    cd fovi
    pip install -e .                 # sensing, sampling grids, KNN layers
    pip install -e '.[models]'       # complete models and checkpoint loading
-   pip install -e '.[training]'     # models plus datasets, trainers, and research tools
-   pip install -e '.[all]'          # identical dependencies to .[models,training]
+   pip install -e '.[training]'     # models, training utilities, and research tools; no FFCV
+   pip install -e '.[training,ffcv]' # built-in FFCV data-loading workflow
+   pip install -e '.[all]'          # identical dependencies to .[models,training,ffcv]
 
 Choose one installation command. All source ships in the same package;
-extras select dependencies. The base retains PyTorch, torchvision,
-geometry/image-processing libraries, and CuPy, but does not require
-model registries, Transformers, FFCV, or experiment tracking. Importing
-``fovi``, ``fovi.sensing``, and primitive ``fovi.arch`` modules does not
-import models or training or require research storage environment
-variables.
+extras select dependencies. The base includes PyTorch, torchvision,
+geometry/image-processing libraries, CuPy, and Warp, but does not
+require model registries, Transformers, FFCV, or experiment tracking.
+Importing ``fovi``, ``fovi.sensing``, and primitive ``fovi.arch``
+modules does not import models or training or require research storage
+environment variables.
 
-Training uses the FFCV-SSL fork pinned in ``requirements-training.txt``.
-Install its native build prerequisites before selecting ``training`` or
-``all``, using an environment compatible with that fork:
+The built-in loaders use the FFCV-SSL fork pinned in
+``requirements-ffcv.txt``. The ``ffcv`` extra installs the ``ffcv-ssl``
+distribution, imported in Python as ``ffcv``. Install its native build
+prerequisites before selecting ``ffcv`` or ``all``, using an environment
+compatible with that fork:
 
 .. code:: bash
 
    conda install pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
-   pip install -e '.[training]'
+   pip install -e '.[training,ffcv]'
 
 For existing configurations, set ``FOVI_SAVE_DIR`` and
 ``FOVI_DATASETS_DIR`` before importing the trainer. Model inference from
-an explicit configuration/checkpoint directory requires neither. Warp
-kernels remain available through the separate ``warp`` extra, for
-example ``.[models,warp]``. See `package boundaries and
+an explicit configuration/checkpoint directory requires neither. CuPy
+and Warp kernels are installed with plain ``fovi``; no kernel extra is
+needed. The older ``fovi[warp]`` spelling remains accepted and installs
+the same dependencies as plain ``fovi``. See `package boundaries and
 migration <package_boundaries.html>`__ for public import paths.
 
 To use flash attention, install per the typical approach:
@@ -222,8 +226,8 @@ from existing JSON without re-running. Useful knobs: ``--cache-dir``
 points model loading at a local Hugging Face cache (offline friendly);
 env vars ``FOVI_KNN_BACKEND=baseline``,
 ``FOVI_KNN_POOL_BACKEND=baseline``, and ``FOVI_KNN_WORK_THRESHOLD``
-override backend selection globally. Missing optional dependencies
-(cupy/warp) degrade gracefully and are annotated in the output. The
+override backend selection globally. The harness records backend
+availability and any unavailable CUDA runtime/compiler support. The
 harness itself is the reproducible evidence — run the commands above to
 regenerate every number on your own hardware; final published results
 will live in the project’s PR/release notes.
@@ -233,12 +237,12 @@ Manual optimization test gate
 
 GPU CI is not currently enabled. Before merging changes to the optimized
 kernels or retinal sampling path, run the complete gate manually on a
-CUDA 12 Ampere-or-newer machine. Install the optional Warp backend when
-it is part of the change; without it, its tests report as skipped.
+CUDA 12 Ampere-or-newer machine. The standard installation includes both
+CuPy and Warp kernel dependencies.
 
 .. code:: bash
 
-   pip install -e ".[warp]"
+   pip install -e .
    python -m unittest discover -s tests -p 'test_knn*.py' -v
    python -m unittest discover -s tests -p 'test_retinal_sampling.py' -v
 

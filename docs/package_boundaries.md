@@ -3,8 +3,10 @@
 `fovi` is one distribution. Install `fovi` for sensing and KNN layers, `fovi[models]` for
 complete networks, and `fovi[training]` for model and training dependencies without FFCV.
 `fovi[ffcv]` adds the native FFCV-SSL loader dependency. `fovi[all]`
-is exactly the union selected by `fovi[models,training,ffcv]`; the independent `warp` extra
-retains its previous meaning and is not implicitly included in `all`.
+includes every optional dependency, currently the union selected by
+`fovi[models,training,ffcv]`. CuPy and Warp are base dependencies, so all
+installation variants include the optimized kernel libraries. The historical
+`fovi[warp]` spelling remains accepted but adds nothing to the base installation.
 
 The model and training requirement files are reused when building extras metadata, so their
 dependency lists have a single source of truth. The wheel includes every namespace, even
