@@ -52,8 +52,7 @@ For existing configurations, set ``FOVI_SAVE_DIR`` and
 ``FOVI_DATASETS_DIR`` before importing the trainer. Model inference from
 an explicit configuration/checkpoint directory requires neither. CuPy
 and Warp kernels are installed with plain ``fovi``; no kernel extra is
-needed. The older ``fovi[warp]`` spelling remains accepted and installs
-the same dependencies as plain ``fovi``. See `package boundaries and
+needed. See `package boundaries and
 migration <package_boundaries.html>`__ for public import paths.
 
 To use flash attention, install per the typical approach:

@@ -38,7 +38,6 @@ def check_wheel(path: Path) -> None:
         "training",
         "ffcv",
         "all",
-        "warp",
     }
     for python_version in ("3.9", "3.12"):
         selected: dict[str, set[tuple[str, str, str | None]]] = {}
@@ -53,7 +52,6 @@ def check_wheel(path: Path) -> None:
         for extra in extras - {"all"}:
             all_dependencies.update(selected[extra])
         assert selected["all"] == all_dependencies, "all must include every extra"
-        assert selected["warp"] == selected[""], "Warp must be installed by plain fovi"
         assert selected["models"] <= selected["training"]
         base_names = {name for name, _, _ in selected[""]}
         assert not base_names & {
@@ -77,7 +75,7 @@ def check_wheel(path: Path) -> None:
         assert "ffcv-ssl" not in {name for name, _, _ in selected["training"]}
         assert "ffcv-ssl" in {name for name, _, _ in selected["ffcv"]}
     print(
-        f"Validated source contents and base/models/training/ffcv/all/warp metadata: {path}"
+        f"Validated source contents and base/models/training/ffcv/all metadata: {path}"
     )
 
 
