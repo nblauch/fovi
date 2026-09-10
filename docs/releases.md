@@ -26,17 +26,16 @@ After a stable release, advance main to a development version for the next inten
 An installed wheel records its package version; source experiments also need their commit
 SHA and any uncommitted changes. Do not publish different artifacts under the same version.
 
-## PyPI follow-up
+## Publishing to PyPI
 
-The refactor, model parity checks, and migration documentation merge first. Publication
-is a separate follow-up covering:
+Release preparation includes:
 
 - Distribution of the pinned FFCV-SSL dependency. Its current Git URL is rejected by
   PyPI, including when declared in an extra. Preserve the required training behavior and
   `fovi[all] == fovi[models,training,ffcv]` when choosing its distribution mechanism.
 - Package name availability, release metadata, and wheel/sdist installation checks in
   environments with only the selected extras.
-- A trusted publisher workflow, a release tag, and publication of 2.0.0.
+- A trusted publisher workflow, a matching release tag, and publication of the release artifacts.
 - Installation instructions using the published package instead of a source checkout.
 
 See [setuptools' direct dependency restrictions](https://setuptools.pypa.io/en/stable/userguide/dependency_management.html#direct-url-dependencies)
@@ -50,7 +49,7 @@ and [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/).
 - Add `models`, `training`, `ffcv`, and `all` extras. Base installs include CuPy and
   Warp. `all` includes every optional dependency.
 - Move complete networks and inference loading to `fovi.models`, and training to
-  `fovi.training`, with compatibility imports at the old paths.
+  `fovi.training`. Remove old model import aliases; retain training compatibility imports.
 - Restore pretrained models without constructing a trainer, importing FFCV, or requiring
   research storage environment variables.
 - Restore DINOv3 checkpoints across known Transformers block layouts, preserving LoRA
