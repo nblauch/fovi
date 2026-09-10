@@ -125,7 +125,6 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
    read_me
    quickstart
    package_boundaries
-   pretrained_parity
    releases
 
 .. toctree::
@@ -205,7 +204,7 @@ def convert_readme_to_rst(project_root: Path, docs_dir: Path) -> None:
         )
 
         content = readme_rst.read_text()
-        for guide in ("package_boundaries", "pretrained_parity", "releases"):
+        for guide in ("package_boundaries", "releases"):
             content = content.replace(f"docs/{guide}.md", f"{guide}.html")
         readme_rst.write_text(content)
         print(f"Converted README.md to RST: {readme_rst}")

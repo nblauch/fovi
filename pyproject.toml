@@ -14,7 +14,7 @@ dynamic = ["version", "dependencies", "optional-dependencies"]
 
 [project.urls]
 Homepage = "https://github.com/nblauch/fovi"
-Documentation = "https://nblauch.github.io/fovi/"
+Documentation = "https://nblauch.github.io/fovi/docs/"
 Repository = "https://github.com/nblauch/fovi"
 Issues = "https://github.com/nblauch/fovi/issues"
 

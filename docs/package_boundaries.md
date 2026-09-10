@@ -13,8 +13,7 @@ when its optional dependencies are not installed. Missing capability dependencie
 error containing the appropriate installation command.
 
 The models extra requires PyTorch 2.5 or later for the public state-dict
-pre-load hook used by DINO checkpoint compatibility. This is an API minimum;
-the validated full dependency environment is recorded in the parity report.
+pre-load hook used by DINO checkpoint compatibility.
 
 ## Imports
 
@@ -93,8 +92,8 @@ restoration. The requested device applies to checkpoint tensors as well as model
 
 DINOv3 restores the known Transformers `layer`, `encoder.layer`, and `model.layer`
 checkpoint prefixes to the active layout, including LoRA parametrizations. Shape errors,
-missing keys, and unknown keys still fail strict loading. See the
-[checkpoint compatibility details](pretrained_parity.md).
+missing keys, and unknown keys still fail strict loading. Existing Hub checkpoints
+do not need to be rewritten; the configuration must construct the same model and LoRA adapters.
 
 Inference does not import `fovi.paths`, build a trainer, initialize datasets, or configure
 experiment tracking. Reading legacy JSON no longer creates a Hydra YAML file beside it.
@@ -119,5 +118,4 @@ checkpoints without network access or training. Run the existing sensing and mod
 after moving any of those implementations. Built-in loader runtime checks require a working FFCV-SSL
 native installation; installing only the models extra does not provide that runtime.
 
-See [pretrained output parity](pretrained_parity.md) for the cross-checkout inference
-procedure, and [versions and releases](releases.md) for the 1.0 baseline and 2.0 release.
+See [versions and releases](releases.md) for the 1.0 baseline and 2.0 release.

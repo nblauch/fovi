@@ -12,7 +12,7 @@ Version **2.0.0** introduces the sensing, model, and training package
 boundaries. The pre-refactor source is the 1.0 baseline. Main can
 advance between releases; record a Git commit for reproducible source
 installs. See `versions and
-releases <https://nblauch.github.io/fovi/releases.html>`__.
+releases <https://nblauch.github.io/fovi/docs/releases.html>`__.
 
 🛠️ Install
 ----------
@@ -26,9 +26,8 @@ For published releases, choose the capabilities you need:
    pip install 'fovi[training]'     # models, training utilities, and research tools
    pip install 'fovi[all]'          # identical dependencies to fovi[models,training]
 
-The first PyPI release is 2.0.0. To work from a source checkout, clone
-the repository, activate your Python environment, and install from
-source:
+To work from a source checkout, clone the repository, activate your
+Python environment, and install from source:
 
 .. code:: bash
 
@@ -52,6 +51,10 @@ validation loaders. It is installed manually, including when using
 ``all``. Trainer subclasses or external training scripts can supply
 other data loaders.
 
+See `package boundaries and
+migration <https://nblauch.github.io/fovi/docs/package_boundaries.html>`__
+for public import paths.
+
 Manual FFCV installation
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -70,17 +73,25 @@ compatible with that fork, then install it from the repository root:
 For a release installed from PyPI, use ``requirements-ffcv.txt`` from
 its matching Git release tag. The same native prerequisites apply.
 
-For existing configurations, set ``FOVI_SAVE_DIR`` and
-``FOVI_DATASETS_DIR`` before importing the trainer. Model inference from
-an explicit configuration/checkpoint directory requires neither. CuPy
-and Warp kernels are installed with plain ``fovi``; no kernel extra is
-needed. See `package boundaries and
-migration <https://nblauch.github.io/fovi/package_boundaries.html>`__
-for public import paths.
+Research storage directories
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To use flash attention, install per the typical approach:
+Base sensing/KNN use and pretrained inference with ``fovi[models]`` do
+not require any ``FOVI_*_DIR`` environment variables. Installing the
+training extra does not change this behavior.
 
-::
+Before importing ``Trainer`` or ``fovi.paths``, set ``FOVI_SAVE_DIR``
+for checkpoints and logs and ``FOVI_DATASETS_DIR`` for datasets.
+Optionally, set ``FOVI_SLOW_DIR`` for large storage (defaults to
+``FOVI_SAVE_DIR``) and ``FOVI_FIGS_DIR`` for figures (defaults to the
+``figures`` subdirectory of ``FOVI_SLOW_DIR``).
+
+Optional Flash Attention
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+To use Flash Attention, install it separately:
+
+.. code:: bash
 
    pip install packaging ninja
    pip install flash-attn --no-build-isolation
@@ -140,10 +151,6 @@ Inference uses ``.[models]`` and needs no FFCV, datasets, trainer, or
 ``FOVI_*_DIR`` environment variables. The checkpoint configuration
 retains its historical ``training`` section for model dimensions and
 preprocessing; reading that data does not import the training runtime.
-See `pretrained output
-parity <https://nblauch.github.io/fovi/pretrained_parity.html>`__ for
-tested checkpoints, dependency compatibility, and reproducible
-validation commands.
 
 📝 Example notebooks
 --------------------
