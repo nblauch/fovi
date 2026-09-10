@@ -1,10 +1,10 @@
 # Package boundaries and migration
 
 `fovi` is one distribution. Install `fovi` for sensing and KNN layers, `fovi[models]` for
-complete networks, and `fovi[training]` for model and training dependencies without FFCV.
-`fovi[ffcv]` adds the native FFCV-SSL loader dependency. `fovi[all]`
-includes every optional dependency, currently the union selected by
-`fovi[models,training,ffcv]`. CuPy and Warp are base dependencies, so all
+complete networks, and `fovi[training]` for model and training dependencies.
+`fovi[all]` includes every declared optional dependency, the union selected by
+`fovi[models,training]`. FFCV-SSL is an external prerequisite installed manually
+for the built-in data loaders; no extra installs it. CuPy and Warp are base dependencies, so all
 installation variants include the optimized kernel libraries.
 
 The model and training requirement files are reused when building extras metadata, so their
@@ -40,7 +40,7 @@ Pure-Torch losses and schedulers can be imported without the training extra.
 Each helper requires only the libraries it uses. Importing `Trainer` requires
 the training dependencies and research paths, but does not import FFCV.
 Its built-in `create_train_loader` and `create_val_loader` methods require
-`fovi[ffcv]` and raise with an installation command when it is missing.
+FFCV-SSL and raise with a link to the manual installation instructions when it is missing.
 Training without FFCV requires external training code or a Trainer subclass
 that supplies both loaders; selecting `training` does not introduce a new
 automatic data-loading backend.

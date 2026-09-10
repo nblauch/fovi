@@ -1,4 +1,4 @@
-from .._optional import require_dependencies
+from .._optional import require_dependencies, require_ffcv
 
 require_dependencies("training", ("torchmetrics", "wandb", "pandas", "numba", "sklearn"))
 
@@ -288,7 +288,7 @@ class Trainer:
         Returns:
             FlashLoader: Configured data loader for training
         """
-        require_dependencies("ffcv", ("ffcv",))
+        require_ffcv()
         import ffcv
         from ffcv.pipeline.operation import Operation
         from ffcv.loader import OrderOption
@@ -387,7 +387,7 @@ class Trainer:
         Returns:
             FlashLoader: Configured data loader for validation
         """
-        require_dependencies("ffcv", ("ffcv",))
+        require_ffcv()
         from ffcv.pipeline.operation import Operation
         from ffcv.loader import OrderOption
         from ffcv.transforms import ToTensor, ToDevice, Squeeze

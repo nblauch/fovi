@@ -118,7 +118,11 @@ def probe_missing_extra(extra: str) -> None:
         return original_find_spec(name)
 
     _optional.find_spec = find_spec
-    with pytest.raises(ModuleNotFoundError, match=f"pip install 'fovi\\[{extra}\\]'"):
+    if extra == "ffcv":
+        message = "Install FFCV-SSL manually"
+    else:
+        message = f"pip install 'fovi\\[{extra}\\]'"
+    with pytest.raises(ModuleNotFoundError, match=message):
         __import__(
             {
                 "models": "fovi.models",
@@ -165,7 +169,7 @@ def probe_training_without_ffcv() -> None:
     assert Trainer is NewTrainer
     trainer = Trainer.__new__(Trainer)
     for loader in (trainer.create_train_loader, trainer.create_val_loader):
-        with pytest.raises(ModuleNotFoundError, match=r"fovi\[ffcv\]"):
+        with pytest.raises(ModuleNotFoundError, match="Install FFCV-SSL manually"):
             loader("unused")
 
 

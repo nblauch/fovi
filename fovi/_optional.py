@@ -9,6 +9,16 @@ def require_dependencies(extra: str, modules: tuple[str, ...]) -> None:
     if missing:
         raise ModuleNotFoundError(
             f"Missing dependencies for fovi[{extra}]: {', '.join(missing)}. "
-            f"Install with `pip install 'fovi[{extra}]'`. "
-            "See the installation guide for native prerequisites when using fovi[ffcv]."
+            f"Install with `pip install 'fovi[{extra}]'`."
+        )
+
+
+def require_ffcv() -> None:
+    """Require the externally installed FFCV-SSL runtime for built-in loaders."""
+    if find_spec("ffcv") is None:
+        raise ModuleNotFoundError(
+            "The built-in data loaders require FFCV-SSL. Install FFCV-SSL manually "
+            "with its native prerequisites; see "
+            "https://github.com/nblauch/fovi#manual-ffcv-installation. "
+            "Fovi extras do not install FFCV."
         )

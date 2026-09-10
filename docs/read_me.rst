@@ -11,13 +11,24 @@ https://nblauch.github.io/fovi/
 The package refactor is currently ``2.0.0.dev0``; stable 2.0 will
 accompany PyPI publication. The pre-refactor source is the 1.0 baseline.
 Main can advance between releases; record a Git commit for reproducible
-source installs. See `versions and releases <releases.html>`__.
+source installs. See `versions and
+releases <https://nblauch.github.io/fovi/releases.html>`__.
 
 🛠️ Install
 ----------
 
-Clone the repository, activate your Python environment, and install the
-capabilities you need:
+For published releases, choose the capabilities you need:
+
+.. code:: bash
+
+   pip install fovi                 # sensing, sampling grids, KNN layers
+   pip install 'fovi[models]'       # complete models and checkpoint loading
+   pip install 'fovi[training]'     # models, training utilities, and research tools
+   pip install 'fovi[all]'          # identical dependencies to fovi[models,training]
+
+The first PyPI release is 2.0.0. For the current development checkout,
+clone the repository, activate your Python environment, and install from
+source:
 
 .. code:: bash
 
@@ -26,8 +37,7 @@ capabilities you need:
    pip install -e .                 # sensing, sampling grids, KNN layers
    pip install -e '.[models]'       # complete models and checkpoint loading
    pip install -e '.[training]'     # models, training utilities, and research tools; no FFCV
-   pip install -e '.[training,ffcv]' # built-in FFCV data-loading workflow
-   pip install -e '.[all]'          # identical dependencies to .[models,training,ffcv]
+   pip install -e '.[all]'          # identical dependencies to .[models,training]
 
 Choose one installation command. All source ships in the same package;
 extras select dependencies. The base includes PyTorch, torchvision,
@@ -37,23 +47,36 @@ Importing ``fovi``, ``fovi.sensing``, and primitive ``fovi.arch``
 modules does not import models or training or require research storage
 environment variables.
 
+FFCV is an external prerequisite for the built-in training and
+validation loaders. It is installed manually, including when using
+``all``. Trainer subclasses or external training scripts can supply
+other data loaders.
+
+Manual FFCV installation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
 The built-in loaders use the FFCV-SSL fork pinned in
-``requirements-ffcv.txt``. The ``ffcv`` extra installs the ``ffcv-ssl``
-distribution, imported in Python as ``ffcv``. Install its native build
-prerequisites before selecting ``ffcv`` or ``all``, using an environment
-compatible with that fork:
+``requirements-ffcv.txt``, imported in Python as ``ffcv``. This file is
+for manual installation and is not part of fovi’s package dependency
+metadata. Install its native build prerequisites in an environment
+compatible with that fork, then install it from the repository root:
 
 .. code:: bash
 
    conda install pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda numba -c pytorch -c nvidia -c conda-forge
-   pip install -e '.[training,ffcv]'
+   pip install -e '.[training]'
+   pip install --no-build-isolation -r requirements-ffcv.txt
+
+For a release installed from PyPI, use ``requirements-ffcv.txt`` from
+its matching Git release tag. The same native prerequisites apply.
 
 For existing configurations, set ``FOVI_SAVE_DIR`` and
 ``FOVI_DATASETS_DIR`` before importing the trainer. Model inference from
 an explicit configuration/checkpoint directory requires neither. CuPy
 and Warp kernels are installed with plain ``fovi``; no kernel extra is
 needed. See `package boundaries and
-migration <package_boundaries.html>`__ for public import paths.
+migration <https://nblauch.github.io/fovi/package_boundaries.html>`__
+for public import paths.
 
 To use flash attention, install per the typical approach:
 
@@ -117,9 +140,10 @@ Inference uses ``.[models]`` and needs no FFCV, datasets, trainer, or
 ``FOVI_*_DIR`` environment variables. The checkpoint configuration
 retains its historical ``training`` section for model dimensions and
 preprocessing; reading that data does not import the training runtime.
-See `pretrained output parity <pretrained_parity.html>`__ for tested
-checkpoints, dependency compatibility, and reproducible validation
-commands.
+See `pretrained output
+parity <https://nblauch.github.io/fovi/pretrained_parity.html>`__ for
+tested checkpoints, dependency compatibility, and reproducible
+validation commands.
 
 📝 Example notebooks
 --------------------

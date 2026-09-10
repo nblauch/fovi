@@ -20,10 +20,12 @@ Keep the working directory at `notebooks/`: the image examples use the bundled
   `fovi.arch`; complete architectures and inference loaders live in `fovi.models`.
   These notebooks use CPU and download published checkpoints from Hugging Face.
 - `step4_get_activations` starts with model-only inference on CUDA. Its Trainer
-  section additionally needs `fovi[training,ffcv]` and the ImageNet-1K validation FFCV file.
+  section additionally needs `fovi[training]`, a manual FFCV-SSL installation,
+  and the ImageNet-1K validation FFCV file.
   Training utilities live in `fovi.training`.
 
-For the Trainer section, install `pip install -e '.[training,ffcv]'` and set storage
+For the Trainer section, install `pip install -e '.[training]'` and follow
+[the manual FFCV instructions](../README.md#manual-ffcv-installation). Set storage
 paths **before starting the notebook kernel**:
 
 ```bash
@@ -35,8 +37,9 @@ The example expects `ffcv/imagenet/val_compressed.ffcv` under the dataset direct
 It sets `training.eval_only=True`, so no training dataset or optimizer is created.
 Edit the explicit
 dataset overrides in the notebook if your layout differs. Model-only loading
-does not require these paths or FFCV. `fovi[all]` installs every optional dependency,
-including FFCV; both CuPy and Warp are already dependencies of plain `fovi`.
+does not require these paths or FFCV. `fovi[all]` installs the combined `models` and
+`training` dependencies; FFCV is installed manually. Both CuPy and Warp are already
+dependencies of plain `fovi`.
 
 To execute and save outputs from the command line, use the same kernel environment:
 

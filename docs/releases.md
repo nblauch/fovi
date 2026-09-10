@@ -28,26 +28,40 @@ SHA and any uncommitted changes. Do not publish different artifacts under the sa
 
 ## Publishing to PyPI
 
-Release preparation includes:
+`.github/workflows/publish.yml` runs on `v*` tag pushes. It calls the package CI
+workflow to run the CPU regression tests, build the wheel and sdist, validate metadata,
+and check the installed wheel outside the source checkout. Publishing requires a stable
+version matching the tag and a commit already merged into `main`. The publish job uploads
+those checked artifacts through PyPI Trusted Publishing.
 
-- Distribution of the pinned FFCV-SSL dependency. Its current Git URL is rejected by
-  PyPI, including when declared in an extra. Preserve the required training behavior and
-  `fovi[all] == fovi[models,training,ffcv]` when choosing its distribution mechanism.
-- Package name availability, release metadata, and wheel/sdist installation checks in
-  environments with only the selected extras.
-- A trusted publisher workflow, a matching release tag, and publication of the release artifacts.
-- Installation instructions using the published package instead of a source checkout.
+Configure a GitHub Trusted Publisher in the PyPI project's settings, or a pending
+publisher at <https://pypi.org/manage/account/publishing/> for the first release:
 
-See [setuptools' direct dependency restrictions](https://setuptools.pypa.io/en/stable/userguide/dependency_management.html#direct-url-dependencies)
-and [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/).
+| Field | Value |
+| --- | --- |
+| PyPI project name | `fovi` |
+| GitHub owner | `nblauch` |
+| Repository | `fovi` |
+| Workflow filename | `publish.yml` |
+| Environment | `pypi` |
+
+Once the publisher is configured, set `fovi/_version.py` to the intended stable version
+and merge that change with passing CI. For the first release, tag that merged commit
+`v2.0.0` and push the tag. The workflow rejects development versions and mismatched tags.
+After publication, verify `pip install fovi`, `pip install 'fovi[models]'`, and
+`pip install 'fovi[all]'` in clean environments, then advance main's development version.
+
+FFCV-SSL remains a manually installed prerequisite for the built-in loaders. Its pinned
+Git requirement is outside the package metadata, so it does not prevent publication.
+See [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/).
 
 ## Change history
 
 ### Unreleased — 2.0.0.dev0
 
 - Separate sensing/KNN, model, and training dependency boundaries within one distribution.
-- Add `models`, `training`, `ffcv`, and `all` extras. Base installs include CuPy and
-  Warp. `all` includes every optional dependency.
+- Add `models`, `training`, and `all` extras. Base installs include CuPy and
+  Warp. `all` includes every declared optional dependency; FFCV is installed manually.
 - Move complete networks and inference loading to `fovi.models`, and training to
   `fovi.training`. Remove old model import aliases; retain training compatibility imports.
 - Restore pretrained models without constructing a trainer, importing FFCV, or requiring
