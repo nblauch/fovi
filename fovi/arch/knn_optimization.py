@@ -34,6 +34,11 @@ VALID_BACKENDS = {
 # whenever gradients are enabled. Kernel tracks extend this as they register ops.
 TRAIN_CAPABLE_BACKENDS = {"torch_scatter", "torch_compact", "cuda", "warp_train", "gather_gemm"}
 
+# Resolve before any forward: simulator import hooks can retain discovery frames
+# and all live input tensors reachable through their caller stacks.
+_WARP_AVAILABLE = importlib.util.find_spec("warp") is not None
+_CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
+
 
 def _is_gather_gemm_layer(layer) -> bool:
     """K=1/V=1 layers (resnet-style downsample convs) degenerate to gather + one dense GEMM."""
@@ -47,14 +52,6 @@ def _autocast_dtype(x: torch.Tensor) -> torch.dtype:
         except AttributeError:  # PyTorch < 2.4
             return torch.get_autocast_gpu_dtype()
     return x.dtype
-
-
-def _warp_available() -> bool:
-    return importlib.util.find_spec("warp") is not None
-
-
-def _cuda_available() -> bool:
-    return importlib.util.find_spec("cupy") is not None
 
 
 def _native_cuda_supported(device: torch.device) -> bool:
@@ -200,12 +197,12 @@ def select_backend(layer, x: torch.Tensor) -> str:
             raise RuntimeError(
                 "cuda backend requires an Ampere-or-newer GPU (compute capability >= 8.0)"
             )
-        if not _cuda_available():
+        if not _CUPY_AVAILABLE:
             raise RuntimeError("cuda backend requires CuPy")
         return "cuda"
 
     if requested == "warp_train":
-        if not (x.is_cuda and _autocast_dtype(x) == torch.float16 and _warp_available()):
+        if not (x.is_cuda and _autocast_dtype(x) == torch.float16 and _WARP_AVAILABLE):
             raise RuntimeError(
                 "warp_train requires CUDA, float16 (or float16 autocast), and warp-lang"
             )
@@ -239,14 +236,14 @@ def select_backend(layer, x: torch.Tensor) -> str:
         target_dtype = _autocast_dtype(x)
         if (
             target_dtype in (torch.float16, torch.bfloat16)
-            and _cuda_available()
+            and _CUPY_AVAILABLE
             and _native_cuda_supported(x.device)
         ):
             return "cuda"
         return "torch_compact"
 
     target_dtype = _autocast_dtype(x)
-    warp_compatible = x.is_cuda and target_dtype == torch.float16 and _warp_available()
+    warp_compatible = x.is_cuda and target_dtype == torch.float16 and _WARP_AVAILABLE
     if requested.startswith("warp"):
         if not warp_compatible:
             raise RuntimeError(
@@ -273,7 +270,7 @@ def select_backend(layer, x: torch.Tensor) -> str:
         # large-K layers at ANY batch — except on sm_90/Hopper, where small-batch
         # cuda loses to the cached GEMM (measured on an H100 sweep): keep the
         # any-batch exception off that arch.
-        if _cuda_available() and _native_cuda_supported(x.device):
+        if _CUPY_AVAILABLE and _native_cuda_supported(x.device):
             engage = _work_volume(layer, x) >= WORK_VOLUME_THRESHOLD
             if not engage and dense_low_cin:
                 engage = torch.cuda.get_device_capability(x.device) != (9, 0)
@@ -323,7 +320,9 @@ def optimized_forward(layer, x: torch.Tensor) -> Optional[torch.Tensor]:  # noqa
         if backend == "cuda":
             from . import knn_cuda  # noqa: F401  (import registers the "cuda" ops)
         elif backend == "warp_train":
-            from . import knn_warp  # noqa: F401  (import registers the "warp_train" ops)
+            from . import (
+                knn_warp,  # noqa: F401  (import registers the "warp_train" ops)
+            )
         elif backend == "gather_gemm":
             from . import knn_gather_gemm  # noqa: F401  (import registers the ops)
         from .knn_autograd import compact_forward
