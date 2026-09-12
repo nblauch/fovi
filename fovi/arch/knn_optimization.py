@@ -54,14 +54,6 @@ def _autocast_dtype(x: torch.Tensor) -> torch.dtype:
     return x.dtype
 
 
-def _warp_available() -> bool:
-    return _WARP_AVAILABLE
-
-
-def _cuda_available() -> bool:
-    return _CUPY_AVAILABLE
-
-
 def _native_cuda_supported(device: torch.device) -> bool:
     """Return whether the fused convolution kernel supports this CUDA device."""
     major, _minor = torch.cuda.get_device_capability(device)
@@ -205,12 +197,12 @@ def select_backend(layer, x: torch.Tensor) -> str:
             raise RuntimeError(
                 "cuda backend requires an Ampere-or-newer GPU (compute capability >= 8.0)"
             )
-        if not _cuda_available():
+        if not _CUPY_AVAILABLE:
             raise RuntimeError("cuda backend requires CuPy")
         return "cuda"
 
     if requested == "warp_train":
-        if not (x.is_cuda and _autocast_dtype(x) == torch.float16 and _warp_available()):
+        if not (x.is_cuda and _autocast_dtype(x) == torch.float16 and _WARP_AVAILABLE):
             raise RuntimeError(
                 "warp_train requires CUDA, float16 (or float16 autocast), and warp-lang"
             )
@@ -244,14 +236,14 @@ def select_backend(layer, x: torch.Tensor) -> str:
         target_dtype = _autocast_dtype(x)
         if (
             target_dtype in (torch.float16, torch.bfloat16)
-            and _cuda_available()
+            and _CUPY_AVAILABLE
             and _native_cuda_supported(x.device)
         ):
             return "cuda"
         return "torch_compact"
 
     target_dtype = _autocast_dtype(x)
-    warp_compatible = x.is_cuda and target_dtype == torch.float16 and _warp_available()
+    warp_compatible = x.is_cuda and target_dtype == torch.float16 and _WARP_AVAILABLE
     if requested.startswith("warp"):
         if not warp_compatible:
             raise RuntimeError(
@@ -278,7 +270,7 @@ def select_backend(layer, x: torch.Tensor) -> str:
         # large-K layers at ANY batch — except on sm_90/Hopper, where small-batch
         # cuda loses to the cached GEMM (measured on an H100 sweep): keep the
         # any-batch exception off that arch.
-        if _cuda_available() and _native_cuda_supported(x.device):
+        if _CUPY_AVAILABLE and _native_cuda_supported(x.device):
             engage = _work_volume(layer, x) >= WORK_VOLUME_THRESHOLD
             if not engage and dense_low_cin:
                 engage = torch.cuda.get_device_capability(x.device) != (9, 0)
