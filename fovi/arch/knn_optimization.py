@@ -34,6 +34,11 @@ VALID_BACKENDS = {
 # whenever gradients are enabled. Kernel tracks extend this as they register ops.
 TRAIN_CAPABLE_BACKENDS = {"torch_scatter", "torch_compact", "cuda", "warp_train", "gather_gemm"}
 
+# Resolve before any forward: simulator import hooks can retain discovery frames
+# and all live input tensors reachable through their caller stacks.
+_WARP_AVAILABLE = importlib.util.find_spec("warp") is not None
+_CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
+
 
 def _is_gather_gemm_layer(layer) -> bool:
     """K=1/V=1 layers (resnet-style downsample convs) degenerate to gather + one dense GEMM."""
@@ -50,11 +55,11 @@ def _autocast_dtype(x: torch.Tensor) -> torch.dtype:
 
 
 def _warp_available() -> bool:
-    return importlib.util.find_spec("warp") is not None
+    return _WARP_AVAILABLE
 
 
 def _cuda_available() -> bool:
-    return importlib.util.find_spec("cupy") is not None
+    return _CUPY_AVAILABLE
 
 
 def _native_cuda_supported(device: torch.device) -> bool:
@@ -323,7 +328,9 @@ def optimized_forward(layer, x: torch.Tensor) -> Optional[torch.Tensor]:  # noqa
         if backend == "cuda":
             from . import knn_cuda  # noqa: F401  (import registers the "cuda" ops)
         elif backend == "warp_train":
-            from . import knn_warp  # noqa: F401  (import registers the "warp_train" ops)
+            from . import (
+                knn_warp,  # noqa: F401  (import registers the "warp_train" ops)
+            )
         elif backend == "gather_gemm":
             from . import knn_gather_gemm  # noqa: F401  (import registers the ops)
         from .knn_autograd import compact_forward
