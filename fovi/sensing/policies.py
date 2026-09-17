@@ -311,7 +311,12 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
         x_fixs = []
         fix_deltas = []
         for ii, (fixation, fixation_size) in enumerate(zip(fixations, fixation_sizes)):
-            x_fix = self.retinal_transform(x, fixation, fixation_size=fixation_size)  
+            if getattr(self.retinal_transform, 'field_geometry', 'planar') == 'spherical':
+                # Calibrated retinal extent is angular; sampled crop sizes only
+                # govern this policy's distribution of image fixation locations.
+                x_fix = self.retinal_transform(x, fixation)
+            else:
+                x_fix = self.retinal_transform(x, fixation, fixation_size=fixation_size)
             x_fixs.append(x_fix)
             if ii > 0:
                 fix_deltas.append(fixation - fixations[ii-1])

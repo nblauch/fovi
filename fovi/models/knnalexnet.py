@@ -50,7 +50,7 @@ class KNNAlexNetBlock(nn.Module):
                  activation=nn.ReLU, sample_cortex=True,
                  device='cuda', auto_match_cart_resources=0, ref_frame_mult=None,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular',
+                 fov_type='circular', field_geometry='planar',
                  ):
         super().__init__()
 
@@ -63,7 +63,7 @@ class KNNAlexNetBlock(nn.Module):
             auto_match_cart_resources=auto_match_cart_resources,
             in_cart_res=cart_res, device=device,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry)
 
         # Compute ref_frame_side_length from ref_frame_mult if provided
         if ref_frame_mult is not None:
@@ -101,7 +101,7 @@ class KNNAlexNetBlock(nn.Module):
                 auto_match_cart_resources=auto_match_cart_resources,
                 in_cart_res=out_cart_res, device=device,
                 isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=fov_type)
+                fov_type=fov_type, field_geometry=field_geometry)
 
             self.pool = KNNPoolingLayer(
                 k=pool_k,
@@ -176,7 +176,7 @@ class KNNAlexNet(nn.Module):
                  device='cuda', sample_cortex=True,
                  ref_frame_mult=None,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular',
+                 fov_type='circular', field_geometry='planar',
                  ):
         super().__init__()
         self.layers = []
@@ -187,7 +187,7 @@ class KNNAlexNet(nn.Module):
 
         in_res, cart_res = auto_match_num_coords(
             fov, cmf_a, in_res, style, auto_match_cart_resources,
-            device, quiet=True, fov_type=fov_type)
+            device, quiet=True, fov_type=fov_type, field_geometry=field_geometry)
 
         for i in range(len(features_per_layer)):
 
@@ -200,7 +200,7 @@ class KNNAlexNet(nn.Module):
                 device=device,
                 ref_frame_mult=ref_frame_mult,
                 isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=fov_type,
+                fov_type=fov_type, field_geometry=field_geometry,
             )
 
             in_channels = features_per_layer[i]

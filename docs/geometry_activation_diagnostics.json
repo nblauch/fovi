@@ -1,0 +1,730 @@
+[
+  {
+    "model": "fovi-dinov3-splus_a-2.78_res-64_in1k",
+    "tensors": {
+      "inputs": {
+        "shape": [
+          3,
+          3,
+          256,
+          256
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/embeddings": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.5569093823432922,
+        "rmse": 0.0817541854400108
+      },
+      "single/samples": {
+        "shape": [
+          3,
+          1,
+          3,
+          3976
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.06784415245056152,
+        "rmse": 0.002216112067081197
+      },
+      "single/fixations": {
+        "shape": [
+          3,
+          1,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/layer_0": {
+        "shape": [
+          3,
+          1,
+          384
+        ],
+        "exact": false,
+        "max_abs_error": 0.3601909317076206,
+        "rmse": 0.0786855303220977
+      },
+      "single/layer_1": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.5569093823432922,
+        "rmse": 0.0817541854400108
+      },
+      "multiple/embeddings": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.5569049119949341,
+        "rmse": 0.052895626504799974
+      },
+      "multiple/samples": {
+        "shape": [
+          3,
+          3,
+          3,
+          3976
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.022239450365304947,
+        "rmse": 0.0007319220114614869
+      },
+      "multiple/fixations": {
+        "shape": [
+          3,
+          3,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/layer_0": {
+        "shape": [
+          3,
+          3,
+          384
+        ],
+        "exact": false,
+        "max_abs_error": 0.36018986254930496,
+        "rmse": 0.05545959667865054
+      },
+      "multiple/layer_1": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.5569049119949341,
+        "rmse": 0.052895626504799974
+      }
+    },
+    "reference": {
+      "model": "fovi-dinov3-splus_a-2.78_res-64_in1k",
+      "api": "models",
+      "source": "pre-correction source (1f5fd27)",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "b7a5538c662187f3acf13ada1e478d5b93f735cf75de1f0e33e6d152d66915ee",
+      "canonical_state_sha256": "04020ffefbeed2eebe33f6b40357bd9cd8f9865ec2aff306e4e0d5413f5f91e2",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "712abe881e2a7531bc5ddc513f43c130225df927068147e8914cdc12ea4f2ec4",
+        "state_dict.index.json": "2ad562cec437073375cc3af8aef2aaa8f9dda3034d0d316172f3339f14c6c47e",
+        "config.yaml": "42e4965af1232711a27516e38f52d2c01af38906f6931ffbac6d80da4c67c51e"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "b9ba32e4c2ad4a8be3ce48bc358c7bbbb74e437a\n1f941b139ff656483b782dbd4eaa5d1259ddc877\n1770159966.0327673\n"
+    },
+    "candidate": {
+      "model": "fovi-dinov3-splus_a-2.78_res-64_in1k",
+      "api": "models",
+      "source": "corrected planar candidate",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "b7a5538c662187f3acf13ada1e478d5b93f735cf75de1f0e33e6d152d66915ee",
+      "canonical_state_sha256": "04020ffefbeed2eebe33f6b40357bd9cd8f9865ec2aff306e4e0d5413f5f91e2",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "712abe881e2a7531bc5ddc513f43c130225df927068147e8914cdc12ea4f2ec4",
+        "state_dict.index.json": "2ad562cec437073375cc3af8aef2aaa8f9dda3034d0d316172f3339f14c6c47e",
+        "config.yaml": "42e4965af1232711a27516e38f52d2c01af38906f6931ffbac6d80da4c67c51e"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "b9ba32e4c2ad4a8be3ce48bc358c7bbbb74e437a\n1f941b139ff656483b782dbd4eaa5d1259ddc877\n1770159966.0327673\n"
+    },
+    "rtol": 0.0,
+    "atol": 0.0
+  },
+  {
+    "model": "fovi-dinov3-splus_a-60.94_res-64_in1k",
+    "tensors": {
+      "inputs": {
+        "shape": [
+          3,
+          3,
+          256,
+          256
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/embeddings": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.8201094567775726,
+        "rmse": 0.11370953281167478
+      },
+      "single/samples": {
+        "shape": [
+          3,
+          1,
+          3,
+          4032
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.13876797258853912,
+        "rmse": 0.005236719963293391
+      },
+      "single/fixations": {
+        "shape": [
+          3,
+          1,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/layer_0": {
+        "shape": [
+          3,
+          1,
+          384
+        ],
+        "exact": false,
+        "max_abs_error": 0.5249633602797985,
+        "rmse": 0.11039048425902957
+      },
+      "single/layer_1": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.8201094567775726,
+        "rmse": 0.11370953281167478
+      },
+      "multiple/embeddings": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 1.2718286514282227,
+        "rmse": 0.09961079603182288
+      },
+      "multiple/samples": {
+        "shape": [
+          3,
+          3,
+          3,
+          4032
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.04393591731786728,
+        "rmse": 0.0017819460308095933
+      },
+      "multiple/fixations": {
+        "shape": [
+          3,
+          3,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/layer_0": {
+        "shape": [
+          3,
+          3,
+          384
+        ],
+        "exact": false,
+        "max_abs_error": 0.7313782572746277,
+        "rmse": 0.12124070512341453
+      },
+      "multiple/layer_1": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 1.2718286514282227,
+        "rmse": 0.09961079603182288
+      }
+    },
+    "reference": {
+      "model": "fovi-dinov3-splus_a-60.94_res-64_in1k",
+      "api": "models",
+      "source": "pre-correction source (1f5fd27)",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "38721893fcf3b5350963b058c40921c271ecc8d695f34b75182e409102f54494",
+      "canonical_state_sha256": "08ac8fb01b160902f9619008fe97c28ad2495e835878b0c16b15aa1f25673cc8",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "8f404ac7fe0c151b9fbd0de057a0979ce3c88354b6287b96714e8e93f57f828a",
+        "state_dict.index.json": "2ad562cec437073375cc3af8aef2aaa8f9dda3034d0d316172f3339f14c6c47e",
+        "config.yaml": "2c15106b96c9cfd0be55e1f5855d457829aba047e2113ca6911bd55d0ffd7b8b"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "423d842bd550a3ed8c29b83d1a8f843218dfe39e\ndfc96e668668872007c76bbd89e941da6aa6c527\n1770178163.129675\n"
+    },
+    "candidate": {
+      "model": "fovi-dinov3-splus_a-60.94_res-64_in1k",
+      "api": "models",
+      "source": "corrected planar candidate",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "38721893fcf3b5350963b058c40921c271ecc8d695f34b75182e409102f54494",
+      "canonical_state_sha256": "08ac8fb01b160902f9619008fe97c28ad2495e835878b0c16b15aa1f25673cc8",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "8f404ac7fe0c151b9fbd0de057a0979ce3c88354b6287b96714e8e93f57f828a",
+        "state_dict.index.json": "2ad562cec437073375cc3af8aef2aaa8f9dda3034d0d316172f3339f14c6c47e",
+        "config.yaml": "2c15106b96c9cfd0be55e1f5855d457829aba047e2113ca6911bd55d0ffd7b8b"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "423d842bd550a3ed8c29b83d1a8f843218dfe39e\ndfc96e668668872007c76bbd89e941da6aa6c527\n1770178163.129675\n"
+    },
+    "rtol": 0.0,
+    "atol": 0.0
+  },
+  {
+    "model": "fovi-alexnet_a-0.5_res-64_rfmult-1_in1k",
+    "tensors": {
+      "inputs": {
+        "shape": [
+          3,
+          3,
+          256,
+          256
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/embeddings": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.058644406497478485,
+        "rmse": 0.014151249974028777
+      },
+      "single/samples": {
+        "shape": [
+          3,
+          1,
+          3,
+          4085
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.11772096157073975,
+        "rmse": 0.003043744804690442
+      },
+      "single/fixations": {
+        "shape": [
+          3,
+          1,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/layer_0": {
+        "shape": [
+          3,
+          1,
+          256
+        ],
+        "exact": false,
+        "max_abs_error": 0.06625200062990189,
+        "rmse": 0.010885951663181737
+      },
+      "single/layer_1": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.010783949866890907,
+        "rmse": 0.001725002361486271
+      },
+      "single/layer_2": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.058644406497478485,
+        "rmse": 0.014151249974028777
+      },
+      "multiple/embeddings": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.058644674718379974,
+        "rmse": 0.012953263796864478
+      },
+      "multiple/samples": {
+        "shape": [
+          3,
+          3,
+          3,
+          4085
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.029840148985385895,
+        "rmse": 0.0013794326140188443
+      },
+      "multiple/fixations": {
+        "shape": [
+          3,
+          3,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/layer_0": {
+        "shape": [
+          3,
+          3,
+          256
+        ],
+        "exact": false,
+        "max_abs_error": 0.08097369223833084,
+        "rmse": 0.011449418684431726
+      },
+      "multiple/layer_1": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.013654128648340702,
+        "rmse": 0.0016348707943848512
+      },
+      "multiple/layer_2": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.058644674718379974,
+        "rmse": 0.012953263796864478
+      }
+    },
+    "reference": {
+      "model": "fovi-alexnet_a-0.5_res-64_rfmult-1_in1k",
+      "api": "models",
+      "source": "pre-correction source (1f5fd27)",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "d1a14ffd96d1ce57a8c413ef8d0b6fa78b6d1a9796a5a128c7e3c8d22c1f8c95",
+      "canonical_state_sha256": "d1a14ffd96d1ce57a8c413ef8d0b6fa78b6d1a9796a5a128c7e3c8d22c1f8c95",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "40b38a6fb4c6faf18f1bd535b76ba7582863a2e04d76216db727dbf9dddc64f6",
+        "state_dict.index.json": "5fc7e2398d99c6db463cf6f7da21c11d2b1e9e96c5d7e7192d278b3629f24ba0",
+        "config.yaml": "20cc2a151eccb67ccf85a021cdb3394de0c84edcc72c702199169c7eed3726c7"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "4778acf941b58dc51e9822b1c451532ded1c2e5c\n9717f957919259e3600cff576a9abedeee4f3d68\n1786488829.3335352\n"
+    },
+    "candidate": {
+      "model": "fovi-alexnet_a-0.5_res-64_rfmult-1_in1k",
+      "api": "models",
+      "source": "corrected planar candidate",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "d1a14ffd96d1ce57a8c413ef8d0b6fa78b6d1a9796a5a128c7e3c8d22c1f8c95",
+      "canonical_state_sha256": "d1a14ffd96d1ce57a8c413ef8d0b6fa78b6d1a9796a5a128c7e3c8d22c1f8c95",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "40b38a6fb4c6faf18f1bd535b76ba7582863a2e04d76216db727dbf9dddc64f6",
+        "state_dict.index.json": "5fc7e2398d99c6db463cf6f7da21c11d2b1e9e96c5d7e7192d278b3629f24ba0",
+        "config.yaml": "20cc2a151eccb67ccf85a021cdb3394de0c84edcc72c702199169c7eed3726c7"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "4778acf941b58dc51e9822b1c451532ded1c2e5c\n9717f957919259e3600cff576a9abedeee4f3d68\n1786488829.3335352\n"
+    },
+    "rtol": 0.0,
+    "atol": 0.0
+  },
+  {
+    "model": "fovi-alexnet_a-0.5_res-64_rfmult-2_in1k",
+    "tensors": {
+      "inputs": {
+        "shape": [
+          3,
+          3,
+          256,
+          256
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/embeddings": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.07148154824972153,
+        "rmse": 0.01834400247420127
+      },
+      "single/samples": {
+        "shape": [
+          3,
+          1,
+          3,
+          4085
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.12985572218894958,
+        "rmse": 0.0036888949203218537
+      },
+      "single/fixations": {
+        "shape": [
+          3,
+          1,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "single/layer_0": {
+        "shape": [
+          3,
+          1,
+          256
+        ],
+        "exact": false,
+        "max_abs_error": 0.05290086381137371,
+        "rmse": 0.008592971808483655
+      },
+      "single/layer_1": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.012414723634719849,
+        "rmse": 0.0020472111070148785
+      },
+      "single/layer_2": {
+        "shape": [
+          3,
+          1,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.07148154824972153,
+        "rmse": 0.01834400247420127
+      },
+      "multiple/embeddings": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.07148160762153566,
+        "rmse": 0.015079772826753466
+      },
+      "multiple/samples": {
+        "shape": [
+          3,
+          3,
+          3,
+          4085
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/logits": {
+        "shape": [
+          3,
+          1000
+        ],
+        "exact": false,
+        "max_abs_error": 0.043033987283706665,
+        "rmse": 0.0015032989979530155
+      },
+      "multiple/fixations": {
+        "shape": [
+          3,
+          3,
+          2
+        ],
+        "exact": true,
+        "max_abs_error": 0.0,
+        "rmse": 0.0
+      },
+      "multiple/layer_0": {
+        "shape": [
+          3,
+          3,
+          256
+        ],
+        "exact": false,
+        "max_abs_error": 0.05990031361579895,
+        "rmse": 0.008911518543838636
+      },
+      "multiple/layer_1": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.017135150148533285,
+        "rmse": 0.0018293941801011907
+      },
+      "multiple/layer_2": {
+        "shape": [
+          3,
+          3,
+          1024
+        ],
+        "exact": false,
+        "max_abs_error": 0.07148160762153566,
+        "rmse": 0.015079772826753466
+      }
+    },
+    "reference": {
+      "model": "fovi-alexnet_a-0.5_res-64_rfmult-2_in1k",
+      "api": "models",
+      "source": "pre-correction source (1f5fd27)",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "1b5a4d68edb41202a4768fc721dbe10ade356980d522526bf5e8dcbc743b7227",
+      "canonical_state_sha256": "1b5a4d68edb41202a4768fc721dbe10ade356980d522526bf5e8dcbc743b7227",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "36eea31065928b472eb5ec3dbe77dd72edddbe3f49c721151b1045d36067b2a7",
+        "state_dict.index.json": "f04b19d888674ceeb81ccb0e479db04e7af4b4ce3392b2aeac8afdadb8c64313",
+        "config.yaml": "7cc3711f2aec241fc1122fe826811ed8885bab252d23aeb50a46f6471d97a2f0"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "6ec51cb04e7bbdef57244a8698348b78f3dfe7f9\n8f7f446cec8f5c89605763fc230f3d2f21dc5f35\n1786488853.82908\n"
+    },
+    "candidate": {
+      "model": "fovi-alexnet_a-0.5_res-64_rfmult-2_in1k",
+      "api": "models",
+      "source": "corrected planar candidate",
+      "torch": "2.11.0+cu128",
+      "device": "cuda:0",
+      "transformers": "5.17.0",
+      "state_sha256": "1b5a4d68edb41202a4768fc721dbe10ade356980d522526bf5e8dcbc743b7227",
+      "canonical_state_sha256": "1b5a4d68edb41202a4768fc721dbe10ade356980d522526bf5e8dcbc743b7227",
+      "checkpoint_sha256": {
+        "state_dict-00000-of-00001.pth": "36eea31065928b472eb5ec3dbe77dd72edddbe3f49c721151b1045d36067b2a7",
+        "state_dict.index.json": "f04b19d888674ceeb81ccb0e479db04e7af4b4ce3392b2aeac8afdadb8c64313",
+        "config.yaml": "7cc3711f2aec241fc1122fe826811ed8885bab252d23aeb50a46f6471d97a2f0"
+      },
+      "image_sha256": "46c666125496604931b4bf1f25a07ad39b2d2d68e45daa5c1da7bcdccc146d73",
+      "hub_config_metadata": "6ec51cb04e7bbdef57244a8698348b78f3dfe7f9\n8f7f446cec8f5c89605763fc230f3d2f21dc5f35\n1786488853.82908\n"
+    },
+    "rtol": 0.0,
+    "atol": 0.0
+  }
+]

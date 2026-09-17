@@ -1,10 +1,12 @@
 import numpy as np
+from collections.abc import Mapping
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
 from scipy.optimize import minimize_scalar
 
 from .coords import find_desired_res
+from .projection import CameraModel
 from .samplers import GaussianKNNGridSampler, KNNGridSampler, GridSampler
 from ..utils import add_to_all
 from ..utils.fastaugs import transforms as fastT
@@ -44,7 +46,7 @@ class RetinalTransform(nn.Module):
                  no_color_val=False,
                  isotropic_plotting_type='v1like',
                  sampler_backend='auto',
-                 fov_type='circular',
+                 fov_type='circular', field_geometry='planar',
                  **kwargs, # passed to the sampler
                  ):
         """
@@ -76,6 +78,12 @@ class RetinalTransform(nn.Module):
         self.cmf_a = cmf_a
         self.fov = fov
         self.fov_type = fov_type
+        self.field_geometry = field_geometry
+        camera_model = kwargs.get('camera_model')
+        if isinstance(camera_model, Mapping):
+            camera_model = CameraModel(**camera_model)
+            kwargs['camera_model'] = camera_model
+        self.camera_model = camera_model
         full_fov = self.fov
         self.fixation_size = start_res if fixation_size is None else fixation_size # this is the maximum fixation size
         self.start_res = start_res
@@ -93,7 +101,7 @@ class RetinalTransform(nn.Module):
                 resolution, num_coords = find_desired_res(
                     fov, cmf_a, num_coords, style=style,
                     device=self.device, force_less_than=True, quiet=True,
-                    fov_type=fov_type)
+                    fov_type=fov_type, field_geometry=field_geometry)
 
         self.resolution = resolution
 
@@ -115,25 +123,25 @@ class RetinalTransform(nn.Module):
                 self.fov, self.cmf_a, resolution,
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
         elif sampler == 'pooling':
             self.sampler = KNNGridSampler(
                 self.fov, self.cmf_a, resolution,
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
         elif sampler == 'grid_nn':
             self.sampler = GridSampler(
                 self.fov, self.cmf_a, resolution, device=device,
                 mode='nearest', style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
         elif sampler == 'grid_bilinear':
             self.sampler = GridSampler(
                 self.fov, self.cmf_a, resolution, device=device,
                 mode='bilinear', style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
 
         else:
             raise ValueError(f'Invalid sampler: {sampler}')
@@ -168,15 +176,19 @@ class RetinalTransform(nn.Module):
             torch.Tensor: Transformed tensor.
         """
 
-        # check fixation_size
-        fixation_size = self._check_fixation_size(fixation_size, x.shape[0])
+        # Spherical retinal extent is angular and fixed by the calibrated window.
+        if self.field_geometry == 'spherical':
+            if fixation_size is not None:
+                raise ValueError("Spherical sampling uses fov in degrees; pixel fixation_size overrides are unsupported")
+        else:
+            fixation_size = self._check_fixation_size(fixation_size, x.shape[0])
 
         # check fix_loc
         fix_loc = self._check_fix_loc(fix_loc, x.shape[0])
 
         input_is_uint8 = x.dtype == torch.uint8
         apply_pre = self.pre_transforms is not None and self.training
-        if apply_pre and not kwargs and self._fast_pre_transforms_supported():
+        if apply_pre and not kwargs and self.field_geometry in ('planar', 'legacy') and self._fast_pre_transforms_supported():
             # Fast path: sample first (nearest-neighbor), then apply the pointwise pre-warp
             # transforms to the ~N sampled points instead of the full H x W image, once per
             # fixation. Bit-exact with the reference path (see _sample_then_pre_transform)
@@ -575,7 +587,7 @@ def _color_jitter_points(pts, full_sel, hue, sat, val, con):
 def min_diff_for_cmf_a(
         cmf_a, fov, output_res, fixation_size, force_n_points=None,
         disallow_undersampling=True, force_less_than=False, device='cuda',
-        fov_type='circular'):
+        fov_type='circular', field_geometry='planar'):
     """
     Helper function that computes minimum difference between radii for a given cmf_a value.
     
@@ -598,7 +610,7 @@ def min_diff_for_cmf_a(
         output_res = find_desired_res(
             fov, cmf_a, force_n_points, 'isotropic', device=device,
             force_less_than=force_less_than, quiet=True,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry)
 
     w_min = np.log(cmf_a)
     r_max = fov / 2
@@ -620,7 +632,7 @@ def get_min_cmf_a(
         fixation_size, output_res, start_res=5496, fov=65,
         start_cmf_a=0.15, style='isotropic', maxiters=200,
         disallow_undersampling=True, use_scaled_fov=True, device='cuda',
-        fov_type='circular'):
+        fov_type='circular', field_geometry='planar'):
     """
     Find the minimum cmf_a value that satisfies the constraints.
     
@@ -646,7 +658,7 @@ def get_min_cmf_a(
         return min_diff_for_cmf_a(
             cmf_a, fov, output_res, fixation_size,
             disallow_undersampling=disallow_undersampling, device=device,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry)
     
     try:
         result = minimize_scalar(loss_fn, bounds=(0.01, 1000), method='bounded', options=dict(maxiter=maxiters))

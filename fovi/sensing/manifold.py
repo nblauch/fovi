@@ -10,6 +10,12 @@ from ..utils import add_to_all
 
 __all__ = []
 
+
+def validate_field_geometry(field_geometry: str) -> None:
+    """Validate the visual-field metric independently of image projection."""
+    if field_geometry not in ("planar", "spherical", "legacy"):
+        raise ValueError(f"Unknown field_geometry {field_geometry!r}")
+
 @add_to_all(__all__)
 class CorticalSensorManifold():
     r"""
@@ -29,7 +35,7 @@ class CorticalSensorManifold():
     Due to our choice of magnification function, this is essentially a 3d extension of the complex logarithmic map (Schwartz, 1980), where both preserve local isotropy unlike the Schwartz (1980) model, our 3D version also preserves global/meridional isotropy, since there is no warping due to flattening
 
     """
-    def __init__(self, cmf_a, fov, k=10):
+    def __init__(self, cmf_a, fov, k=10, field_geometry="planar"):
         r"""
         Args:
             cmf_a (float): a parameter in cortical magnification function (CMF), in degrees
@@ -39,10 +45,33 @@ class CorticalSensorManifold():
         self.cmf_a = cmf_a
         self.fov = fov
         self.k = k
+        validate_field_geometry(field_geometry)
+        self.field_geometry = field_geometry
+        if not all(np.isfinite(v) and v > 0 for v in (cmf_a, fov, k)):
+            raise ValueError("cmf_a, fov, and k must be finite and positive")
+        if field_geometry == "spherical" and fov > 180:
+            raise ValueError("Spherical field diameter must not exceed 180 degrees")
 
         # compute cortical radius (z) over a fine mesh of the visual field by integration of the CMF
         spacing = 0.0001
-        mesh = np.arange(0, 2*fov, spacing) # we go out well beyond r=fov/2 to support padding
+        self.max_radius = 2 * fov
+        if field_geometry == "planar":
+            self.max_radius = np.inf
+            return
+        if field_geometry == "spherical":
+            limit = root_scalar(
+                # Factoring out the known zero at 180 avoids cancellation there.
+                lambda r: (self.cmf_a + r) * np.cos(np.deg2rad(r / 2)) - (180 / np.pi) * np.sin(np.deg2rad(r / 2)),
+                bracket=(90.0, 180.0), method="brentq",
+            ).root
+            self.max_radius = min(self.max_radius, limit - spacing)
+        mesh = np.arange(0, self.max_radius, spacing)
+        if field_geometry == "legacy":
+            # Preserve the original mesh endpoints and integration arithmetic:
+            # tiny coordinate changes can change discrete checkpoint neighborhoods.
+            self.max_radius = mesh[-1]
+        else:
+            mesh = np.append(mesh, self.max_radius)
         z_integrand_vec = self.z_integrand(mesh) 
         integral_vals = cumulative_trapezoid(z_integrand_vec, x=mesh, initial=0)  # Integral from 0 to each x_grid point
         self.z_integral_interp = interp1d(mesh, integral_vals, kind='linear')
@@ -76,6 +105,8 @@ class CorticalSensorManifold():
 
         """
         deg_per_rad = 180/np.pi
+        if self.field_geometry == "planar":
+            return self.m(r) * r
         return self.m(r)*np.sin(np.deg2rad(r))*deg_per_rad # mm
 
     def phi_3d(self, theta):
@@ -112,6 +143,8 @@ class CorticalSensorManifold():
             float: :math:`d\rho/dr` in mm/deg
         """
         deg_per_rad = 180/np.pi
+        if self.field_geometry == "planar":
+            return self.dm_dr(r) * r + self.m(r)
         return self.dm_dr(r)*np.sin(np.deg2rad(r))*deg_per_rad + self.m(r)*np.cos(np.deg2rad(r))
 
     def z_integrand(self, r):
@@ -134,6 +167,12 @@ class CorticalSensorManifold():
         Returns:
             float: cortical z in mm
         """
+        if np.any(np.asarray(r) < 0) or np.any(np.asarray(r) > self.max_radius):
+            raise ValueError(f"Visual radius outside manifold domain [0, {self.max_radius}] degrees")
+        if self.field_geometry == "planar":
+            # Analytic integral avoids absolute mesh spacing breaking scale invariance.
+            t = np.sqrt(np.maximum((np.asarray(r) / self.cmf_a + 1) ** 2 - 1, 0))
+            return self.k * (np.arcsinh(t) - t / np.sqrt(1 + t * t))
         return self.z_integral_interp(r)
 
     def map_3d(self, x, y):
@@ -344,7 +383,7 @@ class CorticalSensorManifold():
 
 
 @add_to_all(__all__)
-def vis_cartesian_to_cortical_cartesian_coords(cartesian_coords, cmf_a, fov, as_tensor=False, device='cpu', k=10):
+def vis_cartesian_to_cortical_cartesian_coords(cartesian_coords, cmf_a, fov, as_tensor=False, device='cpu', k=10, field_geometry='planar'):
     r"""
 
     * Map visual cartesian coordinates to 3d cortical cartesian coordinates using the 3D cortical model. 
@@ -365,7 +404,7 @@ def vis_cartesian_to_cortical_cartesian_coords(cartesian_coords, cmf_a, fov, as_
 
     """
     cartesian_fov_coords = cartesian_coords*(fov/2)
-    model = CorticalSensorManifold(cmf_a, fov, k=k)
+    model = CorticalSensorManifold(cmf_a, fov, k=k, field_geometry=field_geometry)
     grid_pts_3d = model.vis_cartesian_to_cort_cartesian(cartesian_fov_coords)
 
     if as_tensor:
@@ -375,7 +414,7 @@ def vis_cartesian_to_cortical_cartesian_coords(cartesian_coords, cmf_a, fov, as_
 
 
 @add_to_all(__all__)
-def vis_cartesian_to_cortical_cylindrical(cartesian_coords, cmf_a, fov, as_tensor=False, device='cpu', k=10):
+def vis_cartesian_to_cortical_cylindrical(cartesian_coords, cmf_a, fov, as_tensor=False, device='cpu', k=10, field_geometry='planar'):
     r"""
     Map visual cartesian coordinates to cortical cylindrical coordinates using the 3D cortical model. 
 
@@ -396,7 +435,7 @@ def vis_cartesian_to_cortical_cylindrical(cartesian_coords, cmf_a, fov, as_tenso
 
     """
     cartesian_fov_coords = cartesian_coords*(fov/2)
-    model = CorticalSensorManifold(cmf_a, fov, k=k)
+    model = CorticalSensorManifold(cmf_a, fov, k=k, field_geometry=field_geometry)
     grid_pts_3d = np.array([(model.map_3d(x, y)) for x, y in cartesian_fov_coords])
 
     if as_tensor:
@@ -406,7 +445,7 @@ def vis_cartesian_to_cortical_cylindrical(cartesian_coords, cmf_a, fov, as_tenso
 
 
 @add_to_all(__all__)
-def cortical_cylindrical_to_cortical_cartesian(rho_z_phi, cmf_a, fov, k=10):
+def cortical_cylindrical_to_cortical_cartesian(rho_z_phi, cmf_a, fov, k=10, field_geometry='planar'):
     r"""
     map cortical cylindrical coordinates to cortical cartesian coordinates
     
@@ -418,12 +457,12 @@ def cortical_cylindrical_to_cortical_cartesian(rho_z_phi, cmf_a, fov, k=10):
     Returns:
         np.ndarray: (n,3) array of cortical cartesian coordinates :math:`(x_c, y_c, z)`
     """
-    model = CorticalSensorManifold(cmf_a, fov, k=k)
+    model = CorticalSensorManifold(cmf_a, fov, k=k, field_geometry=field_geometry)
     grid_pts_3d = np.array([(model.map_to_xyz(rho_z_phi_i)) for rho_z_phi_i in rho_z_phi])
     return grid_pts_3d
 
 
-def sample_coords_from_manifold(cmf_a, fov, num_coords=10000, device='cpu'):
+def sample_coords_from_manifold(cmf_a, fov, num_coords=10000, device='cpu', field_geometry='planar'):
     r"""
     Get sensor manifold coordinates using a 3D cortical model. 
     
@@ -447,7 +486,7 @@ def sample_coords_from_manifold(cmf_a, fov, num_coords=10000, device='cpu'):
             - cortical_coords (torch.Tensor): (n, 3) cortical cartesian coordinates
 
     """
-    model = CorticalSensorManifold(cmf_a, fov)
+    model = CorticalSensorManifold(cmf_a, fov, field_geometry=field_geometry)
     # define a grid of visual points to specify the bounds of the 3d mesh
     grid_pts_3d_xyz, _ = model.init_visual_mesh()
     # sample the mesh evenly

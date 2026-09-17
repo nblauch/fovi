@@ -30,6 +30,7 @@ saccades:
   sampler: 'grid_nn'
   sampler_backend: 'auto'  # uint8/float: auto | torch | cuda; env override supported
   fov_type: circular
+  field_geometry: planar
   fov: 16
   rescale_fov: 1
   cmf_a: 0.5

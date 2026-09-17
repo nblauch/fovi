@@ -1,0 +1,858 @@
+{
+  "torch": "2.11.0+cu128",
+  "gpu": "NVIDIA RTX 6000 Ada Generation",
+  "results": [
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 1,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 1.47588599298615,
+      "calibrated_ms": 0.26875904083251956,
+      "canonical_ms": 0.02111680030822754,
+      "ratio": 12.727261559972488,
+      "calibrated_graph_ms": 0.0542412805557251,
+      "canonical_graph_ms": 0.0033587199449539185,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 1,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.006799667025916278,
+      "calibrated_ms": 0.25556991577148436,
+      "canonical_ms": 0.019814399480819703,
+      "ratio": 12.898191339024708,
+      "calibrated_graph_ms": 0.054249601364135744,
+      "canonical_graph_ms": 0.0033587199449539185,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 32,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 1.0284999310970306,
+      "calibrated_ms": 0.27189247131347655,
+      "canonical_ms": 0.020776960849761963,
+      "ratio": 13.08624843063087,
+      "calibrated_graph_ms": 0.06963200092315674,
+      "canonical_graph_ms": 0.005109760165214539,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 32,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.006810047081671655,
+      "calibrated_ms": 0.26990591049194335,
+      "canonical_ms": 0.020234239101409913,
+      "ratio": 13.339068948391365,
+      "calibrated_graph_ms": 0.06940671920776367,
+      "canonical_graph_ms": 0.00532480001449585,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 256,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 0.0069179999409243464,
+      "calibrated_ms": 0.2712985610961914,
+      "canonical_ms": 0.02077536106109619,
+      "ratio": 13.058668886589093,
+      "calibrated_graph_ms": 0.15896575927734374,
+      "canonical_graph_ms": 0.017408000230789186,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 256,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.0067417139653116465,
+      "calibrated_ms": 0.26380287170410155,
+      "canonical_ms": 0.019464319944381712,
+      "ratio": 13.553151225314043,
+      "calibrated_graph_ms": 0.14521344184875487,
+      "canonical_graph_ms": 0.017478400468826295,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 1,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 1.7905880300095305,
+      "calibrated_ms": 0.26292224884033205,
+      "canonical_ms": 0.020459840297698973,
+      "ratio": 12.850650103554413,
+      "calibrated_graph_ms": 0.05475327968597412,
+      "canonical_graph_ms": 0.003755519986152649,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 1,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.006710628047585487,
+      "calibrated_ms": 0.25439231872558593,
+      "canonical_ms": 0.019909119606018065,
+      "ratio": 12.777677956622906,
+      "calibrated_graph_ms": 0.0547215986251831,
+      "canonical_graph_ms": 0.0037273600697517394,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 32,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 3.210633647046052,
+      "calibrated_ms": 0.2896281623840332,
+      "canonical_ms": 0.020776960849761963,
+      "ratio": 13.939871402672033,
+      "calibrated_graph_ms": 0.07687168121337891,
+      "canonical_graph_ms": 0.006532480120658875,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 32,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.007026648032478988,
+      "calibrated_ms": 0.2753545570373535,
+      "canonical_ms": 0.019776320457458495,
+      "ratio": 13.923447368770036,
+      "calibrated_graph_ms": 0.07655424118041992,
+      "canonical_graph_ms": 0.006932479739189148,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 256,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 0.007114225998520851,
+      "calibrated_ms": 0.28229631423950197,
+      "canonical_ms": 0.031703040599823,
+      "ratio": 8.904392414684605,
+      "calibrated_graph_ms": 0.20711423873901366,
+      "canonical_graph_ms": 0.030791680812835693,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "pinhole",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          -0.08,
+          0.01,
+          0.001,
+          -0.001,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 256,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.007430913974530995,
+      "calibrated_ms": 0.2896076774597168,
+      "canonical_ms": 0.03679231882095337,
+      "ratio": 7.871416826676987,
+      "calibrated_graph_ms": 0.198338565826416,
+      "canonical_graph_ms": 0.035716800689697265,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 1,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 0.4418142649810761,
+      "calibrated_ms": 0.12417023658752441,
+      "canonical_ms": 0.020746240615844725,
+      "ratio": 5.98519215537733,
+      "calibrated_graph_ms": 0.02168607950210571,
+      "canonical_graph_ms": 0.0030403199791908266,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 1,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.002972621936351061,
+      "calibrated_ms": 0.12338175773620605,
+      "canonical_ms": 0.019916800260543824,
+      "ratio": 6.194858417123933,
+      "calibrated_graph_ms": 0.021678080558776857,
+      "canonical_graph_ms": 0.0030592000484466553,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 32,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 0.5846857209689915,
+      "calibrated_ms": 0.13837311744689942,
+      "canonical_ms": 0.02093120098114014,
+      "ratio": 6.610854177530435,
+      "calibrated_graph_ms": 0.034272000789642335,
+      "canonical_graph_ms": 0.004782080054283142,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 32,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.0031740969279780984,
+      "calibrated_ms": 0.13750271797180175,
+      "canonical_ms": 0.020471680164337158,
+      "ratio": 6.716728518030454,
+      "calibrated_graph_ms": 0.034210879802703854,
+      "canonical_graph_ms": 0.004884479939937592,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 256,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 0.003110271063633263,
+      "calibrated_ms": 0.13728768348693848,
+      "canonical_ms": 0.020068159103393556,
+      "ratio": 6.841070114085498,
+      "calibrated_graph_ms": 0.11106304168701171,
+      "canonical_graph_ms": 0.015868799686431886,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "nearest",
+      "batch": 256,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.0030445780139416456,
+      "calibrated_ms": 0.13831168174743652,
+      "canonical_ms": 0.0208076810836792,
+      "ratio": 6.647145407083505,
+      "calibrated_graph_ms": 0.11454463958740234,
+      "canonical_graph_ms": 0.01756127953529358,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 1,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 0.5574761310126632,
+      "calibrated_ms": 0.1251814365386963,
+      "canonical_ms": 0.02013184070587158,
+      "ratio": 6.218082010860851,
+      "calibrated_graph_ms": 0.022118399143218993,
+      "canonical_graph_ms": 0.003389439880847931,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 1,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.003277519950643182,
+      "calibrated_ms": 0.12370783805847169,
+      "canonical_ms": 0.020183041095733642,
+      "ratio": 6.12929624785937,
+      "calibrated_graph_ms": 0.022105600833892822,
+      "canonical_graph_ms": 0.003409920036792755,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 32,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 1.2516516749747097,
+      "calibrated_ms": 0.1397043228149414,
+      "canonical_ms": 0.02001919984817505,
+      "ratio": 6.9785168175778445,
+      "calibrated_graph_ms": 0.039772160053253174,
+      "canonical_graph_ms": 0.006417919993400574,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 32,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.0034859940642490983,
+      "calibrated_ms": 0.13867008209228515,
+      "canonical_ms": 0.019752960205078125,
+      "ratio": 7.020217762431153,
+      "calibrated_graph_ms": 0.03997407913208008,
+      "canonical_graph_ms": 0.00699392020702362,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 256,
+      "gaze": "center",
+      "samples": 2287,
+      "first_call_seconds": 0.003572277957573533,
+      "calibrated_ms": 0.16516096115112305,
+      "canonical_ms": 0.031506240367889404,
+      "ratio": 5.242166606443216,
+      "calibrated_graph_ms": 0.15122431755065918,
+      "canonical_graph_ms": 0.030228478908538817,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    },
+    {
+      "camera": {
+        "model": "fisheye",
+        "image_size": [
+          480,
+          640
+        ],
+        "intrinsics": [
+          300,
+          300,
+          319.5,
+          239.5
+        ],
+        "distortion": [
+          0.02,
+          -0.003,
+          0.0002,
+          0.0
+        ],
+        "image_circle": null,
+        "max_angle_deg": 90.0
+      },
+      "mode": "bilinear",
+      "batch": 256,
+      "gaze": "periphery",
+      "samples": 2287,
+      "first_call_seconds": 0.0037373669911175966,
+      "calibrated_ms": 0.15509471893310547,
+      "canonical_ms": 0.03586047887802124,
+      "ratio": 4.324948349425486,
+      "calibrated_graph_ms": 0.13863936424255371,
+      "canonical_graph_ms": 0.03539680004119873,
+      "canonical_backend": "cuda",
+      "calibrated_backend": "compiled_calibrated"
+    }
+  ]
+}

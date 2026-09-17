@@ -70,7 +70,9 @@ class FoviNet(nn.Module):
                 auto_match_cart_resources=cfg.saccades.auto_match_cart_resources,
                 isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
                 sampler_backend=getattr(cfg.saccades, 'sampler_backend', 'auto'),
-                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
+                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'),
+                camera_model=getattr(cfg.saccades, 'camera_model', None),
+                gaze_convention=getattr(cfg.saccades, 'gaze_convention', 'camera_xyz'),
             )
 
         self.get_repr_sizes()
@@ -159,7 +161,10 @@ class FoviNet(nn.Module):
 
         in_channels = self.get_in_channels()
 
-        if hasattr(self.fixation_size, '__len__'):
+        if getattr(self.cfg.saccades, 'field_geometry', 'planar') == 'spherical':
+            image_size = self.retinal_transform.camera_model.image_size
+            x = torch.rand(10, in_channels, *image_size).to(self.device, self.dtype)
+        elif hasattr(self.fixation_size, '__len__'):
             x = torch.rand(10, in_channels, *self.fixation_size).to(self.device, self.dtype)
         else:
             x = torch.rand(10, in_channels, self.fixation_size, self.fixation_size).to(self.device, self.dtype)

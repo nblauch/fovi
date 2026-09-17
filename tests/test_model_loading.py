@@ -7,16 +7,16 @@ from pathlib import Path
 
 import pytest
 import torch
+from fovi.models.loading import find_config, get_model_from_base_fn, load_config
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
-
-from fovi.models.loading import find_config, get_model_from_base_fn, load_config
 
 
 class LocalModel(nn.Module):
     def __init__(self, cfg: DictConfig, device: str | torch.device) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.zeros(cfg.width, device=device))
+        self.cfg = cfg
 
 
 @pytest.mark.parametrize(
@@ -141,3 +141,26 @@ def test_local_model_without_weights_fails(tmp_path: Path) -> None:
     (model_dir / "config.yaml").write_text("width: 4\n")
     with pytest.raises(ValueError, match="state_dict not found"):
         find_config("model", True, [tmp_path], device="cpu")
+
+
+@pytest.mark.parametrize("geometry", ["legacy", "planar", "spherical"])
+def test_checkpoint_preserves_explicit_geometry(tmp_path: Path, geometry: str) -> None:
+    directory = tmp_path / "model"
+    directory.mkdir()
+    OmegaConf.save(
+        OmegaConf.create({"width": 1, "saccades": {"field_geometry": geometry}}),
+        directory / "config.yaml",
+    )
+    torch.save({"state_dict": {"weight": torch.ones(1)}}, directory / "state_dict.pth")
+    model = get_model_from_base_fn(
+        "model", device="cpu", model_dirs=[tmp_path], fovinet_cls=LocalModel
+    )
+    assert model.cfg.saccades.field_geometry == geometry
+    overridden = get_model_from_base_fn(
+        "model",
+        device="cpu",
+        model_dirs=[tmp_path],
+        fovinet_cls=LocalModel,
+        **{"saccades.field_geometry": "planar"},
+    )
+    assert overridden.cfg.saccades.field_geometry == "planar"

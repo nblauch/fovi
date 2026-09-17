@@ -1,3 +1,6 @@
+from __future__ import annotations
+from collections.abc import Mapping
+
 import os
 import warnings
 
@@ -8,6 +11,7 @@ import numpy as np
 import torchvision.transforms.functional as TF
 
 from .coords import SamplingCoords, transform_sampling_grid, xy_to_colrow
+from .projection import CameraModel, angular_directions, gaze_rotation
 from ..arch.knn import KNNPoolingLayer
 from ..utils import add_to_all
 
@@ -124,7 +128,8 @@ class GridSampler(BaseGridSampler):
     def __init__(self, fov, cmf_a, resolution, device='cuda', dtype=torch.float,
                  mode='nearest', style='isotropic', coords=None,
                  isotropic_plotting_type='v1like', backend='auto',
-                 output_dtype=None, fov_type='circular'):
+                 output_dtype=None, fov_type='circular', field_geometry='planar',
+                 camera_model=None, gaze_convention='camera_xyz'):
         """
         Initialize the GridSampler.
         
@@ -165,18 +170,35 @@ class GridSampler(BaseGridSampler):
         self._native_uint8_sample_fn = None
         self._native_float_sample_fn = None
         self.fov_type = fov_type
+        self.field_geometry = field_geometry
+        if isinstance(camera_model, Mapping):
+            camera_model = CameraModel(**camera_model)
+        if camera_model is not None and field_geometry != 'spherical':
+            raise ValueError("Calibrated camera sampling requires spherical field_geometry")
+        if field_geometry == 'spherical' and camera_model is None:
+            raise ValueError("Spherical image sampling requires camera_model")
+        self.camera_model = camera_model
+        self.gaze_convention = gaze_convention
+        if gaze_convention not in ('camera_xyz', 'pan_tilt'):
+            raise ValueError(f"Unknown gaze convention {gaze_convention!r}")
         
         if coords is None:
             self.coords = SamplingCoords(
                 fov, cmf_a, resolution, device=device, style=style,
                 dtype=dtype, isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=fov_type)
+                fov_type=fov_type, field_geometry=field_geometry)
         else:
             self.coords = coords
             
         self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
+        self.register_buffer('canonical_directions', angular_directions(self.coords.cartesian, fov), persistent=False)
+        self._calibrated_impl = self._calibrated_forward
+        self._compiled_calibrated = field_geometry == 'spherical' and torch.device(device).type == 'cuda' and backend != 'torch'
+        if self._compiled_calibrated:
+            # Fuse projection and compact gathering; compilation happens on first use.
+            self._calibrated_impl = torch.compile(self._calibrated_forward, fullgraph=True)
         self.register_buffer(
             'valid_mask', self.coords.valid_mask, persistent=False)
         # FoV validity is fixed by the sampling topology. Cache the Python
@@ -333,13 +355,67 @@ class GridSampler(BaseGridSampler):
                     RuntimeWarning, stacklevel=2)
         return self._torch_grid_sample(img, fix_loc, fixation_size)
 
+    @property
+    def last_backend(self) -> str | None:
+        """Backend used by the most recent forward call, or None before sampling."""
+        return self._last_backend
+
     def _convert_output(self, sampled):
         if self.output_dtype is not None and sampled.dtype != self.output_dtype:
             sampled = sampled.to(self.output_dtype)
         return sampled
 
+    def calibrated_pixels(self, fix_loc: torch.Tensor, rotation: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return gaze-dependent (B, N, 2) pixels and (B, N) validity.
+
+        Fixations are normalized (row, column) in the source image. An explicit
+        (B, 3, 3) rotation maps retinal camera coordinates into source-camera
+        coordinates and bypasses fixation-to-rotation conversion.
+        """
+        camera = self.camera_model
+        if camera is None:
+            raise ValueError("Spherical image sampling requires camera_model")
+        if rotation is None:
+            h, w = camera.image_size
+            target_pixels = torch.stack((fix_loc[..., 1] * w - 0.5, fix_loc[..., 0] * h - 0.5), -1)
+            target, target_valid = camera.unproject(target_pixels)
+            rotation = gaze_rotation(target, self.gaze_convention)
+        else:
+            target_valid = torch.ones(rotation.shape[0], dtype=torch.bool, device=rotation.device)
+        directions = self.canonical_directions.to(rotation.dtype) @ rotation.transpose(-1, -2)
+        pixels, valid = camera.project(directions)
+        return pixels, valid & target_valid[..., None]
+
+    def _sample_calibrated(self, image: torch.Tensor, pixels: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+        """Gather compact samples without converting the full uint8 image."""
+        batch, channels, height, width = image.shape
+        flat = image.reshape(batch, channels, height * width)
+        pixels = torch.where(valid[..., None], pixels, torch.zeros_like(pixels))
+        x, y = pixels.unbind(-1)
+
+        def gather(px: torch.Tensor, py: torch.Tensor) -> torch.Tensor:
+            inside = (px >= 0) & (px < width) & (py >= 0) & (py < height)
+            indices = (py.clamp(0, height - 1).long() * width + px.clamp(0, width - 1).long())[:, None].expand(-1, channels, -1)
+            values = torch.gather(flat, 2, indices)
+            return values * (inside & valid)[:, None].to(values.dtype)
+
+        if self.mode == 'nearest':
+            return gather(torch.floor(x + 0.5), torch.floor(y + 0.5))
+        x0, y0 = torch.floor(x), torch.floor(y)
+        wx, wy = (x - x0)[:, None], (y - y0)[:, None]
+        work_dtype = torch.float64 if image.dtype == torch.float64 else torch.float32
+        result = (gather(x0, y0).to(work_dtype) * (1 - wx) * (1 - wy)
+                  + gather(x0 + 1, y0).to(work_dtype) * wx * (1 - wy)
+                  + gather(x0, y0 + 1).to(work_dtype) * (1 - wx) * wy
+                  + gather(x0 + 1, y0 + 1).to(work_dtype) * wx * wy)
+        return result.to(image.dtype) if image.is_floating_point() else result
+
+    def _calibrated_forward(self, image: torch.Tensor, fixation: torch.Tensor, rotation: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+        pixels, valid = self.calibrated_pixels(fixation, rotation)
+        return self._sample_calibrated(image, pixels, valid), pixels
+
     def forward(self, img, fix_loc=None, fixation_size=None, return_coords=False,
-                direct=False):
+                direct=False, rotation=None):
         """
         Forward pass for grid sampling.
         
@@ -358,6 +434,34 @@ class GridSampler(BaseGridSampler):
             raise TypeError("GridSampler input must be a torch.Tensor")
         if img.ndim != 4:
             raise ValueError(f"GridSampler expects NCHW input, got shape {tuple(img.shape)}")
+
+        if self.field_geometry == 'spherical':
+            if fixation_size is not None:
+                raise ValueError("Spherical sampling uses fov in degrees; pixel fixation_size overrides are unsupported")
+            if self.camera_model is None:
+                raise ValueError("Spherical image sampling requires camera_model")
+            if tuple(img.shape[-2:]) != tuple(self.camera_model.image_size):
+                raise ValueError("Image dimensions do not match camera calibration")
+            if fix_loc is None and rotation is None:
+                raise ValueError("Provide a fixation or explicit gaze rotation")
+            coordinate_dtype = torch.float64 if img.dtype == torch.float64 else torch.float32
+            fix = torch.as_tensor(fix_loc if fix_loc is not None else (0.5, 0.5), device=img.device, dtype=coordinate_dtype)
+            if fix.ndim == 1:
+                fix = fix.unsqueeze(0).expand(img.shape[0], -1)
+            if fix.shape != (img.shape[0], 2):
+                raise ValueError("Calibrated fixations must have shape (B, 2)")
+            if rotation is not None and rotation.shape != (img.shape[0], 3, 3):
+                raise ValueError("Gaze rotation must have shape (B, 3, 3)")
+            implementation = self._calibrated_forward if direct else self._calibrated_impl
+            sampled, pixels = implementation(img, fix, rotation)
+            sampled = self._convert_output(sampled)
+            sampled = self._mask_invalid_samples(sampled, self.valid_mask, self._all_samples_valid)
+            self._last_backend = 'compiled_calibrated' if self._compiled_calibrated and not direct else 'torch_calibrated'
+            if return_coords:
+                h, w = img.shape[-2:]
+                grid = torch.stack((2 * (pixels[..., 0] + 0.5) / w - 1, 2 * (pixels[..., 1] + 0.5) / h - 1), -1).unsqueeze(1)
+                return sampled, grid
+            return sampled
 
         if img.dtype == torch.uint8:
             fix_loc_t, fixation_size_t = self._prepare_sampling_args(
@@ -434,7 +538,8 @@ class KNNGridSampler(BaseGridSampler):
     def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1,
                  fixation_size=3000, k=None, style='isotropic', sample_cortex=True,
                  dtype=torch.float, device='cuda', isotropic_plotting_type='v1like',
-                 backend='auto', output_dtype=None, fov_type='circular'):
+                 backend='auto', output_dtype=None, fov_type='circular', field_geometry='planar',
+                 camera_model=None, gaze_convention='camera_xyz'):
         """
         Initialize the KNNGridSampler.
         
@@ -459,11 +564,11 @@ class KNNGridSampler(BaseGridSampler):
             fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
             device=device, style=style, dtype=dtype,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry)
         self.coords = SamplingCoords(
             fov, cmf_a, resolution, device=device, style=style, dtype=dtype,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry)
 
         if k is None:
             # default to the ratio of the number of pixels in the retinal and cortical grids
@@ -479,7 +584,8 @@ class KNNGridSampler(BaseGridSampler):
             device=device, dtype=dtype,
             mode='nearest', style=style, coords=self.highres_coords,
             isotropic_plotting_type=isotropic_plotting_type, backend=backend,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry,
+            camera_model=camera_model, gaze_convention=gaze_convention)
         self.backend = backend
         self.output_dtype = output_dtype
         self._last_backend = None
@@ -510,7 +616,7 @@ class KNNGridSampler(BaseGridSampler):
 
         self.rf_sizes = self.coords.get_scatter_sizes()
 
-    def forward(self, img, fix_loc=None, fixation_size=None, direct=False):
+    def forward(self, img, fix_loc=None, fixation_size=None, direct=False, rotation=None):
         """
         Forward pass for KNN grid sampling.
         
@@ -530,7 +636,7 @@ class KNNGridSampler(BaseGridSampler):
         # promoted for the arithmetic required by KNN pooling.
         ret_samples = self.input_sampler(
             img, fix_loc=fix_loc, fixation_size=fixation_size,
-            direct=direct).to(self.dtype)
+            direct=direct, rotation=rotation).to(self.dtype)
         self._last_backend = self.input_sampler._last_backend
         ret_samples = self._mask_invalid_samples(
             ret_samples, self.highres_valid_mask,

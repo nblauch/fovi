@@ -129,7 +129,7 @@ def fovi_alexnet2023(cfg, device='cuda'):
         sample_cortex=cfg.saccades.sample_cortex,
         device=device,
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
-        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
+        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'),
         )
 
     return arch_wrapper(knn, cfg, device=device)
@@ -296,7 +296,7 @@ def build_fovi_resnet_backbone(cfg,
                  out_res=cfg.model.out_grid_size,
                  num_classes=None,
                  isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
-                 fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
+                 fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'),
                  ref_frame_mult=getattr(cfg.model, 'ref_frame_mult', 1) or 1,
         )
 
@@ -401,7 +401,7 @@ def fovi_vit(cfg, embed_dim, num_heads, device='cuda'):
         aggregation=cfg.model.vit.get('aggregation', 'cls_token'),
         ref_frame_side_length=cfg.model.vit.get('ref_frame_side_length', None),
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
-        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
+        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'),
     )
 
     return arch_wrapper(backbone, cfg, device=device)
@@ -557,6 +557,9 @@ def rescale_fov(cfg):
     Returns:
         Configuration object with updated FOV and CMF parameters.
     """
+    if getattr(cfg.saccades, 'field_geometry', 'planar') == 'spherical':
+        # The spherical FoV is already the physical retinal angular extent.
+        return cfg
     full_fov = cfg.saccades.fov
     fov = cfg.saccades.fov
     cmf_a = cfg.saccades.cmf_a
@@ -571,7 +574,7 @@ def rescale_fov(cfg):
                 crop_size, cfg.saccades.resize_size,
                 cfg.saccades.fixation_size, fov=fov,
                 style=cfg.saccades.mode,
-                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'))
+                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'))
         # auto FOV assumes the field-of-view is adjusted based on the crop size. this should always be the case, but for backwards compatibility it is not.
         fov = fov*(crop_size/cfg.saccades.fixation_size)
     else:
