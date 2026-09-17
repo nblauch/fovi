@@ -40,8 +40,8 @@ class FoviNet(nn.Module):
             warnings.warn(
                 "saccades.field_geometry is missing; using 'legacy' to preserve "
                 "the geometry of existing checkpoints. Set it explicitly to "
-                "'planar' for new training, or 'legacy' for weights trained with "
-                "historical geometry. Switching existing weights to 'planar' "
+                "'planar' or 'spherical' for new training, or 'legacy' for weights trained with "
+                "historical geometry. Switching existing weights to 'planar' or 'spherical' "
                 "changes neural-network neighborhoods and can change predictions.",
                 UserWarning,
                 stacklevel=2,

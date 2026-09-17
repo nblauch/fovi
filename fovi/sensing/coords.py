@@ -705,7 +705,7 @@ def get_logpolar_image_sampling_coords(
 @add_to_all(__all__)
 def get_warped_cartesian_sampling_coords(
         fov, cmf_a, res, device='cpu', max_val=1,
-        fov_type='circular', return_valid_mask=False, field_geometry='planar'):
+        fov_type='circular', return_valid_mask=False):
     """Build a regular Cartesian lattice in the radial-CMF warp plane.
 
     Each output location is inverse-mapped analytically into normalized visual
@@ -973,7 +973,7 @@ def get_sampling_coords(
         coords, polar_coords, plotting_coords, valid_mask = (
             get_warped_cartesian_sampling_coords(
                 fov, cmf_a, res, device=device, max_val=max_val,
-                fov_type=fov_type, field_geometry=field_geometry, return_valid_mask=True))
+                fov_type=fov_type, return_valid_mask=True))
         # These styles retain masked cells in their native rectangular layout.
         # KNN layers use valid_mask to treat them as padding in-place.
         masked_coords = coords.new_empty((0, 2))

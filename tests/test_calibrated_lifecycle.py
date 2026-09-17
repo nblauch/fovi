@@ -64,8 +64,11 @@ def test_overscan_warns_and_nodes_can_reenter_image() -> None:
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 @pytest.mark.parametrize("warm", [False, True])
-def test_compiled_sampler_deepcopy_and_pickle_own_their_state(warm: bool) -> None:
-    sampler = make_sampler("cuda", "compiled")
+@pytest.mark.parametrize("backend", ["compiled", "cuda"])
+def test_compiled_sampler_deepcopy_and_pickle_own_their_state(
+    warm: bool, backend: str
+) -> None:
+    sampler = make_sampler("cuda", backend)
     image = torch.arange(120, device="cuda", dtype=torch.float32)[
         None, None, None
     ].expand(1, 1, 80, 120)
@@ -81,6 +84,26 @@ def test_compiled_sampler_deepcopy_and_pickle_own_their_state(warm: bool) -> Non
     stream.seek(0)
     restored = torch.load(stream, weights_only=False)
     torch.testing.assert_close(restored(image, [0.5, 0.6]), expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@pytest.mark.parametrize("setting", ["camera_model", "mode", "gaze_convention"])
+def test_native_sampler_reconfiguration_matches_eager(setting: str) -> None:
+    sampler = make_sampler("cuda", "cuda")
+    image = torch.rand(1, 3, 80, 120, device="cuda")
+    fixation = [0.4, 0.65]
+    before = sampler(image, fixation)
+    if setting == "camera_model":
+        sampler.camera_model = replace(
+            sampler.camera_model, intrinsics=(50, 50, 59.5, 39.5)
+        )
+    elif setting == "mode":
+        sampler.mode = "nearest"
+    else:
+        sampler.gaze_convention = "pan_tilt"
+    expected = sampler(image, fixation, direct=True)
+    assert not torch.allclose(before, expected)
+    torch.testing.assert_close(sampler(image, fixation), expected, atol=5e-5, rtol=1e-4)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")

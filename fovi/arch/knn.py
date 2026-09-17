@@ -1155,6 +1155,10 @@ def get_in_out_coords(
             - int: Output cartesian resolution
     """
     # Generate input coordinates if not provided
+    if in_coords is not None and in_coords.field_geometry != field_geometry:
+        raise ValueError(
+            f"in_coords.field_geometry={in_coords.field_geometry!r} does not "
+            f"match requested field_geometry={field_geometry!r}")
     if in_coords is None:
         if auto_match_cart_resources:
             in_res, in_cart_res = auto_match_num_coords(

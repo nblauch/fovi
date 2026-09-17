@@ -9,7 +9,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from fovi.models import FoviNet
 from fovi.models.architectures import rescale_fov
-from fovi.sensing.coords import SamplingCoords
+from fovi.sensing.calibration import calibrated_cmf_a
+from fovi.sensing.coords import SamplingCoords, find_desired_res, isotropic_foveal_ring
 from fovi.sensing.projection import CameraModel
 from fovi.sensing.retina import RetinalTransform
 
@@ -147,3 +148,77 @@ def test_unattainable_auto_density_fails_at_configuration() -> None:
     cfg.saccades.cmf_a = "auto"
     with pytest.raises(ValueError, match="could not attain one-pixel"):
         rescale_fov(cfg)
+
+
+@pytest.mark.parametrize("side,dimension", [("long", "width"), ("short", "height")])
+def test_crop_larger_than_camera_names_the_crop(side: str, dimension: str) -> None:
+    cfg = configuration(CameraModel("pinhole", (80, 120), (75, 75, 59.5, 39.5)), side)
+    cfg.saccades.fixation_size = 160
+    with pytest.raises(ValueError, match=f"fixation_size.*{dimension}"):
+        rescale_fov(cfg)
+
+
+@pytest.mark.parametrize("resolution", [8, 16, 32])
+@pytest.mark.parametrize("shape", ["circular", "square"])
+def test_auto_density_finds_a_known_feasible_resource_matched_grid(
+    resolution: int, shape: str
+) -> None:
+    fov = 60
+    known_a = fov * math.exp(-2.5)
+
+    def first_angle(a: float) -> float:
+        rings, _ = find_desired_res(
+            fov,
+            a,
+            resolution**2,
+            style="isotropic",
+            bounds=(1, 1000),
+            force_less_than=True,
+            quiet=True,
+            fov_type=shape,
+            field_geometry="spherical",
+        )
+        ring = isotropic_foveal_ring(fov, a, rings, shape, "spherical")
+        return float(ring.norm(dim=-1).min()) * math.radians(fov / 2)
+
+    # Choose a camera for which this discrete grid has exactly one-pixel spacing.
+    focal = 1 / first_angle(known_a)
+    camera = CameraModel("fisheye", (480, 640), (focal, focal, 319.5, 239.5))
+    fitted = calibrated_cmf_a(
+        camera,
+        fov,
+        resolution,
+        auto_match_cart_resources=True,
+        style="isotropic",
+        fov_type=shape,
+        gaze_convention="camera_xyz",
+    )
+    assert focal * first_angle(fitted) == pytest.approx(1.0, abs=0.05)
+
+
+def test_auto_density_skips_single_ring_candidates() -> None:
+    fitted = calibrated_cmf_a(
+        CameraModel("fisheye", (80, 120), (75, 75, 59.5, 39.5)),
+        30,
+        2,
+        auto_match_cart_resources=True,
+        style="isotropic",
+        fov_type="circular",
+        gaze_convention="camera_xyz",
+    )
+    rings, count = find_desired_res(
+        30,
+        fitted,
+        4,
+        style="isotropic",
+        force_less_than=True,
+        quiet=True,
+        field_geometry="spherical",
+    )
+    assert rings >= 2 and count <= 4
+    radius = (
+        isotropic_foveal_ring(30, fitted, rings, field_geometry="spherical")
+        .norm(dim=-1)
+        .min()
+    )
+    assert 75 * float(radius) * math.radians(15) == pytest.approx(1.0, abs=0.05)

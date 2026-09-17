@@ -70,12 +70,14 @@ def calibrated_cmf_a(
                 a,
                 resolution**2,
                 style="isotropic",
-                bounds=(2, 1000),
+                bounds=(1, 1000),
                 force_less_than=True,
                 quiet=True,
                 fov_type=fov_type,
                 field_geometry="spherical",
             )
+        if rings < 2:
+            return math.inf
         ring = isotropic_foveal_ring(fov, a, rings, fov_type, "spherical").double()
         rays = angular_directions(ring, fov) @ rotation.T
         pixels, ring_valid = camera.project(rays)
@@ -83,17 +85,31 @@ def calibrated_cmf_a(
             return math.inf
         return float((pixels - center).norm(dim=-1).min())
 
-    result = minimize_scalar(
-        lambda log_a: abs(spacing(log_a) - 1),
-        bounds=(-8, 4),
-        method="bounded",
-        options={"xatol": 1e-6, "maxiter": 80},
-    )
-    distance = spacing(float(result.x))
-    if not result.success or not math.isfinite(distance) or abs(distance - 1) > 0.05:
+    # Ring-count changes split the objective into several basins. Retain the
+    # best sampled candidate even when a local refinement crosses a jump.
+    candidates = [-8 + index * 0.25 for index in range(49)]
+    errors = [abs(spacing(candidate) - 1) for candidate in candidates]
+    best_index = min(range(len(errors)), key=errors.__getitem__)
+    best_log_a, best_error = candidates[best_index], errors[best_index]
+    for index, error in enumerate(errors):
+        left, right = max(0, index - 1), min(len(errors) - 1, index + 1)
+        if not math.isfinite(error) or error > min(errors[left], errors[right]):
+            continue
+        result = minimize_scalar(
+            lambda log_a: abs(spacing(log_a) - 1),
+            bounds=(candidates[left], candidates[right]),
+            method="bounded",
+            options={"xatol": 1e-6, "maxiter": 80},
+        )
+        if result.fun < best_error:
+            best_log_a, best_error = float(result.x), float(result.fun)
+        if best_error < 1e-4:
+            break
+    distance = spacing(best_log_a)
+    if not math.isfinite(distance) or abs(distance - 1) > 0.05:
         raise ValueError(
             "Calibrated cmf_a='auto' could not attain one-pixel central spacing "
             f"with this FoV/resolution (best spacing {distance:g} pixels). "
             "Choose an explicit cmf_a or adjust the sampling resolution."
         )
-    return fov * math.exp(float(result.x))
+    return fov * math.exp(best_log_a)

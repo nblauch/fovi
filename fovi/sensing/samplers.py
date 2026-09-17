@@ -14,7 +14,12 @@ from tqdm import tqdm
 from ..arch.knn import KNNPoolingLayer
 from ..utils import add_to_all
 from .coords import SamplingCoords, transform_sampling_grid, xy_to_colrow
-from .projection import CameraModel, angular_directions, gaze_rotation
+from .projection import (
+    CameraCalibration,
+    CameraModel,
+    angular_directions,
+    gaze_rotation,
+)
 
 __all__ = []
 
@@ -169,8 +174,6 @@ class GridSampler(BaseGridSampler):
         self.dtype = dtype
         self.mode = mode
         self.style = style
-        if mode not in ('nearest', 'bilinear'):
-            raise ValueError(f"Unsupported sampling mode {mode!r}")
         if backend not in ('auto', 'torch', 'cuda', 'compiled'):
             raise ValueError("backend must be one of 'auto', 'torch', 'cuda', or 'compiled'")
         if backend == 'compiled' and field_geometry != 'spherical':
@@ -185,16 +188,8 @@ class GridSampler(BaseGridSampler):
         self._native_float_sample_fn = None
         self.fov_type = fov_type
         self.field_geometry = field_geometry
-        if camera_model is not None:
-            camera_model = CameraModel.from_config(camera_model)
-        if camera_model is not None and field_geometry != 'spherical':
-            raise ValueError("Calibrated camera sampling requires spherical field_geometry")
-        if field_geometry == 'spherical' and camera_model is None:
-            raise ValueError("Spherical image sampling requires camera_model")
         self.camera_model = camera_model
         self.gaze_convention = gaze_convention
-        if gaze_convention not in ('camera_xyz', 'pan_tilt'):
-            raise ValueError(f"Unknown gaze convention {gaze_convention!r}")
         
         if coords is None:
             self.coords = SamplingCoords(
@@ -223,6 +218,41 @@ class GridSampler(BaseGridSampler):
                     "Retinal FoV extends beyond camera coverage at central gaze; "
                     "out-of-frame samples are zero-padded. Their visibility may "
                     "change with gaze.", UserWarning, stacklevel=2)
+
+    @property
+    def camera_model(self) -> CameraModel | None:
+        return self._camera_model
+
+    @camera_model.setter
+    def camera_model(self, camera: CameraModel | CameraCalibration | None) -> None:
+        if self.field_geometry == 'spherical' and camera is None:
+            raise ValueError("Spherical image sampling requires camera_model")
+        if self.field_geometry != 'spherical' and camera is not None:
+            raise ValueError("Calibrated camera sampling requires spherical field_geometry")
+        self._camera_model = None if camera is None else CameraModel.from_config(camera)
+        self._native_calibrated = None
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    @mode.setter
+    def mode(self, mode: str) -> None:
+        if mode not in ('nearest', 'bilinear'):
+            raise ValueError(f"Unsupported sampling mode {mode!r}")
+        self._mode = mode
+        self._native_calibrated = None
+
+    @property
+    def gaze_convention(self) -> str:
+        return self._gaze_convention
+
+    @gaze_convention.setter
+    def gaze_convention(self, convention: str) -> None:
+        if convention not in ('camera_xyz', 'pan_tilt'):
+            raise ValueError(f"Unknown gaze convention {convention!r}")
+        self._gaze_convention = convention
+        self._native_calibrated = None
 
     def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> GridSampler:
         # Restore from the original rays, not from a rounded half/bfloat16 copy.
@@ -402,7 +432,7 @@ class GridSampler(BaseGridSampler):
         """
         camera = self.camera_model
         if self.field_geometry != 'spherical':
-            raise ValueError("Spherical image sampling requires camera_model")
+            raise ValueError("calibrated_pixels requires spherical field_geometry")
         if rotation is None:
             h, w = camera.image_size
             target_pixels = torch.stack((fix_loc[..., 1] * w - 0.5, fix_loc[..., 0] * h - 0.5), -1)
@@ -596,8 +626,7 @@ class KNNGridSampler(BaseGridSampler):
     def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1,
                  fixation_size=3000, k=None, style='isotropic', sample_cortex=True,
                  dtype=torch.float, device='cuda', isotropic_plotting_type='v1like',
-                 backend='auto', output_dtype=None, fov_type='circular', field_geometry='planar',
-                 camera_model=None, gaze_convention='camera_xyz'):
+                 backend='auto', output_dtype=None, fov_type='circular', field_geometry='planar'):
         """
         Initialize the KNNGridSampler.
         
@@ -642,8 +671,7 @@ class KNNGridSampler(BaseGridSampler):
             device=device, dtype=dtype,
             mode='nearest', style=style, coords=self.highres_coords,
             isotropic_plotting_type=isotropic_plotting_type, backend=backend,
-            fov_type=fov_type, field_geometry=field_geometry,
-            camera_model=camera_model, gaze_convention=gaze_convention)
+            fov_type=fov_type, field_geometry=field_geometry)
         self.backend = backend
         self.output_dtype = output_dtype
         self._last_backend = None

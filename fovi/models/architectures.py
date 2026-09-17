@@ -129,7 +129,7 @@ def fovi_alexnet2023(cfg, device='cuda'):
         sample_cortex=cfg.saccades.sample_cortex,
         device=device,
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
-        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'),
+        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
         )
 
     return arch_wrapper(knn, cfg, device=device)
@@ -296,7 +296,7 @@ def build_fovi_resnet_backbone(cfg,
                  out_res=cfg.model.out_grid_size,
                  num_classes=None,
                  isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
-                 fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'),
+                 fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
                  ref_frame_mult=getattr(cfg.model, 'ref_frame_mult', 1) or 1,
         )
 
@@ -401,7 +401,7 @@ def fovi_vit(cfg, embed_dim, num_heads, device='cuda'):
         aggregation=cfg.model.vit.get('aggregation', 'cls_token'),
         ref_frame_side_length=cfg.model.vit.get('ref_frame_side_length', None),
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
-        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'),
+        fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
     )
 
     return arch_wrapper(backbone, cfg, device=device)
@@ -557,7 +557,7 @@ def rescale_fov(cfg):
     Returns:
         Configuration object with updated FOV and CMF parameters.
     """
-    if getattr(cfg.saccades, 'field_geometry', 'planar') == 'spherical':
+    if cfg.saccades.field_geometry == 'spherical':
         from ..sensing.calibration import calibrated_cmf_a
         from ..sensing.projection import CameraModel
 
@@ -580,6 +580,12 @@ def rescale_fov(cfg):
                     raise ValueError("fixation_size must be a scalar or (height, width)")
                 size = size[1 if horizontal else 0]
             fraction = float(size) * np.sqrt(low) / (w if horizontal else h)
+            if not np.isfinite(fraction) or not 0 < fraction <= 1:
+                dimension = 'width' if horizontal else 'height'
+                raise ValueError(
+                    f"fixation_size={cfg.saccades.fixation_size} with crop area "
+                    f"fraction={low} must give a positive crop no larger than "
+                    f"camera image {dimension}={w if horizontal else h}")
             cfg.saccades.fov = camera.field_of_view(side, fraction)
         if cfg.saccades.cmf_a == 'auto' or cfg.saccades.cmf_a == -1:
             cfg.saccades.cmf_a = calibrated_cmf_a(
@@ -603,7 +609,7 @@ def rescale_fov(cfg):
                 crop_size, cfg.saccades.resize_size,
                 cfg.saccades.fixation_size, fov=fov,
                 style=cfg.saccades.mode,
-                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=getattr(cfg.saccades, 'field_geometry', 'planar'))
+                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry)
         # auto FOV assumes the field-of-view is adjusted based on the crop size. this should always be the case, but for backwards compatibility it is not.
         fov = fov*(crop_size/cfg.saccades.fixation_size)
     else:

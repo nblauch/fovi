@@ -175,16 +175,18 @@ def main() -> None:
                         torch.uint8: 0.02,
                         torch.float16: 0.001,
                         torch.bfloat16: 0.008,
-                        # FP32 projection rounding is amplified by high-contrast
-                        # bilinear samples; independently bound source pixels below.
-                        torch.float32: 1e-4,
+                        # Unit-range input bounds each bilinear partial by one:
+                        # two coordinate errors plus interpolation rounding.
+                        torch.float32: 2 * 2e-4 + 8 * torch.finfo(torch.float32).eps,
                         torch.float64: 1e-10,
                     }[dtype]
                     torch.testing.assert_close(
                         actual,
                         expected,
                         atol=0 if mode == "nearest" else tolerance,
-                        rtol=1e-4 if mode == "bilinear" else 0,
+                        rtol=1e-4
+                        if mode == "bilinear" and dtype != torch.float32
+                        else 0,
                         msg=f"Native parity: {model}, distortion={distortion}, {mode}, {batch=}, {dtype_name}, {gaze_name}",
                     )
                     pixel_delta = (

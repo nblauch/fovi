@@ -57,6 +57,16 @@ class CameraModel:
         return cls(**camera)
 
     def __post_init__(self) -> None:
+        # Frozen calibration must also contain immutable, compiler-friendly values.
+        # YAML/OmegaConf and direct dataclass construction share this boundary.
+        for name in ("image_size", "intrinsics", "distortion", "image_circle"):
+            values = getattr(self, name)
+            if values is not None:
+                convert = int if name == "image_size" else float
+                if name == "image_size" and any(int(v) != v for v in values):
+                    raise ValueError("image_size must contain integer height and width")
+                object.__setattr__(self, name, tuple(convert(v) for v in values))
+        object.__setattr__(self, "max_angle_deg", float(self.max_angle_deg))
         if self.model not in ("pinhole", "fisheye"):
             raise ValueError(f"Unsupported camera model {self.model!r}")
         if len(self.image_size) != 2 or any(v <= 0 for v in self.image_size):
