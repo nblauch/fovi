@@ -163,15 +163,21 @@ def main() -> None:
                     )
                     size = torch.full((batch, 2), 320, device=args.device)
                     started = time.perf_counter()
-                    expected = calibrated(image, fixation, direct=True)
-                    actual = calibrated(image, fixation)
+                    expected, expected_grid = calibrated(
+                        image, fixation, direct=True, return_coords=True
+                    )
+                    actual, actual_grid = calibrated(
+                        image, fixation, return_coords=True
+                    )
                     previous = compiled(image, fixation)
                     torch.cuda.synchronize()
                     tolerance = {
                         torch.uint8: 0.02,
                         torch.float16: 0.001,
                         torch.bfloat16: 0.008,
-                        torch.float32: 5e-5,
+                        # FP32 projection rounding is amplified by high-contrast
+                        # bilinear samples; independently bound source pixels below.
+                        torch.float32: 1e-4,
                         torch.float64: 1e-10,
                     }[dtype]
                     torch.testing.assert_close(
@@ -180,6 +186,17 @@ def main() -> None:
                         atol=0 if mode == "nearest" else tolerance,
                         rtol=1e-4 if mode == "bilinear" else 0,
                         msg=f"Native parity: {model}, distortion={distortion}, {mode}, {batch=}, {dtype_name}, {gaze_name}",
+                    )
+                    pixel_delta = (
+                        actual_grid - expected_grid
+                    ) * actual_grid.new_tensor(
+                        (camera.image_size[1] / 2, camera.image_size[0] / 2)
+                    )
+                    torch.testing.assert_close(
+                        pixel_delta,
+                        torch.zeros_like(pixel_delta),
+                        atol=1e-9 if dtype == torch.float64 else 2e-4,
+                        rtol=0,
                     )
                     initialization_s = time.perf_counter() - started
                     operations = {
@@ -220,6 +237,7 @@ def main() -> None:
                                 .item(),
                             },
                             "gaze": gaze_name,
+                            "max_source_pixel_error": pixel_delta.abs().max().item(),
                             "samples": len(calibrated.coords),
                             "initialization_and_parity_seconds": initialization_s,
                             "ms": {

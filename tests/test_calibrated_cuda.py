@@ -146,8 +146,9 @@ def test_auto_preserves_image_and_fixation_gradients() -> None:
 
 
 @pytest.mark.parametrize("model,distortion", CAMERAS)
+@pytest.mark.parametrize("dtype", [torch.uint8, torch.float32])
 def test_large_image_peripheral_gaze_precision(
-    model: str, distortion: tuple[float, ...]
+    model: str, distortion: tuple[float, ...], dtype: torch.dtype
 ) -> None:
     camera = CameraModel(model, (480, 640), (300, 300, 319.5, 239.5), distortion)
     sampler = GridSampler(
@@ -167,6 +168,8 @@ def test_large_image_peripheral_gaze_precision(
         dtype=torch.uint8,
         generator=torch.Generator(device="cuda").manual_seed(2026),
     )
+    if dtype == torch.float32:
+        image = image.float() / 256
     fixation = torch.tensor([[0.3013, 0.8017]], device="cuda")
     actual, grid = sampler(image, fixation, return_coords=True)
     expected, expected_grid = sampler(image, fixation, direct=True, return_coords=True)
@@ -180,7 +183,7 @@ def test_large_image_peripheral_gaze_precision(
         actual,
         expected,
         rtol=1e-4,
-        atol=0.02,
+        atol=1e-4 if dtype == torch.float32 else 0.02,
     )
 
 
