@@ -34,13 +34,13 @@ jobs:
         run: |
           python -c "from importlib.util import find_spec; assert find_spec('ffcv') is None"
           python -c "import torch; import cupy; import warp; assert not torch.cuda.is_available()"
-          python -m pytest -q -ra --junitxml=test-results/cpu.xml
+          python -m pytest -q -ra --junitxml="$RUNNER_TEMP/fovi-cpu.xml"
       - name: Upload CPU test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fovi-cpu-test-results
-          path: test-results/cpu.xml
+          path: ${{ runner.temp }}/fovi-cpu.xml
           if-no-files-found: warn
           retention-days: 7
       - name: Build and check distribution metadata
