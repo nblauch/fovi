@@ -3,5 +3,6 @@ defaults:
   - _self_
 
 saccades:
+  field_geometry: planar
   cmf_a: null
   mode: uniform_as_grid

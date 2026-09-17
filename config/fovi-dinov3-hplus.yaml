@@ -10,3 +10,6 @@ training:
 pretrained_model:
   variant: vith16plus
   path: facebook/dinov3-vith16plus-pretrain-lvd1689m
+
+saccades:
+  field_geometry: planar

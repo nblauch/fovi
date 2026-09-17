@@ -6,4 +6,5 @@ model:
   arch: alexnet2023_baseline
   
 saccades:
+  field_geometry: planar
   mode: logpolar_as_grid

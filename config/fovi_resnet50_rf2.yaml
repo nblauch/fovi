@@ -6,3 +6,6 @@ defaults:
 
 model:
   arch: fovi_resnet50
+
+saccades:
+  field_geometry: planar

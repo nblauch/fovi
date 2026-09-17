@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import warnings
+from collections.abc import Iterator
+from functools import partial
 from pathlib import Path
 
 import pytest
 import torch
-from fovi.models.loading import find_config, get_model_from_base_fn, load_config
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 from torch import nn
+
+from fovi.models.loading import find_config, get_model_from_base_fn, load_config
 
 
 class LocalModel(nn.Module):
@@ -164,3 +168,158 @@ def test_checkpoint_preserves_explicit_geometry(tmp_path: Path, geometry: str) -
         **{"saccades.field_geometry": "planar"},
     )
     assert overridden.cfg.saccades.field_geometry == "planar"
+
+
+@pytest.fixture
+def small_fovi_config() -> DictConfig:
+    """Use the real CNN builders with fewer channels for CPU compatibility checks."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "config/pretrained/fovi-alexnet_a-0.5_res-64_rfmult-1_in1k.yaml"
+    )
+    cfg = OmegaConf.load(path)
+    cfg.model.channel_mult = 0.125
+    cfg.model.mlp = "16-16"
+    cfg.training.load_cpu = 1
+    with open_dict(cfg.saccades):
+        cfg.saccades.field_geometry = "legacy"
+    return cfg
+
+
+@pytest.fixture
+def cpu_model_threads() -> Iterator[None]:
+    previous = torch.get_num_threads()
+    torch.set_num_threads(4)
+    yield
+    torch.set_num_threads(previous)
+
+
+@pytest.mark.usefixtures("cpu_model_threads")
+@pytest.mark.parametrize("via_loader", [False, True])
+def test_missing_geometry_warns_and_preserves_legacy_outputs(
+    tmp_path: Path, small_fovi_config: DictConfig, via_loader: bool
+) -> None:
+    from fovi.arch.knn import KNNConvLayer, KNNPoolingLayer
+    from fovi.models import FoviNet
+
+    cfg = small_fovi_config
+    torch.manual_seed(123)
+    reference = FoviNet(cfg, device="cpu").eval()
+    checkpoint_cfg = OmegaConf.create(OmegaConf.to_container(cfg))
+    del checkpoint_cfg.saccades.field_geometry
+    OmegaConf.set_struct(checkpoint_cfg, True)
+    directory = tmp_path / "custom-checkpoint"
+    directory.mkdir()
+    OmegaConf.save(checkpoint_cfg, directory / "config.yaml")
+    torch.save({"state_dict": reference.state_dict()}, directory / "state_dict.pth")
+
+    if via_loader:
+        build = partial(
+            get_model_from_base_fn,
+            "custom-checkpoint",
+            device="cpu",
+            model_dirs=[tmp_path],
+            quiet=True,
+        )
+    else:
+        build = partial(FoviNet, checkpoint_cfg, device="cpu")
+    with pytest.warns(
+        UserWarning, match="saccades.field_geometry.*missing.*legacy"
+    ) as caught:
+        restored = build()
+    restored.eval()
+    if not via_loader:
+        restored.load_state_dict(reference.state_dict())
+    geometry_warnings = [
+        item for item in caught if "saccades.field_geometry" in str(item.message)
+    ]
+    assert len(geometry_warnings) == 1
+    assert "planar" in str(geometry_warnings[0].message)
+    assert restored.cfg.saccades.field_geometry == "legacy"
+    assert restored.retinal_transform.field_geometry == "legacy"
+    old_layers = [
+        module
+        for module in reference.modules()
+        if isinstance(module, (KNNConvLayer, KNNPoolingLayer))
+    ]
+    new_layers = [
+        module
+        for module in restored.modules()
+        if isinstance(module, (KNNConvLayer, KNNPoolingLayer))
+    ]
+    assert len(old_layers) == len(new_layers) > 0
+    for old, new in zip(old_layers, new_layers):
+        assert new.in_coords.field_geometry == new.out_coords.field_geometry == "legacy"
+        assert torch.equal(old.knn_indices_pad_token, new.knn_indices_pad_token)
+        if isinstance(old, KNNConvLayer):
+            assert torch.equal(old.local_rf, new.local_rf)
+    images = torch.rand(4, 3, 256, 256)
+    gaze = torch.tensor([[0.4, 0.6]]).expand(4, -1)
+    with torch.inference_mode():
+        expected = reference(images.clone(), fixations=[gaze], n_fixations=1)
+        actual = restored(images.clone(), fixations=[gaze], n_fixations=1)
+    assert torch.equal(expected[0], actual[0])
+    assert torch.equal(expected[2], actual[2])
+
+
+@pytest.mark.usefixtures("cpu_model_threads")
+def test_missing_geometry_explicit_override_is_planar_without_warning(
+    tmp_path: Path, small_fovi_config: DictConfig
+) -> None:
+    from fovi.arch.knn import KNNConvLayer
+
+    del small_fovi_config.saccades.field_geometry
+    OmegaConf.save(small_fovi_config, tmp_path / "recipe.yaml")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model = get_model_from_base_fn(
+            "recipe",
+            load=False,
+            device="cpu",
+            model_dirs=[tmp_path],
+            quiet=True,
+            **{"saccades.field_geometry": "planar"},
+        )
+    assert not [
+        item for item in caught if "saccades.field_geometry" in str(item.message)
+    ]
+    assert model.cfg.saccades.field_geometry == "planar"
+    assert model.retinal_transform.field_geometry == "planar"
+    assert all(
+        module.in_coords.field_geometry == "planar"
+        for module in model.modules()
+        if isinstance(module, KNNConvLayer)
+    )
+
+
+MODEL_CONFIG_ROOT = Path(__file__).resolve().parents[1]
+TRAINING_CONFIGS = sorted(
+    list((MODEL_CONFIG_ROOT / "config").glob("*.yaml"))
+    + list((MODEL_CONFIG_ROOT / "config/pretrained").glob("*.yaml"))
+    + list((MODEL_CONFIG_ROOT / "benchmarks/configs").glob("*.yaml"))
+)
+
+
+@pytest.mark.parametrize("path", TRAINING_CONFIGS, ids=lambda path: path.stem)
+def test_training_and_benchmark_recipes_select_planar(path: Path) -> None:
+    cfg, _, _ = load_config(path.stem, False, path.parent)
+    assert cfg.saccades.field_geometry == "planar"
+
+
+@pytest.mark.usefixtures("cpu_model_threads")
+@pytest.mark.parametrize("value", [None, "???", "invalid"])
+def test_explicit_invalid_geometry_does_not_select_legacy(
+    small_fovi_config: DictConfig, value: str | None
+) -> None:
+    from omegaconf.errors import MissingMandatoryValue
+
+    from fovi.models import FoviNet
+
+    small_fovi_config.saccades.field_geometry = value
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises((ValueError, MissingMandatoryValue), match="field_geometry"):
+            FoviNet(small_fovi_config, device="cpu")
+    assert not [
+        item for item in caught if "saccades.field_geometry" in str(item.message)
+    ]

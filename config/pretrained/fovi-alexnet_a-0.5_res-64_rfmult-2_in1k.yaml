@@ -1,3 +1,4 @@
+# Training template; downloaded checkpoints use their own saved geometry.
 model:
   arch: fovi_alexnet2023
   arch_spec: base_lowres
@@ -13,6 +14,7 @@ model:
   dropout_probes: 0.0
   ref_frame_mult: 2
 saccades:
+  field_geometry: planar
   color_sigma: null
   fixation_size: 256
   fixation_size_min_frac: 1.0
