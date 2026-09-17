@@ -18,33 +18,6 @@ git rev-parse HEAD
 git status --short
 ```
 
-## 2.1.0 — Unreleased
-
-Visual-field geometry is explicit: `field_geometry="planar"` (the default),
-`"spherical"`, or `"legacy"` for compatibility with earlier checkpoints.
-Planar and spherical sampling rings and cortical manifolds use consistent metrics.
-The planar manifold corrects the previous small-angle approximation, so existing
-checkpoint activations can change slightly even though weights are unchanged.
-Pretrained validation compares full ImageNet validation accuracy on the same GPU
-at each configured fixation count. Some changes exceed 0.1 percentage points;
-these measurements explicitly use corrected planar geometry.
-The [full validation report](geometry_validation.md) records every configured
-fixation count for six published checkpoints. The largest measured top-1 decrease
-is 0.738 percentage points for ResNet-18 at five fixations. Checkpoint weights are
-unchanged; accuracy and activations are not guaranteed identical across this
-geometry correction. [Activation diagnostics](geometry_compatibility.md) isolate
-the changes to cortical processing, with identical sampled retinal inputs in
-the tested cases. The explicit legacy option preserves historical geometry;
-checkpoint configs select it through `saccades.field_geometry: legacy`. Existing
-Hugging Face configs still need that metadata update as part of release rollout.
-
-Spherical sampling uses an angular FoV and rotates retinal rays for saccades.
-Calibrated pinhole and OpenCV-style fisheye projection support software fixation
-away from the source camera's optical center. Window calibration uses the angular
-span of the selected image side, including lens distortion. See
-[calibrated spherical sampling](spherical_sampling.md) for configuration,
-coordinate conventions, and scope.
-
 ## 2.0.0
 
 Version 2.0.0 separates sensing, models, and training within a single `fovi`
