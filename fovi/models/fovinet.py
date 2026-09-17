@@ -49,6 +49,9 @@ class FoviNet(nn.Module):
             with open_dict(cfg.saccades):
                 cfg.saccades.field_geometry = 'legacy'
 
+        if cfg.saccades.field_geometry == 'spherical' and cfg.saccades.mode is None:
+            raise ValueError("Spherical geometry requires a retinal transform; saccades.mode cannot be null")
+
         self.network = ARCHITECTURE_REGISTRY.get(cfg.model.arch)(cfg, device=device)
 
         self.cfg = cfg
@@ -180,7 +183,7 @@ class FoviNet(nn.Module):
 
         in_channels = self.get_in_channels()
 
-        if self.cfg.saccades.field_geometry == 'spherical':
+        if isinstance(self.retinal_transform, RetinalTransform) and self.retinal_transform.field_geometry == 'spherical':
             image_size = self.retinal_transform.camera_model.image_size
             x = torch.rand(10, in_channels, *image_size).to(self.device, self.dtype)
         elif hasattr(self.fixation_size, '__len__'):

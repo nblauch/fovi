@@ -558,7 +558,36 @@ def rescale_fov(cfg):
         Configuration object with updated FOV and CMF parameters.
     """
     if getattr(cfg.saccades, 'field_geometry', 'planar') == 'spherical':
-        # The spherical FoV is already the physical retinal angular extent.
+        from ..sensing.calibration import calibrated_cmf_a
+        from ..sensing.projection import CameraModel
+
+        if getattr(cfg.saccades, 'camera_model', None) is None:
+            raise ValueError("Spherical geometry requires camera_model calibration")
+        camera = CameraModel.from_config(cfg.saccades.camera_model)
+        if cfg.saccades.rescale_fov:
+            side = getattr(cfg.saccades, 'fov_reference_side', 'long')
+            if side not in ('long', 'short'):
+                raise ValueError("fov_reference_side must be 'long' or 'short'")
+            low = cfg.saccades.fixation_size_min_frac
+            high = cfg.saccades.fixation_size_max_frac
+            if low != high or not np.isfinite(low) or low <= 0:
+                raise ValueError("Spherical rescale_fov requires a fixed positive crop area fraction")
+            h, w = camera.image_size
+            horizontal = (w >= h) if side == 'long' else (w < h)
+            size = cfg.saccades.fixation_size
+            if hasattr(size, '__len__'):
+                if len(size) != 2:
+                    raise ValueError("fixation_size must be a scalar or (height, width)")
+                size = size[1 if horizontal else 0]
+            fraction = float(size) * np.sqrt(low) / (w if horizontal else h)
+            cfg.saccades.fov = camera.field_of_view(side, fraction)
+        if cfg.saccades.cmf_a == 'auto' or cfg.saccades.cmf_a == -1:
+            cfg.saccades.cmf_a = calibrated_cmf_a(
+                camera, float(cfg.saccades.fov), int(cfg.saccades.resize_size),
+                auto_match_cart_resources=bool(cfg.saccades.auto_match_cart_resources),
+                style=cfg.saccades.mode,
+                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
+                gaze_convention=getattr(cfg.saccades, 'gaze_convention', 'camera_xyz'))
         return cfg
     full_fov = cfg.saccades.fov
     fov = cfg.saccades.fov

@@ -16,6 +16,17 @@ def validate_field_geometry(field_geometry: str) -> None:
     if field_geometry not in ("planar", "spherical", "legacy"):
         raise ValueError(f"Unknown field_geometry {field_geometry!r}")
 
+
+def spherical_radius_limit(cmf_a: float) -> float:
+    """Maximum embeddable eccentricity in degrees, allowing for integration spacing."""
+    if not np.isfinite(cmf_a) or cmf_a <= 0:
+        raise ValueError("cmf_a must be finite and positive")
+    return root_scalar(
+        # Factor out the known zero at 180 degrees to avoid cancellation there.
+        lambda r: (cmf_a + r) * np.cos(np.deg2rad(r / 2)) - (180 / np.pi) * np.sin(np.deg2rad(r / 2)),
+        bracket=(90.0, 180.0), method="brentq",
+    ).root - 0.0001
+
 @add_to_all(__all__)
 class CorticalSensorManifold():
     r"""
@@ -59,12 +70,7 @@ class CorticalSensorManifold():
             self.max_radius = np.inf
             return
         if field_geometry == "spherical":
-            limit = root_scalar(
-                # Factoring out the known zero at 180 avoids cancellation there.
-                lambda r: (self.cmf_a + r) * np.cos(np.deg2rad(r / 2)) - (180 / np.pi) * np.sin(np.deg2rad(r / 2)),
-                bracket=(90.0, 180.0), method="brentq",
-            ).root
-            self.max_radius = min(self.max_radius, limit - spacing)
+            self.max_radius = min(self.max_radius, spherical_radius_limit(cmf_a))
         mesh = np.arange(0, self.max_radius, spacing)
         if field_geometry == "legacy":
             # Preserve the original mesh endpoints and integration arithmetic:

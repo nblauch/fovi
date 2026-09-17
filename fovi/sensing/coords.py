@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from ..utils import normalize, add_to_all
-from .manifold import validate_field_geometry
+from .manifold import spherical_radius_limit, validate_field_geometry
 from .manifold import vis_cartesian_to_cortical_cartesian_coords as vis_to_sensor_manifold
 
 __all__ = []
@@ -186,6 +186,18 @@ class SamplingCoords():
                 device=device, dtype=dtype)
             self.cartesian_pad_coords = torch.cat((
                 self.fov_padding_coords, outer_padding_coords), dim=0)
+
+            if field_geometry == 'spherical' and 'uniform' not in style:
+                extent = float(self.cartesian_pad_coords.norm(dim=1).max())
+                pad_radius = extent * fov / 2
+                limit = spherical_radius_limit(cmf_a)
+                if pad_radius > limit:
+                    raise ValueError(
+                        f"Spherical FoV {fov:g} degrees with cmf_a={cmf_a:g} "
+                        f"requires padding radius {pad_radius:g} degrees, exceeding "
+                        f"the manifold radius limit {limit:g}. This normalized padded "
+                        f"grid requires FoV <= {2 * limit / extent:g} degrees; "
+                        "padding changes when the grid is rebuilt at a different FoV.")
 
             if 'warped_cartesian' in style:
                 # The native topology of this sensor is its regular Cartesian
@@ -777,6 +789,18 @@ def _compute_isotropic_r_and_num_theta(
 
     return radius, n_angles
     
+
+@add_to_all(__all__)
+def isotropic_foveal_ring(fov: float, cmf_a: float, res: int,
+                         fov_type: str = 'circular', field_geometry: str = 'planar') -> torch.Tensor:
+    """Return the first noncentral ring as normalized (N, 2) visual coordinates."""
+    if res < 2:
+        raise ValueError("Foveal spacing requires at least two sampling rings")
+    radii, counts = _compute_isotropic_r_and_num_theta(
+        fov, cmf_a, res, fov_type=fov_type, field_geometry=field_geometry)
+    angles = torch.arange(int(counts[1])) * (2 * torch.pi / counts[1])
+    return radii[1] * torch.stack((angles.cos(), angles.sin()), dim=-1)
+
 
 @add_to_all(__all__)
 def num_sampling_coords_isotropic(

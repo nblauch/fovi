@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 
-import cv2
 import numpy as np
 import pytest
 import torch
+
 from fovi.sensing.projection import CameraModel, angular_directions, gaze_rotation
 from fovi.sensing.samplers import GridSampler
 
@@ -22,6 +22,7 @@ from fovi.sensing.samplers import GridSampler
 def test_projection_matches_opencv_and_roundtrips(
     model: str, distortion: tuple[float, ...]
 ) -> None:
+    cv2 = pytest.importorskip("cv2")
     camera = CameraModel(model, (480, 640), (300, 290, 317, 237), distortion)
     xyz = np.array([[0, 0, 1], [0.4, -0.3, 1], [-0.8, 0.5, 1]], dtype=np.float64)
     k = np.array([[300, 0, 317], [0, 290, 237], [0, 0, 1]], dtype=np.float64)
@@ -120,6 +121,15 @@ def test_resized_calibration_preserves_normalized_pixel_and_fov() -> None:
     assert camera.field_of_view("long", 0.75) == pytest.approx(
         resized.field_of_view("long", 0.75)
     )
+
+
+@pytest.mark.parametrize("model", ["pinhole", "fisheye"])
+def test_optical_axis_has_correct_projection_and_inverse_gradients(model: str) -> None:
+    camera = CameraModel(model, (80, 120), (75, 79, 59.5, 39.5))
+    rays = torch.tensor([[0.0, 0.0, 1.0]], dtype=torch.float64, requires_grad=True)
+    pixels = torch.tensor([[59.5, 39.5]], dtype=torch.float64, requires_grad=True)
+    assert torch.autograd.gradcheck(lambda x: camera.project(x)[0], rays)
+    assert torch.autograd.gradcheck(lambda x: camera.unproject(x)[0], pixels)
 
 
 @pytest.mark.parametrize(

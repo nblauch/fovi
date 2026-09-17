@@ -1,21 +1,29 @@
 from __future__ import annotations
-from collections.abc import Mapping
 
 import os
 import warnings
+from collections.abc import Callable
+from functools import lru_cache
 
+import numpy as np
 import torch
 import torch.nn as nn
-from tqdm import tqdm
-import numpy as np
 import torchvision.transforms.functional as TF
+from tqdm import tqdm
 
-from .coords import SamplingCoords, transform_sampling_grid, xy_to_colrow
-from .projection import CameraModel, angular_directions, gaze_rotation
 from ..arch.knn import KNNPoolingLayer
 from ..utils import add_to_all
+from .coords import SamplingCoords, transform_sampling_grid, xy_to_colrow
+from .projection import CameraModel, angular_directions, gaze_rotation
 
 __all__ = []
+
+
+@lru_cache(maxsize=1)
+def _compiled_calibrated_sampler() -> Callable[..., tuple[torch.Tensor, torch.Tensor]]:
+    # Cache an unbound function, never a closure owning a particular module.
+    return torch.compile(GridSampler.calibrated_forward, fullgraph=True)
+
 
 @add_to_all(__all__)
 class BaseGridSampler(nn.Module):
@@ -177,8 +185,8 @@ class GridSampler(BaseGridSampler):
         self._native_float_sample_fn = None
         self.fov_type = fov_type
         self.field_geometry = field_geometry
-        if isinstance(camera_model, Mapping):
-            camera_model = CameraModel(**camera_model)
+        if camera_model is not None:
+            camera_model = CameraModel.from_config(camera_model)
         if camera_model is not None and field_geometry != 'spherical':
             raise ValueError("Calibrated camera sampling requires spherical field_geometry")
         if field_geometry == 'spherical' and camera_model is None:
@@ -191,7 +199,8 @@ class GridSampler(BaseGridSampler):
         if coords is None:
             self.coords = SamplingCoords(
                 fov, cmf_a, resolution, device=device, style=style,
-                dtype=dtype, isotropic_plotting_type=isotropic_plotting_type,
+                dtype=torch.float32 if field_geometry == 'spherical' else dtype,
+                isotropic_plotting_type=isotropic_plotting_type,
                 fov_type=fov_type, field_geometry=field_geometry)
         else:
             self.coords = coords
@@ -199,25 +208,37 @@ class GridSampler(BaseGridSampler):
         self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
-        self.register_buffer('canonical_directions', angular_directions(self.coords.cartesian, fov), persistent=False)
-        self._calibrated_impl = self._calibrated_forward
+        self.register_buffer('canonical_directions', angular_directions(self.coords.cartesian.float(), fov), persistent=False)
         self._native_calibrated = None
-        self._compiled_calibrated = field_geometry == 'spherical' and torch.device(device).type == 'cuda' and backend != 'torch'
-        if self._compiled_calibrated:
-            # Fuse projection and compact gathering; compilation happens on first use.
-            self._calibrated_impl = torch.compile(self._calibrated_forward, fullgraph=True)
         self.register_buffer(
             'valid_mask', self.coords.valid_mask, persistent=False)
         # FoV validity is fixed by the sampling topology. Cache the Python
         # branch before any forward can be captured by a CUDA graph.
         self._all_samples_valid = bool(self.valid_mask.all().item())
+        if field_geometry == 'spherical':
+            fixation = torch.full((1, 2), 0.5, device=self.canonical_directions.device)
+            _, central_valid = self.calibrated_pixels(fixation)
+            if not bool(central_valid[:, self.valid_mask].all()):
+                warnings.warn(
+                    "Retinal FoV extends beyond camera coverage at central gaze; "
+                    "out-of-frame samples are zero-padded. Their visibility may "
+                    "change with gaze.", UserWarning, stacklevel=2)
+
+    def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> GridSampler:
+        # Restore from the original rays, not from a rounded half/bfloat16 copy.
+        rays = self.canonical_directions
+        super()._apply(fn, recurse=recurse)
+        self.canonical_directions = rays.to(device=self.canonical_directions.device)
+        return self
 
     def _requested_backend(self):
         requested = os.environ.get('FOVI_GRID_SAMPLER_BACKEND', self.backend)
-        if requested not in ('auto', 'torch', 'cuda'):
+        if requested not in ('auto', 'torch', 'cuda', 'compiled'):
             raise ValueError(
-                "FOVI_GRID_SAMPLER_BACKEND/backend must be one of 'auto', 'torch', or 'cuda'"
+                "FOVI_GRID_SAMPLER_BACKEND/backend must be one of 'auto', 'torch', 'cuda', or 'compiled'"
             )
+        if requested == 'compiled' and self.field_geometry != 'spherical':
+            raise ValueError("The compiled backend requires spherical geometry")
         return requested
 
     def _torch_direct_sample(self, img, fix_loc, fixation_size):
@@ -380,7 +401,7 @@ class GridSampler(BaseGridSampler):
         coordinates and bypasses fixation-to-rotation conversion.
         """
         camera = self.camera_model
-        if camera is None:
+        if self.field_geometry != 'spherical':
             raise ValueError("Spherical image sampling requires camera_model")
         if rotation is None:
             h, w = camera.image_size
@@ -417,7 +438,8 @@ class GridSampler(BaseGridSampler):
                   + gather(x0 + 1, y0 + 1).to(work_dtype) * wx * wy)
         return result.to(image.dtype) if image.is_floating_point() else result
 
-    def _calibrated_forward(self, image: torch.Tensor, fixation: torch.Tensor, rotation: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+    def calibrated_forward(self, image: torch.Tensor, fixation: torch.Tensor, rotation: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+        """Eager calibrated sampling returning values and source pixels; supports autograd."""
         pixels, valid = self.calibrated_pixels(fixation, rotation)
         return self._sample_calibrated(image, pixels, valid), pixels
 
@@ -445,44 +467,54 @@ class GridSampler(BaseGridSampler):
         if self.field_geometry == 'spherical':
             if fixation_size is not None:
                 raise ValueError("Spherical sampling uses fov in degrees; pixel fixation_size overrides are unsupported")
-            if self.camera_model is None:
-                raise ValueError("Spherical image sampling requires camera_model")
-            if tuple(img.shape[-2:]) != tuple(self.camera_model.image_size):
+            batch, _, height, width = img.shape
+            image_device = img.device
+            if (height, width) != tuple(self.camera_model.image_size):
                 raise ValueError("Image dimensions do not match camera calibration")
             if fix_loc is None and rotation is None:
                 raise ValueError("Provide a fixation or explicit gaze rotation")
             coordinate_dtype = torch.float64 if img.dtype == torch.float64 else torch.float32
-            fix = torch.as_tensor(fix_loc if fix_loc is not None else (0.5, 0.5), device=img.device, dtype=coordinate_dtype)
+            fix = torch.as_tensor(fix_loc if fix_loc is not None else (0.5, 0.5), device=image_device, dtype=coordinate_dtype)
             if fix.ndim == 1:
-                fix = fix.unsqueeze(0).expand(img.shape[0], -1)
-            if fix.shape != (img.shape[0], 2):
+                fix = fix.unsqueeze(0).expand(batch, -1)
+            if fix.shape != (batch, 2):
                 raise ValueError("Calibrated fixations must have shape (B, 2)")
-            if rotation is not None and rotation.shape != (img.shape[0], 3, 3):
+            if rotation is not None and rotation.shape != (batch, 3, 3):
                 raise ValueError("Gaze rotation must have shape (B, 3, 3)")
+            requested = 'torch' if direct else self._requested_backend()
+            rays = self.canonical_directions
             native = (
-                not direct and self.backend in ('auto', 'cuda') and img.is_cuda
+                requested in ('auto', 'cuda') and img.is_cuda
                 and img.dtype in (torch.uint8, torch.float16, torch.bfloat16, torch.float32, torch.float64)
-                and self.canonical_directions.dtype == torch.float32
-                and self.canonical_directions.is_contiguous()
-                and self.canonical_directions.device == img.device
-                and (rotation is None or (rotation.dtype == coordinate_dtype and rotation.device == img.device))
+                and rays.dtype == torch.float32
+                and rays.is_contiguous()
+                and rays.device == image_device
+                and (rotation is None or (rotation.dtype == coordinate_dtype and rotation.device == image_device))
                 and not (torch.is_grad_enabled() and (
-                    img.requires_grad or fix.requires_grad or self.canonical_directions.requires_grad
+                    img.requires_grad or fix.requires_grad or rays.requires_grad
                     or (rotation is not None and rotation.requires_grad)
                 ))
             )
+            if requested == 'cuda' and not native:
+                raise RuntimeError(
+                    "CUDA calibrated sampling requires supported CUDA inputs, "
+                    "matching coordinate device/dtype, and no required gradients")
             if native:
                 if self._native_calibrated is None:
                     from .calibrated_sample_cuda import CalibratedCudaSampler
                     self._native_calibrated = CalibratedCudaSampler(self.camera_model, self.mode, self.gaze_convention)
-                sampled, pixels = self._native_calibrated(img, self.canonical_directions, fix, rotation, return_coords)
+                sampled, pixels = self._native_calibrated(img, rays, fix, rotation, return_coords)
                 self._last_backend = 'cuda_calibrated'
             else:
-                implementation = self._calibrated_forward if direct else self._calibrated_impl
-                sampled, pixels = implementation(img, fix, rotation)
-                self._last_backend = 'compiled_calibrated' if self._compiled_calibrated and not direct else 'torch_calibrated'
+                compiled = requested == 'compiled' or (requested == 'auto' and img.is_cuda)
+                if compiled:
+                    sampled, pixels = _compiled_calibrated_sampler()(self, img, fix, rotation)
+                else:
+                    sampled, pixels = self.calibrated_forward(img, fix, rotation)
+                self._last_backend = 'compiled_calibrated' if compiled else 'torch_calibrated'
             sampled = self._convert_output(sampled)
-            sampled = self._mask_invalid_samples(sampled, self.valid_mask, self._all_samples_valid)
+            if not self._all_samples_valid:
+                sampled = self._mask_invalid_samples(sampled, self.valid_mask, False)
             if return_coords:
                 h, w = img.shape[-2:]
                 grid = torch.stack((2 * (pixels[..., 0] + 0.5) / w - 1, 2 * (pixels[..., 1] + 0.5) / h - 1), -1).unsqueeze(1)

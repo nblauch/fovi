@@ -195,6 +195,41 @@ def cpu_model_threads() -> Iterator[None]:
 
 
 @pytest.mark.usefixtures("cpu_model_threads")
+def test_spherical_model_shares_calibrated_crop_geometry(
+    small_fovi_config: DictConfig,
+) -> None:
+    from dataclasses import asdict
+
+    from fovi.arch.knn import KNNConvLayer
+    from fovi.models import FoviNet
+    from fovi.sensing.projection import CameraModel
+
+    camera = CameraModel("fisheye", (480, 640), (300, 300, 319.5, 239.5))
+    cfg = small_fovi_config
+    with open_dict(cfg.saccades):
+        cfg.saccades.field_geometry = "spherical"
+        cfg.saccades.camera_model = asdict(camera)
+        cfg.saccades.fov_reference_side = "long"
+        cfg.saccades.rescale_fov = 1
+        cfg.saccades.fixation_size = 320
+        cfg.saccades.fixation_size_min_frac = 1
+        cfg.saccades.fixation_size_max_frac = 1
+        cfg.saccades.cmf_a = "auto"
+    model = FoviNet(cfg, device="cpu").eval()
+    assert model.retinal_transform.fov == pytest.approx(
+        camera.field_of_view("long", 0.5)
+    )
+    assert model.retinal_transform.cmf_a == cfg.saccades.cmf_a
+    assert model.retinal_transform.camera_model == camera
+    convolutions = [m for m in model.modules() if isinstance(m, KNNConvLayer)]
+    assert convolutions
+    for layer in convolutions:
+        assert layer.in_coords.field_geometry == "spherical"
+        assert layer.in_coords.fov == pytest.approx(model.retinal_transform.fov)
+        assert layer.in_coords.cmf_a == model.retinal_transform.cmf_a
+
+
+@pytest.mark.usefixtures("cpu_model_threads")
 @pytest.mark.parametrize("via_loader", [False, True])
 def test_missing_geometry_warns_and_preserves_legacy_outputs(
     tmp_path: Path, small_fovi_config: DictConfig, via_loader: bool

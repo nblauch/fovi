@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import numpy as np
-from collections.abc import Mapping
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
@@ -79,11 +80,8 @@ class RetinalTransform(nn.Module):
         self.fov = fov
         self.fov_type = fov_type
         self.field_geometry = field_geometry
-        camera_model = kwargs.get('camera_model')
-        if isinstance(camera_model, Mapping):
-            camera_model = CameraModel(**camera_model)
-            kwargs['camera_model'] = camera_model
-        self.camera_model = camera_model
+        if field_geometry == 'spherical' and sampler not in ('grid_nn', 'grid_bilinear'):
+            raise ValueError("Spherical geometry requires grid_nn or grid_bilinear sampling")
         full_fov = self.fov
         self.fixation_size = start_res if fixation_size is None else fixation_size # this is the maximum fixation size
         self.start_res = start_res
@@ -158,6 +156,11 @@ class RetinalTransform(nn.Module):
 
         self.scatter_sizes = self.sampler.coords.get_scatter_sizes().cpu().numpy()
         self.valid_mask = self.sampler.valid_mask
+
+    @property
+    def camera_model(self) -> CameraModel | None:
+        """Calibration owned by the spherical image sampler."""
+        return self.sampler.camera_model if self.field_geometry == 'spherical' else None
 
     @torch.autocast(device_type='cuda', enabled=False)
     def forward(self, x, fix_loc, fixation_size=None, **kwargs):

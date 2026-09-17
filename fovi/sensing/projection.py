@@ -7,6 +7,7 @@ coordinates X right, Y down, Z forward. External adapters convert frames once.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TypedDict
 
@@ -45,6 +46,15 @@ class CameraModel:
     distortion: tuple[float, ...] = ()
     image_circle: tuple[float, float, float] | None = None
     max_angle_deg: float = 90.0
+
+    @classmethod
+    def from_config(cls, camera: CameraModel | CameraCalibration) -> CameraModel:
+        """Normalize serialized calibration once at an API boundary."""
+        if isinstance(camera, cls):
+            return camera
+        if not isinstance(camera, Mapping):
+            raise TypeError("camera_model must be a CameraModel or calibration mapping")
+        return cls(**camera)
 
     def __post_init__(self) -> None:
         if self.model not in ("pinhole", "fisheye"):
@@ -170,8 +180,8 @@ class CameraModel:
 
     def project(self, directions: Tensor) -> tuple[Tensor, Tensor]:
         """Project (..., 3) directions to (..., 2) pixels and (...,) validity."""
-        x, y, z = directions.unbind(-1)
-        lateral = torch.sqrt(x * x + y * y)
+        z = directions[..., 2]
+        lateral = torch.linalg.vector_norm(directions[..., :2], dim=-1)
         theta = torch.atan2(lateral, z)
         eps = torch.finfo(directions.dtype).eps
         if self.model == "pinhole":
