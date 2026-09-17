@@ -1,9 +1,10 @@
-"""Compare calibrated dynamic gaze against canonical-grid image translation."""
+"""Compare native/compiled calibrated gaze and canonical-grid image translation."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -11,6 +12,7 @@ from functools import partial
 from pathlib import Path
 
 import torch
+
 from fovi.sensing.projection import CameraModel
 from fovi.sensing.samplers import GridSampler
 
@@ -53,17 +55,45 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--batches", type=int, nargs="+", default=[1, 32, 256])
     parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--dtypes",
+        nargs="+",
+        choices=["uint8", "float16", "bfloat16", "float32", "float64"],
+        default=["uint8"],
+    )
+    parser.add_argument(
+        "--lenses",
+        nargs="+",
+        choices=["pinhole", "fisheye"],
+        default=["pinhole", "fisheye"],
+    )
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        choices=["nearest", "bilinear"],
+        default=["nearest", "bilinear"],
+    )
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--channels", type=int, default=3)
+    parser.add_argument(
+        "--convention", choices=["camera_xyz", "pan_tilt"], default="camera_xyz"
+    )
     args = parser.parse_args()
     torch.cuda.set_device(args.device)
     torch.manual_seed(2026)
     results = []
-    for model, distortion in [
+    lenses = [
+        ("pinhole", ()),
         ("pinhole", (-0.08, 0.01, 0.001, -0.001, 0.0)),
+        ("fisheye", ()),
         ("fisheye", (0.02, -0.003, 0.0002, 0.0)),
-    ]:
+    ]
+    for model, distortion in lenses:
+        if model not in args.lenses:
+            continue
         camera = CameraModel(model, (480, 640), (300, 300, 319.5, 239.5), distortion)
-        for mode in ("nearest", "bilinear"):
+        for mode in args.modes:
             calibrated = GridSampler(
                 60,
                 1.875,
@@ -72,6 +102,18 @@ def main() -> None:
                 mode=mode,
                 field_geometry="spherical",
                 camera_model=camera,
+                gaze_convention=args.convention,
+            )
+            compiled = GridSampler(
+                60,
+                1.875,
+                40,
+                device=args.device,
+                mode=mode,
+                field_geometry="spherical",
+                camera_model=camera,
+                backend="compiled",
+                gaze_convention=args.convention,
             )
             # Identical nodes isolate projection/gaze overhead from sample-count differences.
             canonical = GridSampler(
@@ -91,10 +133,24 @@ def main() -> None:
                 canonical.sampling_grid
             )
             canonical.out_sampling_grid = canonical.sampling_grid
-            for batch in args.batches:
+            for dtype_name, batch in (
+                (d, b) for d in args.dtypes for b in args.batches
+            ):
+                if batch == args.batches[0]:
+                    # Each lens/mode/dtype is a separate deployment configuration.
+                    # Do not exhaust Dynamo's per-function specialization limit
+                    # by benchmarking all of them in one process.
+                    torch.compiler.reset()
+                dtype = getattr(torch, dtype_name)
                 image = torch.randint(
-                    0, 256, (batch, 3, 480, 640), dtype=torch.uint8, device=args.device
+                    0,
+                    256,
+                    (batch, args.channels, 480, 640),
+                    dtype=torch.uint8,
+                    device=args.device,
                 )
+                if dtype != torch.uint8:
+                    image = image.to(dtype) / 256
                 # Avoid exact nearest-neighbor ties when comparing fused arithmetic.
                 for gaze_name, center in [
                     ("center", (0.5013, 0.5017)),
@@ -109,38 +165,76 @@ def main() -> None:
                     started = time.perf_counter()
                     expected = calibrated(image, fixation, direct=True)
                     actual = calibrated(image, fixation)
+                    previous = compiled(image, fixation)
                     torch.cuda.synchronize()
+                    tolerance = {
+                        torch.uint8: 0.02,
+                        torch.float16: 0.001,
+                        torch.bfloat16: 0.008,
+                        torch.float32: 5e-5,
+                        torch.float64: 1e-10,
+                    }[dtype]
                     torch.testing.assert_close(
-                        actual.float(), expected.float(), atol=0.02, rtol=1e-4
+                        actual,
+                        expected,
+                        atol=0 if mode == "nearest" else tolerance,
+                        rtol=1e-4 if mode == "bilinear" else 0,
+                        msg=f"Native parity: {model}, distortion={distortion}, {mode}, {batch=}, {dtype_name}, {gaze_name}",
                     )
-                    first_call_s = time.perf_counter() - started
-                    dynamic_ms = measure(
-                        partial(calibrated, image, fixation), args.iterations
-                    )
-                    canonical_ms = measure(
-                        partial(canonical, image, fixation, size), args.iterations
-                    )
-                    calibrated_graph_ms = measure_graph(
-                        partial(calibrated, image, fixation), args.iterations
-                    )
-                    canonical_graph_ms = measure_graph(
-                        partial(canonical, image, fixation, size), args.iterations
-                    )
+                    initialization_s = time.perf_counter() - started
+                    operations = {
+                        "native": partial(calibrated, image, fixation),
+                        "compiled": partial(compiled, image, fixation),
+                        "canonical": partial(canonical, image, fixation, size),
+                    }
+                    timings = {name: [] for name in operations}
+                    graphs = {name: [] for name in operations}
+                    # Alternate order to limit systematic clock/temperature bias.
+                    for repeat in range(args.repeats):
+                        names = list(operations)
+                        if repeat % 2:
+                            names.reverse()
+                        for name in names:
+                            timings[name].append(
+                                measure(operations[name], args.iterations)
+                            )
+                            graphs[name].append(
+                                measure_graph(operations[name], args.iterations)
+                            )
                     results.append(
                         {
                             "camera": asdict(camera),
                             "mode": mode,
                             "batch": batch,
+                            "dtype": dtype_name,
+                            "channels": args.channels,
+                            "convention": args.convention,
+                            "max_abs_error": {
+                                "native": (actual.double() - expected.double())
+                                .abs()
+                                .max()
+                                .item(),
+                                "compiled": (previous.double() - expected.double())
+                                .abs()
+                                .max()
+                                .item(),
+                            },
                             "gaze": gaze_name,
                             "samples": len(calibrated.coords),
-                            "first_call_seconds": first_call_s,
-                            "calibrated_ms": dynamic_ms,
-                            "canonical_ms": canonical_ms,
-                            "ratio": dynamic_ms / canonical_ms,
-                            "calibrated_graph_ms": calibrated_graph_ms,
-                            "canonical_graph_ms": canonical_graph_ms,
+                            "initialization_and_parity_seconds": initialization_s,
+                            "ms": {
+                                name: statistics.median(values)
+                                for name, values in timings.items()
+                            },
+                            "graph_ms": {
+                                name: statistics.median(values)
+                                for name, values in graphs.items()
+                            },
+                            "measurements_ms": timings,
+                            "graph_measurements_ms": graphs,
                             "canonical_backend": canonical.last_backend,
                             "calibrated_backend": calibrated.last_backend,
+                            "compiled_backend": compiled.last_backend,
                         }
                     )
                     print(json.dumps(results[-1]), flush=True)
@@ -156,6 +250,15 @@ def main() -> None:
         )
         + "\n"
     )
+    regressions = [
+        row
+        for row in results
+        if any(row[key]["native"] > row[key]["compiled"] for key in ("ms", "graph_ms"))
+    ]
+    if regressions:
+        raise RuntimeError(
+            f"Native sampling was slower in {len(regressions)} cases; see {args.output}"
+        )
 
 
 if __name__ == "__main__":

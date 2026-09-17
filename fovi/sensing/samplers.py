@@ -142,9 +142,13 @@ class GridSampler(BaseGridSampler):
             mode (str, optional): Sampling mode ('nearest' or 'bilinear'). Defaults to 'nearest'.
             style (str, optional): Sampling style. Defaults to 'isotropic'.
             coords (SamplingCoords, optional): Pre-computed sampling coordinates. Defaults to None.
-            backend (str, optional): Sampling backend: ``auto``, ``torch``, or ``cuda``.
+            backend (str, optional): Sampling backend: ``auto``, ``torch``, ``cuda``,
+                or ``compiled`` (spherical geometry only).
                 For floating inputs, ``torch`` selects ``torch.grid_sample``; for uint8 it
                 selects direct indexing. ``auto`` prefers eligible native CUDA kernels.
+                Spherical ``torch`` uses eager calibrated projection/gather;
+                ``compiled`` selects the same operation through ``torch.compile``.
+                Inputs requiring gradients retain the Torch implementation.
             output_dtype (torch.dtype, optional): Optional dtype for the compact output.
                 This never rescales values. Nearest sampling otherwise preserves dtype;
                 bilinear integer sampling naturally produces float32.
@@ -159,8 +163,10 @@ class GridSampler(BaseGridSampler):
         self.style = style
         if mode not in ('nearest', 'bilinear'):
             raise ValueError(f"Unsupported sampling mode {mode!r}")
-        if backend not in ('auto', 'torch', 'cuda'):
-            raise ValueError("backend must be one of 'auto', 'torch', or 'cuda'")
+        if backend not in ('auto', 'torch', 'cuda', 'compiled'):
+            raise ValueError("backend must be one of 'auto', 'torch', 'cuda', or 'compiled'")
+        if backend == 'compiled' and field_geometry != 'spherical':
+            raise ValueError("The compiled backend requires spherical geometry")
         if mode == 'bilinear' and output_dtype is not None and not output_dtype.is_floating_point:
             raise ValueError("bilinear sampling requires a floating output dtype")
         self.backend = backend
@@ -195,6 +201,7 @@ class GridSampler(BaseGridSampler):
         self.polar_radius = self.coords.polar[:, 0]
         self.register_buffer('canonical_directions', angular_directions(self.coords.cartesian, fov), persistent=False)
         self._calibrated_impl = self._calibrated_forward
+        self._native_calibrated = None
         self._compiled_calibrated = field_geometry == 'spherical' and torch.device(device).type == 'cuda' and backend != 'torch'
         if self._compiled_calibrated:
             # Fuse projection and compact gathering; compilation happens on first use.
@@ -452,11 +459,30 @@ class GridSampler(BaseGridSampler):
                 raise ValueError("Calibrated fixations must have shape (B, 2)")
             if rotation is not None and rotation.shape != (img.shape[0], 3, 3):
                 raise ValueError("Gaze rotation must have shape (B, 3, 3)")
-            implementation = self._calibrated_forward if direct else self._calibrated_impl
-            sampled, pixels = implementation(img, fix, rotation)
+            native = (
+                not direct and self.backend in ('auto', 'cuda') and img.is_cuda
+                and img.dtype in (torch.uint8, torch.float16, torch.bfloat16, torch.float32, torch.float64)
+                and self.canonical_directions.dtype == torch.float32
+                and self.canonical_directions.is_contiguous()
+                and self.canonical_directions.device == img.device
+                and (rotation is None or (rotation.dtype == coordinate_dtype and rotation.device == img.device))
+                and not (torch.is_grad_enabled() and (
+                    img.requires_grad or fix.requires_grad or self.canonical_directions.requires_grad
+                    or (rotation is not None and rotation.requires_grad)
+                ))
+            )
+            if native:
+                if self._native_calibrated is None:
+                    from .calibrated_sample_cuda import CalibratedCudaSampler
+                    self._native_calibrated = CalibratedCudaSampler(self.camera_model, self.mode, self.gaze_convention)
+                sampled, pixels = self._native_calibrated(img, self.canonical_directions, fix, rotation, return_coords)
+                self._last_backend = 'cuda_calibrated'
+            else:
+                implementation = self._calibrated_forward if direct else self._calibrated_impl
+                sampled, pixels = implementation(img, fix, rotation)
+                self._last_backend = 'compiled_calibrated' if self._compiled_calibrated and not direct else 'torch_calibrated'
             sampled = self._convert_output(sampled)
             sampled = self._mask_invalid_samples(sampled, self.valid_mask, self._all_samples_valid)
-            self._last_backend = 'compiled_calibrated' if self._compiled_calibrated and not direct else 'torch_calibrated'
             if return_coords:
                 h, w = img.shape[-2:]
                 grid = torch.stack((2 * (pixels[..., 0] + 0.5) / w - 1, 2 * (pixels[..., 1] + 0.5) / h - 1), -1).unsqueeze(1)
