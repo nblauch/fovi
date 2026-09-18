@@ -13,6 +13,7 @@ import cupy as cp
 import numpy as np
 
 from .projection import CameraModel
+from .validation import validate_gaze_convention, validate_sampling_mode
 
 _SOURCE = Path(__file__).with_name("calibrated_sample.cu").read_text()
 _IMAGE_TYPES = {
@@ -46,10 +47,8 @@ class CalibratedCudaSampler:
     """Specialize a fixed lens and interpolation mode; retain dynamic image/gaze storage."""
 
     def __init__(self, camera: CameraModel, mode: str, convention: str) -> None:
-        if mode not in ("nearest", "bilinear"):
-            raise ValueError(f"Unknown sampling mode {mode!r}")
-        if convention not in ("camera_xyz", "pan_tilt"):
-            raise ValueError(f"Unknown gaze convention {convention!r}")
+        validate_sampling_mode(mode)
+        validate_gaze_convention(convention)
         self.camera = camera
         self.mode = mode
         self.options = (

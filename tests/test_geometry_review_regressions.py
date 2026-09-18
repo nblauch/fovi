@@ -14,9 +14,14 @@ from omegaconf import OmegaConf
 from fovi.arch.knn import get_in_out_coords
 from fovi.models.architectures import rescale_fov
 from fovi.sensing.coords import SamplingCoords
-from fovi.sensing.projection import CameraModel
+from fovi.sensing.projection import CameraModel, gaze_rotation
 from fovi.sensing.retina import RetinalTransform
-from fovi.sensing.samplers import GridSampler
+from fovi.sensing.samplers import (
+    BaseGridSampler,
+    GaussianKNNGridSampler,
+    GridSampler,
+    KNNGridSampler,
+)
 
 
 def test_yaml_camera_compiles_with_fullgraph() -> None:
@@ -302,3 +307,54 @@ def test_camera_sequence_normalization_preserves_projection(kind: str) -> None:
     rays = torch.tensor([[0.1, -0.2, 1.0], [0.0, 0.0, 1.0]])
     for value, expected in zip(actual.project(rays), camera.project(rays), strict=True):
         torch.testing.assert_close(value, expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("gaussian", [False, True])
+def test_pooling_dtype_mutations_preserve_values_and_validation(gaussian: bool) -> None:
+    cls = GaussianKNNGridSampler if gaussian else KNNGridSampler
+    kwargs = {"gauss_sigma": 1.0} if gaussian else {}
+    sampler = cls(16, 0.5, 8, device="cpu", backend="torch", **kwargs)
+    image = torch.rand(1, 3, 32, 32)
+    args = (image, [0.4, 0.6], 24)
+    reference = sampler(*args)
+    for invalid, error in ((torch.uint8, ValueError), ("float32", TypeError)):
+        with pytest.raises(error, match="output dtype|output_dtype"):
+            sampler.output_dtype = invalid
+        assert sampler.output_dtype is None
+        torch.testing.assert_close(sampler(*args), reference, rtol=0, atol=0)
+        with pytest.raises(error, match="output dtype|output_dtype"):
+            cls(16, 0.5, 8, device="cpu", output_dtype=invalid, **kwargs)
+    sampler.output_dtype = torch.float64
+    torch.testing.assert_close(sampler(*args), reference.double(), rtol=0, atol=0)
+    stream = io.BytesIO()
+    torch.save(sampler, stream)
+    stream.seek(0)
+    for restored in (copy.deepcopy(sampler), torch.load(stream, weights_only=False)):
+        assert restored.output_dtype == torch.float64
+        with pytest.raises(ValueError, match="floating output dtype"):
+            restored.output_dtype = torch.uint8
+    sampler.output_dtype = None
+    torch.testing.assert_close(sampler(*args), reference, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("pooling", [False, True])
+def test_missing_serialized_output_dtype_uses_attribute_error(pooling: bool) -> None:
+    cls = KNNGridSampler if pooling else GridSampler
+    sampler = cls(16, 0.5, 8, device="cpu")
+    del sampler.__dict__["output_dtype"]
+    assert not hasattr(sampler, "output_dtype")
+    assert getattr(sampler, "output_dtype", None) is None
+    with pytest.raises(AttributeError, match="output_dtype"):
+        _ = sampler.output_dtype
+
+
+def test_rotation_rejects_unknown_gaze_convention() -> None:
+    with pytest.raises(ValueError, match="Unknown gaze convention.*bogus"):
+        gaze_rotation(torch.tensor([[0.0, 0.0, 1.0]]), "bogus")
+
+
+def test_base_sampler_output_dtype_remains_assignable() -> None:
+    sampler = BaseGridSampler()
+    for dtype in (torch.uint8, torch.float32, None):
+        sampler.output_dtype = dtype
+        assert sampler.output_dtype == dtype

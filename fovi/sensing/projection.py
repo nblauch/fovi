@@ -16,11 +16,7 @@ from typing import TypedDict
 import torch
 from torch import Tensor
 
-
-def validate_gaze_convention(convention: str) -> None:
-    """Reject unsupported gaze conventions at configuration boundaries."""
-    if convention not in ("camera_xyz", "pan_tilt"):
-        raise ValueError(f"Unknown gaze convention {convention!r}")
+from .validation import validate_gaze_convention
 
 
 def _calibration_float(value: Real | Tensor, name: str) -> float:
@@ -337,6 +333,7 @@ def gaze_rotation(directions: Tensor, convention: str = "camera_xyz") -> Tensor:
     ``camera_xyz`` matches Rx(roll) Ry(pitch) in a Y-down/Z-forward camera.
     ``pan_tilt`` matches pan-then-tilt, Ry(pan) Rx(tilt).
     """
+    validate_gaze_convention(convention)
     x, y, z = directions.unbind(-1)
     if convention == "camera_xyz":
         pitch = torch.atan2(x, torch.sqrt(y * y + z * z))
@@ -344,8 +341,6 @@ def gaze_rotation(directions: Tensor, convention: str = "camera_xyz") -> Tensor:
     elif convention == "pan_tilt":
         pitch = torch.atan2(x, z)
         roll = torch.atan2(-y, torch.sqrt(x * x + z * z))
-    else:
-        raise ValueError(f"Unknown gaze convention {convention!r}")
     cp, sp, cr, sr = (
         torch.cos(pitch),
         torch.sin(pitch),

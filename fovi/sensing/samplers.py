@@ -21,6 +21,7 @@ from .projection import (
     gaze_rotation,
     validate_gaze_convention,
 )
+from .validation import validate_output_dtype, validate_sampling_mode
 
 __all__ = []
 
@@ -38,6 +39,18 @@ class BaseGridSampler(nn.Module):
 
     Note: objects of the BaseGridSampler family should not be used directly; it is much more convenient to use RetinalTransform, which stores a BaseGridSampler child, due to its handling of fixation parameters. 
     """
+
+    @property
+    def output_dtype(self) -> torch.dtype | None:
+        try:
+            return self.__dict__['output_dtype']
+        except KeyError:
+            raise AttributeError('output_dtype') from None
+
+    @output_dtype.setter
+    def output_dtype(self, output_dtype: torch.dtype | None) -> None:
+        validate_output_dtype(output_dtype)
+        self.__dict__['output_dtype'] = output_dtype
 
     def _transform_fix_grid(self, img_shape, fix_loc, fixation_size):
         """
@@ -245,22 +258,13 @@ class GridSampler(BaseGridSampler):
 
     @staticmethod
     def _validate_mode_output_dtype(mode: str, output_dtype: torch.dtype | None) -> None:
-        if mode not in ('nearest', 'bilinear'):
-            raise ValueError(f"Unsupported sampling mode {mode!r}")
-        if output_dtype is not None and not isinstance(output_dtype, torch.dtype):
-            raise TypeError("output_dtype must be a torch.dtype or None")
-        if mode == 'bilinear' and output_dtype is not None and not output_dtype.is_floating_point:
-            raise ValueError("bilinear sampling requires a floating output dtype")
+        validate_sampling_mode(mode)
+        validate_output_dtype(output_dtype, 'bilinear sampling' if mode == 'bilinear' else None)
 
-    @property
-    def output_dtype(self) -> torch.dtype | None:
-        return self.__dict__['output_dtype']
-
-    @output_dtype.setter
+    @BaseGridSampler.output_dtype.setter
     def output_dtype(self, output_dtype: torch.dtype | None) -> None:
         self._validate_mode_output_dtype(self.mode, output_dtype)
         self.__dict__['output_dtype'] = output_dtype
-        self._native_calibrated = None
 
     @property
     def gaze_convention(self) -> str:
@@ -642,6 +646,11 @@ class KNNGridSampler(BaseGridSampler):
     - coords: akin to retinal ganglion cells: there are less of them, and they integrate over a local pool of photoreceptors (highres_coords)
     """
     
+    @BaseGridSampler.output_dtype.setter
+    def output_dtype(self, output_dtype: torch.dtype | None) -> None:
+        validate_output_dtype(output_dtype, 'KNN pooling')
+        self.__dict__['output_dtype'] = output_dtype
+
     def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1,
                  fixation_size=3000, k=None, style='isotropic', sample_cortex=True,
                  dtype=torch.float, device='cuda', isotropic_plotting_type='v1like',
@@ -663,6 +672,7 @@ class KNNGridSampler(BaseGridSampler):
             device (str, optional): Device to run on. Defaults to 'cuda'.
         """
         super().__init__()
+        self.output_dtype = output_dtype
         self.res_mult = float(res_mult)
         self.cmf_a_mult = float(cmf_a_mult)
         self.highres_resolution = int(round(self.res_mult * int(resolution)))
@@ -683,8 +693,6 @@ class KNNGridSampler(BaseGridSampler):
 
         self.pooler = KNNPoolingLayer(k, self.highres_coords, self.coords, mode='avg', device=device, sample_cortex=sample_cortex)
 
-        if output_dtype is not None and not output_dtype.is_floating_point:
-            raise ValueError("KNN pooling requires a floating output dtype")
         self.input_sampler = GridSampler(
             fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
             device=device, dtype=dtype,
@@ -692,7 +700,6 @@ class KNNGridSampler(BaseGridSampler):
             isotropic_plotting_type=isotropic_plotting_type, backend=backend,
             fov_type=fov_type, field_geometry=field_geometry)
         self.backend = backend
-        self.output_dtype = output_dtype
         self._last_backend = None
 
         self.sampling_grid = self._prep_grid_for_grid_sample(self.highres_coords.cartesian)

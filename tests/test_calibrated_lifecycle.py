@@ -131,6 +131,21 @@ def test_warm_sampler_output_dtype_changes_and_rejections(backend: str) -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@pytest.mark.parametrize(
+    "mode,convention,field",
+    [("bogus", "camera_xyz", "mode"), ("nearest", "bogus", "convention")],
+)
+def test_native_sampler_validates_configuration(
+    mode: str, convention: str, field: str
+) -> None:
+    from fovi.sensing.calibrated_sample_cuda import CalibratedCudaSampler
+
+    camera = CameraModel("fisheye", (80, 120), (75, 75, 59.5, 39.5))
+    with pytest.raises(ValueError, match=field):
+        CalibratedCudaSampler(camera, mode, convention)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_cuda_selection_gradients_and_mixed_precision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
