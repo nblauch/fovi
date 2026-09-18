@@ -8,12 +8,19 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
 from numbers import Real
 from typing import TypedDict
 
 import torch
 from torch import Tensor
+
+
+def validate_gaze_convention(convention: str) -> None:
+    """Reject unsupported gaze conventions at configuration boundaries."""
+    if convention not in ("camera_xyz", "pan_tilt"):
+        raise ValueError(f"Unknown gaze convention {convention!r}")
 
 
 def _calibration_float(value: Real | Tensor, name: str) -> float:
@@ -72,12 +79,26 @@ class CameraModel:
         # YAML/OmegaConf and direct dataclass construction share this boundary.
         for name in ("image_size", "intrinsics", "distortion", "image_circle"):
             values = getattr(self, name)
-            if values is not None:
-                values = tuple(_calibration_float(v, name) for v in values)
-                convert = int if name == "image_size" else float
-                if name == "image_size" and any(int(v) != v for v in values):
+            if name == "image_circle" and values is None:
+                continue
+            if isinstance(values, (str, bytes, Mapping, AbstractSet)):
+                raise TypeError(f"{name} must be a sequence of real numeric scalars")
+            try:
+                iterator = iter(values)
+            except TypeError as exc:
+                raise TypeError(
+                    f"{name} must be a sequence of real numeric scalars"
+                ) from exc
+            values = tuple(_calibration_float(v, name) for v in iterator)
+            if name == "image_size":
+                if not all(math.isfinite(v) for v in values):
+                    raise ValueError(
+                        "image_size must contain finite integer height and width"
+                    )
+                if any(int(v) != v for v in values):
                     raise ValueError("image_size must contain integer height and width")
-                object.__setattr__(self, name, tuple(convert(v) for v in values))
+                values = tuple(int(v) for v in values)
+            object.__setattr__(self, name, values)
         object.__setattr__(
             self,
             "max_angle_deg",

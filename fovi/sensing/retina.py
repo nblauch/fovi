@@ -7,7 +7,7 @@ import torchvision.transforms.functional as TF
 from scipy.optimize import minimize_scalar
 
 from .coords import find_desired_res
-from .projection import CameraCalibration, CameraModel
+from .projection import CameraCalibration, CameraModel, validate_gaze_convention
 from .samplers import GaussianKNNGridSampler, KNNGridSampler, GridSampler
 from ..utils import add_to_all
 from ..utils.fastaugs import transforms as fastT
@@ -81,6 +81,7 @@ class RetinalTransform(nn.Module):
             **kwargs: Additional arguments passed to warping function.
         """
         super().__init__()
+        validate_gaze_convention(gaze_convention)
         self.sigma = sigma
         self.cmf_a = cmf_a
         self.fov = fov

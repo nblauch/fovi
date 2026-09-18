@@ -19,6 +19,7 @@ from .projection import (
     CameraModel,
     angular_directions,
     gaze_rotation,
+    validate_gaze_convention,
 )
 
 __all__ = []
@@ -172,7 +173,9 @@ class GridSampler(BaseGridSampler):
         self.resolution = resolution
         self.device = device
         self.dtype = dtype
-        self.output_dtype = output_dtype
+        # Retain the serialized attribute name used by existing module pickles.
+        # The mode setter validates this pair before construction proceeds.
+        self.__dict__['output_dtype'] = output_dtype
         self.mode = mode
         self.style = style
         if backend not in ('auto', 'torch', 'cuda', 'compiled'):
@@ -236,11 +239,27 @@ class GridSampler(BaseGridSampler):
 
     @mode.setter
     def mode(self, mode: str) -> None:
+        self._validate_mode_output_dtype(mode, self.output_dtype)
+        self._mode = mode
+        self._native_calibrated = None
+
+    @staticmethod
+    def _validate_mode_output_dtype(mode: str, output_dtype: torch.dtype | None) -> None:
         if mode not in ('nearest', 'bilinear'):
             raise ValueError(f"Unsupported sampling mode {mode!r}")
-        if mode == 'bilinear' and self.output_dtype is not None and not self.output_dtype.is_floating_point:
+        if output_dtype is not None and not isinstance(output_dtype, torch.dtype):
+            raise TypeError("output_dtype must be a torch.dtype or None")
+        if mode == 'bilinear' and output_dtype is not None and not output_dtype.is_floating_point:
             raise ValueError("bilinear sampling requires a floating output dtype")
-        self._mode = mode
+
+    @property
+    def output_dtype(self) -> torch.dtype | None:
+        return self.__dict__['output_dtype']
+
+    @output_dtype.setter
+    def output_dtype(self, output_dtype: torch.dtype | None) -> None:
+        self._validate_mode_output_dtype(self.mode, output_dtype)
+        self.__dict__['output_dtype'] = output_dtype
         self._native_calibrated = None
 
     @property
@@ -249,8 +268,7 @@ class GridSampler(BaseGridSampler):
 
     @gaze_convention.setter
     def gaze_convention(self, convention: str) -> None:
-        if convention not in ('camera_xyz', 'pan_tilt'):
-            raise ValueError(f"Unknown gaze convention {convention!r}")
+        validate_gaze_convention(convention)
         self._gaze_convention = convention
         self._native_calibrated = None
 
@@ -419,8 +437,9 @@ class GridSampler(BaseGridSampler):
         return self._last_backend
 
     def _convert_output(self, sampled):
-        if self.output_dtype is not None and sampled.dtype != self.output_dtype:
-            sampled = sampled.to(self.output_dtype)
+        output_dtype = self.output_dtype
+        if output_dtype is not None and sampled.dtype != output_dtype:
+            sampled = sampled.to(output_dtype)
         return sampled
 
     def calibrated_pixels(self, fix_loc: torch.Tensor, rotation: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:

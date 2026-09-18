@@ -107,6 +107,30 @@ def test_native_sampler_reconfiguration_matches_eager(setting: str) -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@pytest.mark.parametrize("backend", ["compiled", "cuda"])
+def test_warm_sampler_output_dtype_changes_and_rejections(backend: str) -> None:
+    sampler = make_sampler("cuda", backend)
+    image = torch.rand(1, 3, 80, 120, device="cuda")
+    fixation = [0.4, 0.65]
+    before = sampler(image, fixation)
+    for field, value in (
+        ("output_dtype", torch.uint8),
+        ("mode", "bogus"),
+        ("gaze_convention", "bogus"),
+        ("camera_model", None),
+    ):
+        with pytest.raises(ValueError):
+            setattr(sampler, field, value)
+        torch.testing.assert_close(sampler(image, fixation), before, rtol=0, atol=0)
+    sampler.output_dtype = torch.float64
+    torch.testing.assert_close(
+        sampler(image, fixation), before.double(), rtol=0, atol=0
+    )
+    sampler.output_dtype = None
+    torch.testing.assert_close(sampler(image, fixation), before, rtol=0, atol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_cuda_selection_gradients_and_mixed_precision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

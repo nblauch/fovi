@@ -241,7 +241,14 @@ class SamplingCoords():
         """Generate additional cartesian coordinates for padding around the sampling grid.
         
         Args:
-            padding_distance (float): Distance to extend beyond the current sampling area.
+            padding_distance (float): Padding extent in normalized coordinates.
+                For spherical radial grids, measured from the real retinal rim,
+                retaining at least one complete neighboring ring. Planar/legacy
+                radial grids retain the historical interval starting at the first
+                outer ring, which can overshoot the requested rim margin by one
+                ring. Preserve that behavior for checkpoint KNN compatibility.
+                Warped Cartesian and log-polar layouts pad in their own grid
+                coordinates using a whole number of grid intervals.
             device (str, optional): Device to place the coordinates on. Defaults to None.
             dtype (torch.dtype, optional): Data type for the coordinates. Defaults to None.
             

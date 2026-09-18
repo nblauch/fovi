@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import io
 from dataclasses import asdict
 
 import numpy as np
@@ -166,3 +168,137 @@ def test_camera_accepts_numpy_and_tensor_real_scalars() -> None:
     assert camera == CameraModel(
         "pinhole", (80, 120), (75, 75, 59.5, 39.5), max_angle_deg=80
     )
+
+
+@pytest.mark.parametrize("geometry", ["planar", "legacy", "spherical"])
+def test_output_dtype_and_mode_changes_are_atomic(geometry: str) -> None:
+    camera = CameraModel("fisheye", (32, 32), (30, 30, 15.5, 15.5))
+    sampler = GridSampler(
+        16,
+        0.5,
+        8,
+        device="cpu",
+        mode="bilinear",
+        backend="torch",
+        field_geometry=geometry,
+        camera_model=camera if geometry == "spherical" else None,
+    )
+    image = torch.arange(32, dtype=torch.uint8).view(1, 1, 1, 32).expand(1, 1, 32, 32)
+    args = (
+        (image, [0.43, 0.57]) if geometry == "spherical" else (image, [0.43, 0.57], 24)
+    )
+    before = sampler(*args)
+    assert (before != before.round()).any()
+    with pytest.raises(ValueError, match="bilinear.*floating output dtype"):
+        sampler.output_dtype = torch.uint8
+    assert sampler.output_dtype is None
+    torch.testing.assert_close(sampler(*args), before, rtol=0, atol=0)
+    sampler.output_dtype = torch.float64
+    torch.testing.assert_close(sampler(*args), before.double(), rtol=0, atol=0)
+    sampler.output_dtype = None
+    sampler.mode = "nearest"
+    sampler.output_dtype = torch.uint8
+    nearest = sampler(*args)
+    with pytest.raises(ValueError, match="bilinear.*floating output dtype"):
+        sampler.mode = "bilinear"
+    assert sampler.mode == "nearest"
+    torch.testing.assert_close(sampler(*args), nearest, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    "sampler", ["grid_nn", "grid_bilinear", "pooling", "gaussian_pooling"]
+)
+@pytest.mark.parametrize("geometry", ["planar", "legacy"])
+def test_all_retinal_samplers_validate_gaze_convention(
+    sampler: str, geometry: str
+) -> None:
+    with pytest.raises(ValueError, match="Unknown gaze convention.*bogus"):
+        RetinalTransform(
+            8,
+            device="cpu",
+            sampler=sampler,
+            field_geometry=geometry,
+            gaze_convention="bogus",
+            auto_match_cart_resources=False,
+            **({"gauss_sigma": 1.0} if sampler == "gaussian_pooling" else {}),
+        )
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("axis", [0, 1])
+def test_image_dimensions_reject_nonfinite_values(value: float, axis: int) -> None:
+    size = [80.0, 120.0]
+    size[axis] = value
+    with pytest.raises(ValueError, match="image_size.*finite"):
+        CameraModel("pinhole", size, (75, 75, 59.5, 39.5))
+
+
+@pytest.mark.parametrize(
+    "field", ["image_size", "intrinsics", "distortion", "image_circle"]
+)
+@pytest.mark.parametrize("kind", ["float", "tensor", "numpy", "none"])
+def test_calibration_sequence_errors_name_field(field: str, kind: str) -> None:
+    config = asdict(CameraModel("pinhole", (80, 120), (75, 75, 59.5, 39.5)))
+    config[field] = {
+        "float": 0.0,
+        "tensor": torch.tensor(0.0),
+        "numpy": np.array(0.0),
+        "none": None,
+    }[kind]
+    if field == "image_circle" and kind == "none":
+        assert CameraModel.from_config(config).image_circle is None
+        return
+    with pytest.raises(TypeError, match=field):
+        CameraModel.from_config(config)
+
+
+def test_sampler_output_dtype_serialization_preserves_mutation_validation() -> None:
+    sampler = GridSampler(
+        16, 0.5, 8, device="cpu", mode="bilinear", output_dtype=torch.float64
+    )
+    stream = io.BytesIO()
+    torch.save(sampler, stream)
+    stream.seek(0)
+    for restored in (copy.deepcopy(sampler), torch.load(stream, weights_only=False)):
+        assert restored.output_dtype == torch.float64
+        with pytest.raises(ValueError, match="bilinear.*floating output dtype"):
+            restored.output_dtype = torch.uint8
+
+
+@pytest.mark.parametrize("mode", ["nearest", "bilinear"])
+def test_invalid_output_dtype_type_is_rejected_at_both_boundaries(mode: str) -> None:
+    with pytest.raises(TypeError, match="output_dtype"):
+        GridSampler(16, 0.5, 8, device="cpu", mode=mode, output_dtype="float32")
+    sampler = GridSampler(16, 0.5, 8, device="cpu", mode=mode)
+    with pytest.raises(TypeError, match="output_dtype"):
+        sampler.output_dtype = "float32"
+    assert sampler.output_dtype is None
+
+
+@pytest.mark.parametrize("kind", ["numpy", "tensor", "tuple", "list", "yaml"])
+def test_camera_sequence_normalization_preserves_projection(kind: str) -> None:
+    camera = CameraModel(
+        "fisheye",
+        (80, 120),
+        (75, 75, 59.5, 39.5),
+        (0.01, 0.001, 0, 0),
+        (59.5, 39.5, 65),
+    )
+    config = asdict(camera)
+    if kind == "yaml":
+        config = OmegaConf.create(config)
+    else:
+        convert = {
+            "numpy": np.array,
+            "tensor": lambda x: torch.tensor(x, dtype=torch.float64),
+            "tuple": tuple,
+            "list": list,
+        }[kind]
+        for field in ("image_size", "intrinsics", "distortion", "image_circle"):
+            config[field] = convert(config[field])
+    actual = CameraModel.from_config(config)
+    assert actual == camera
+    assert hash(actual) == hash(camera)
+    rays = torch.tensor([[0.1, -0.2, 1.0], [0.0, 0.0, 1.0]])
+    for value, expected in zip(actual.project(rays), camera.project(rays), strict=True):
+        torch.testing.assert_close(value, expected, rtol=0, atol=0)
