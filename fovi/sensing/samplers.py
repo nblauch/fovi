@@ -172,16 +172,14 @@ class GridSampler(BaseGridSampler):
         self.resolution = resolution
         self.device = device
         self.dtype = dtype
+        self.output_dtype = output_dtype
         self.mode = mode
         self.style = style
         if backend not in ('auto', 'torch', 'cuda', 'compiled'):
             raise ValueError("backend must be one of 'auto', 'torch', 'cuda', or 'compiled'")
         if backend == 'compiled' and field_geometry != 'spherical':
             raise ValueError("The compiled backend requires spherical geometry")
-        if mode == 'bilinear' and output_dtype is not None and not output_dtype.is_floating_point:
-            raise ValueError("bilinear sampling requires a floating output dtype")
         self.backend = backend
-        self.output_dtype = output_dtype
         self._last_backend = None
         self._native_errors = {}
         self._native_uint8_sample_fn = None
@@ -240,6 +238,8 @@ class GridSampler(BaseGridSampler):
     def mode(self, mode: str) -> None:
         if mode not in ('nearest', 'bilinear'):
             raise ValueError(f"Unsupported sampling mode {mode!r}")
+        if mode == 'bilinear' and self.output_dtype is not None and not self.output_dtype.is_floating_point:
+            raise ValueError("bilinear sampling requires a floating output dtype")
         self._mode = mode
         self._native_calibrated = None
 

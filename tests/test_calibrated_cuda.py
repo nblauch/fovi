@@ -175,10 +175,14 @@ def test_large_image_peripheral_gaze_precision(
     expected, expected_grid = sampler(image, fixation, direct=True, return_coords=True)
     # Fused dot products and Torch's single-image matmul round differently.
     # Bound that error in source pixels as well as interpolated intensities.
-    pixel_scale = grid.new_tensor((320, 240))
+    # align_corners=False maps a normalized span of two to the full raster.
+    pixel_scale = grid.new_tensor((image.shape[-1] / 2, image.shape[-2] / 2))
     coordinate_atol = 2e-4
     torch.testing.assert_close(
-        grid * pixel_scale, expected_grid * pixel_scale, rtol=0, atol=2e-4
+        (grid - expected_grid) * pixel_scale,
+        torch.zeros_like(grid),
+        rtol=0,
+        atol=coordinate_atol,
     )
     # Unit-range pixels (including zero padding) bound each bilinear partial
     # derivative by one. Add both axis errors plus interpolation rounding.

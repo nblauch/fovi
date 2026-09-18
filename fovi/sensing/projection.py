@@ -9,10 +9,21 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from numbers import Real
 from typing import TypedDict
 
 import torch
 from torch import Tensor
+
+
+def _calibration_float(value: Real | Tensor, name: str) -> float:
+    """Normalize real numeric scalars without accepting strings or containers."""
+    if isinstance(value, Tensor):
+        if value.ndim != 0 or value.is_complex() or value.dtype == torch.bool:
+            raise TypeError(f"{name} must contain real numeric scalars")
+    elif not isinstance(value, Real) or isinstance(value, bool):
+        raise TypeError(f"{name} must contain real numeric scalars")
+    return float(value)
 
 
 class CameraCalibration(TypedDict, total=False):
@@ -62,11 +73,16 @@ class CameraModel:
         for name in ("image_size", "intrinsics", "distortion", "image_circle"):
             values = getattr(self, name)
             if values is not None:
+                values = tuple(_calibration_float(v, name) for v in values)
                 convert = int if name == "image_size" else float
                 if name == "image_size" and any(int(v) != v for v in values):
                     raise ValueError("image_size must contain integer height and width")
                 object.__setattr__(self, name, tuple(convert(v) for v in values))
-        object.__setattr__(self, "max_angle_deg", float(self.max_angle_deg))
+        object.__setattr__(
+            self,
+            "max_angle_deg",
+            _calibration_float(self.max_angle_deg, "max_angle_deg"),
+        )
         if self.model not in ("pinhole", "fisheye"):
             raise ValueError(f"Unsupported camera model {self.model!r}")
         if len(self.image_size) != 2 or any(v <= 0 for v in self.image_size):

@@ -7,7 +7,7 @@ import torchvision.transforms.functional as TF
 from scipy.optimize import minimize_scalar
 
 from .coords import find_desired_res
-from .projection import CameraModel
+from .projection import CameraCalibration, CameraModel
 from .samplers import GaussianKNNGridSampler, KNNGridSampler, GridSampler
 from ..utils import add_to_all
 from ..utils.fastaugs import transforms as fastT
@@ -48,6 +48,8 @@ class RetinalTransform(nn.Module):
                  isotropic_plotting_type='v1like',
                  sampler_backend='auto',
                  fov_type='circular', field_geometry='planar',
+                 camera_model: CameraModel | CameraCalibration | None = None,
+                 gaze_convention='camera_xyz',
                  **kwargs, # passed to the sampler
                  ):
         """
@@ -72,6 +74,10 @@ class RetinalTransform(nn.Module):
                 ``cuda``) for both uint8 and floating inputs. Defaults to ``auto``.
             fov_type (str, optional): FoV geometry. Defaults to
                 ``'circular'``.
+            camera_model: Source calibration for spherical grid sampling.
+                Planar/legacy sampling requires None.
+            gaze_convention (str, optional): Spherical gaze rotation convention.
+                Defaults to ``'camera_xyz'``.
             **kwargs: Additional arguments passed to warping function.
         """
         super().__init__()
@@ -82,6 +88,8 @@ class RetinalTransform(nn.Module):
         self.field_geometry = field_geometry
         if field_geometry == 'spherical' and sampler not in ('grid_nn', 'grid_bilinear'):
             raise ValueError("Spherical geometry requires grid_nn or grid_bilinear sampling")
+        if field_geometry != 'spherical' and camera_model is not None:
+            raise ValueError("Calibrated camera sampling requires spherical field_geometry")
         full_fov = self.fov
         self.fixation_size = start_res if fixation_size is None else fixation_size # this is the maximum fixation size
         self.start_res = start_res
@@ -132,12 +140,14 @@ class RetinalTransform(nn.Module):
             self.sampler = GridSampler(
                 self.fov, self.cmf_a, resolution, device=device,
                 mode='nearest', style=style,
+                camera_model=camera_model, gaze_convention=gaze_convention,
                 isotropic_plotting_type=isotropic_plotting_type,
                 backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
         elif sampler == 'grid_bilinear':
             self.sampler = GridSampler(
                 self.fov, self.cmf_a, resolution, device=device,
                 mode='bilinear', style=style,
+                camera_model=camera_model, gaze_convention=gaze_convention,
                 isotropic_plotting_type=isotropic_plotting_type,
                 backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
 

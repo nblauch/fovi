@@ -195,6 +195,26 @@ def cpu_model_threads() -> Iterator[None]:
 
 
 @pytest.mark.usefixtures("cpu_model_threads")
+@pytest.mark.parametrize("geometry", ["planar", "legacy"])
+def test_pooling_model_constructs_and_samples(
+    small_fovi_config: DictConfig, geometry: str
+) -> None:
+    from fovi.models import FoviNet
+
+    cfg = small_fovi_config
+    cfg.saccades.field_geometry = geometry
+    cfg.saccades.sampler = "pooling"
+    model = FoviNet(cfg, device="cpu").eval()
+    image = torch.ones(1, 3, cfg.training.resolution, cfg.training.resolution)
+    with torch.no_grad():
+        samples = model.retinal_transform(image, torch.tensor([[0.5, 0.5]]))
+    assert samples.shape[-1] == len(model.retinal_transform.sampler.coords)
+    assert torch.isfinite(samples).all()
+    assert samples.abs().max() > 0
+    assert model.retinal_transform.sampler.coords.field_geometry == geometry
+
+
+@pytest.mark.usefixtures("cpu_model_threads")
 def test_spherical_model_shares_calibrated_crop_geometry(
     small_fovi_config: DictConfig,
 ) -> None:

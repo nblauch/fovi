@@ -1,7 +1,10 @@
 """Configuration boundaries must preserve the selected geometry and calibration."""
 
+from __future__ import annotations
+
 from dataclasses import asdict
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -10,6 +13,7 @@ from fovi.arch.knn import get_in_out_coords
 from fovi.models.architectures import rescale_fov
 from fovi.sensing.coords import SamplingCoords
 from fovi.sensing.projection import CameraModel
+from fovi.sensing.retina import RetinalTransform
 from fovi.sensing.samplers import GridSampler
 
 
@@ -95,3 +99,70 @@ def test_planar_calibrated_pixels_reports_geometry_precondition() -> None:
     sampler = GridSampler(16, 0.5, 8, device="cpu")
     with pytest.raises(ValueError, match="requires spherical field_geometry"):
         sampler.calibrated_pixels(torch.tensor([[0.5, 0.5]]))
+
+
+@pytest.mark.parametrize("geometry", ["planar", "legacy"])
+@pytest.mark.parametrize("pooling", ["pooling", "gaussian_pooling"])
+def test_retinal_pooling_accepts_model_camera_defaults(
+    geometry: str, pooling: str
+) -> None:
+    kwargs = {"gauss_sigma": 1.0} if pooling == "gaussian_pooling" else {}
+    transform = RetinalTransform(
+        8,
+        start_res=32,
+        fixation_size=32,
+        device="cpu",
+        auto_match_cart_resources=False,
+        sampler=pooling,
+        sampler_backend="torch",
+        field_geometry=geometry,
+        camera_model=None,
+        gaze_convention="camera_xyz",
+        **kwargs,
+    )
+    image = torch.ones(1, 3, 32, 32)
+    actual = transform(image, torch.tensor([[0.5, 0.5]]))
+    assert actual.shape == (1, 3, len(transform.sampler.coords))
+    assert torch.isfinite(actual).all()
+    assert actual.max() > 0
+    assert transform.sampler.coords.field_geometry == geometry
+
+
+def test_mode_change_rejects_integer_bilinear_output() -> None:
+    sampler = GridSampler(16, 0.5, 8, device="cpu", output_dtype=torch.uint8)
+    with pytest.raises(
+        ValueError, match="bilinear sampling requires a floating output dtype"
+    ):
+        sampler.mode = "bilinear"
+    assert sampler.mode == "nearest"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("intrinsics", ("75", 75, 59.5, 39.5)),
+        ("distortion", (b"0", 0, 0, 0)),
+        ("image_circle", (59.5, 39.5, "65")),
+        ("image_size", ("80", 120)),
+        ("max_angle_deg", "80"),
+    ],
+)
+def test_camera_rejects_string_calibration(
+    field: str, value: str | tuple[str | bytes | float, ...]
+) -> None:
+    config = asdict(CameraModel("pinhole", (80, 120), (75, 75, 59.5, 39.5)))
+    config[field] = value
+    with pytest.raises(TypeError, match=field):
+        CameraModel.from_config(config)
+
+
+def test_camera_accepts_numpy_and_tensor_real_scalars() -> None:
+    camera = CameraModel(
+        "pinhole",
+        (np.int64(80), torch.tensor(120)),
+        (np.float32(75), torch.tensor(75.0), 59.5, 39.5),
+        max_angle_deg=torch.tensor(80.0),
+    )
+    assert camera == CameraModel(
+        "pinhole", (80, 120), (75, 75, 59.5, 39.5), max_angle_deg=80
+    )
