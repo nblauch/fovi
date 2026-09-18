@@ -33,6 +33,7 @@ model:
     partitioning_patches: KNN
 
 saccades:
+  field_geometry: planar
   color_sigma: null
   fixation_size: 256
   fixation_size_min_frac: 1

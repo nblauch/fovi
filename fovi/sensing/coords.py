@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from ..utils import normalize, add_to_all
+from .manifold import spherical_radius_limit, validate_field_geometry
 from .manifold import vis_cartesian_to_cortical_cartesian_coords as vis_to_sensor_manifold
 
 __all__ = []
@@ -130,9 +131,13 @@ class SamplingCoords():
                  dtype=torch.float,
                  max_val=1,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular',
+                 fov_type='circular', field_geometry='planar',
                  ):
 
+        validate_field_geometry(field_geometry)
+        self.field_geometry = field_geometry
+        if field_geometry == 'spherical' and ('logpolar' in style or 'warped_cartesian' in style):
+            raise ValueError("Spherical geometry requires an angular sample set, not a flattened grid topology")
         self.fov = fov
         self.cmf_a = cmf_a
         self.resolution = res
@@ -170,7 +175,7 @@ class SamplingCoords():
              self.valid_mask, self.fov_padding_coords) = get_sampling_coords(
                 fov, cmf_a, res, device=device, style=style, max_val=max_val,
                 isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=self.fov_type, return_valid_mask=True,
+                fov_type=self.fov_type, field_geometry=self.field_geometry, return_valid_mask=True,
                 return_masked_coords=True)
             # image format (row, col)
             self.cartesian_rowcol = xy_to_rowcol(self.cartesian, do_norm=False, format='-11')
@@ -181,6 +186,18 @@ class SamplingCoords():
                 device=device, dtype=dtype)
             self.cartesian_pad_coords = torch.cat((
                 self.fov_padding_coords, outer_padding_coords), dim=0)
+
+            if field_geometry == 'spherical' and 'uniform' not in style:
+                extent = float(self.cartesian_pad_coords.norm(dim=1).max())
+                pad_radius = extent * fov / 2
+                limit = spherical_radius_limit(cmf_a)
+                if pad_radius > limit:
+                    raise ValueError(
+                        f"Spherical FoV {fov:g} degrees with cmf_a={cmf_a:g} "
+                        f"requires padding radius {pad_radius:g} degrees, exceeding "
+                        f"the manifold radius limit {limit:g}. This normalized padded "
+                        f"grid requires FoV <= {2 * limit / extent:g} degrees; "
+                        "padding changes when the grid is rebuilt at a different FoV.")
 
             if 'warped_cartesian' in style:
                 # The native topology of this sensor is its regular Cartesian
@@ -210,8 +227,8 @@ class SamplingCoords():
                 self.cortical = None
             else:
                 # cortical coordinates to be used for sampling RFs
-                self.cortical = vis_to_sensor_manifold(self.cartesian.cpu().numpy(), cmf_a, fov, as_tensor=True, device=device) 
-                self.cortical_pad_coords = vis_to_sensor_manifold(self.cartesian_pad_coords.cpu().numpy(), cmf_a, fov, as_tensor=True, device=device).to(dtype=dtype)
+                self.cortical = vis_to_sensor_manifold(self.cartesian.cpu().numpy(), cmf_a, fov, as_tensor=True, device=device, field_geometry=field_geometry)
+                self.cortical_pad_coords = vis_to_sensor_manifold(self.cartesian_pad_coords.cpu().numpy(), cmf_a, fov, as_tensor=True, device=device, field_geometry=field_geometry).to(dtype=dtype)
 
         self.cartesian = self.cartesian.to(dtype)
         if self.cortical is not None:
@@ -224,7 +241,14 @@ class SamplingCoords():
         """Generate additional cartesian coordinates for padding around the sampling grid.
         
         Args:
-            padding_distance (float): Distance to extend beyond the current sampling area.
+            padding_distance (float): Padding extent in normalized coordinates.
+                For spherical radial grids, measured from the real retinal rim,
+                retaining at least one complete neighboring ring. Planar/legacy
+                radial grids retain the historical interval starting at the first
+                outer ring, which can overshoot the requested rim margin by one
+                ring. Preserve that behavior for checkpoint KNN compatibility.
+                Warped Cartesian and log-polar layouts pad in their own grid
+                coordinates using a whole number of grid intervals.
             device (str, optional): Device to place the coordinates on. Defaults to None.
             dtype (torch.dtype, optional): Data type for the coordinates. Defaults to None.
             
@@ -299,9 +323,18 @@ class SamplingCoords():
             # still receive a surrounding padding ring.
             radius_diff = sorted_radii[-1] / max(self.resolution - 1, 1)
         start_radius = sorted_radii[-1] + radius_diff
-        for radius in torch.arange(
+        padding_radii = torch.arange(
                 start_radius, start_radius + padding_distance, radius_diff,
-                device=self.polar.device, dtype=self.polar.dtype):
+                device=self.polar.device, dtype=self.polar.dtype)
+        if self.field_geometry == 'spherical':
+            # Measure the margin from the real rim, not the first padding ring.
+            # The extra ring can exceed the spherical embedding domain at
+            # coarse resolutions. Keep one full neighbor ring when its spacing
+            # exceeds the requested margin; domain validation still applies.
+            padding_radii = padding_radii[
+                (padding_radii <= sorted_radii[-1] + padding_distance)
+                | (padding_radii == start_radius)]
+        for radius in padding_radii:
             for angle in torch.arange(
                     0, 2*np.pi, radius_diff, device=self.polar.device,
                     dtype=self.polar.dtype):
@@ -344,7 +377,7 @@ class SamplingCoords():
             out_radii, num_coords = find_desired_res(
                 self.fov, self.cmf_a, out_cart_res**2, style=self.style,
                 device=self.device, force_less_than=force_less_than, quiet=True,
-                fov_type=self.fov_type)
+                fov_type=self.fov_type, field_geometry=self.field_geometry)
         else:
             """
             no matching to cartesian sampling resolution -- not recommended since it makes comparisons very difficult
@@ -356,7 +389,7 @@ class SamplingCoords():
         out_coords = SamplingCoords(
             self.fov, self.cmf_a, out_radii, self.device, self.style, self.dtype,
             max_val=max_val, isotropic_plotting_type=self.isotropic_plotting_type,
-            fov_type=self.fov_type)
+            fov_type=self.fov_type, field_geometry=self.field_geometry)
 
         return out_coords, out_radii, out_cart_res
     
@@ -408,7 +441,7 @@ class SamplingCoords():
     
     def clone(self, fov=None, cmf_a=None, resolution=None, device=None, style=None,
               dtype=None, max_val=None, isotropic_plotting_type=None,
-              fov_type=None):
+              fov_type=None, field_geometry=None):
         """Return a deep copy of the SamplingCoords object with optional parameter overrides.
         
         Args:
@@ -433,6 +466,7 @@ class SamplingCoords():
             self.max_val if max_val is None else max_val,
             self.isotropic_plotting_type if isotropic_plotting_type is None else isotropic_plotting_type,
             self.fov_type if fov_type is None else fov_type,
+            self.field_geometry if field_geometry is None else field_geometry,
             )
         return new_coords
 
@@ -497,7 +531,7 @@ def get_isotropic_sampling_coords(
         fov, cmf_a, res, fov_type='circular', device='cpu',
         constant_num_angles=False, force_n_points=None, max_norm_rad=1,
         plotting_type='v1like', filter_to_fov=True,
-        return_masked_coords=False):
+        return_masked_coords=False, field_geometry='planar'):
     """Sample coordinates isotropically with the cortical magnification function of the complex log mapping w=log(z+a), where z=x+iy.
 
     Args:
@@ -533,11 +567,11 @@ def get_isotropic_sampling_coords(
     if force_n_points is not None:
         res, _ = find_desired_res(
             fov, cmf_a, force_n_points, style='isotropic', device=device,
-            quiet=True, fov_type=fov_type)
+            quiet=True, fov_type=fov_type, field_geometry=field_geometry)
 
     # compute log-sampled radii, and angles for each radius
     radius, n_angles = _compute_isotropic_r_and_num_theta(
-        fov, cmf_a, res, fov_type=fov_type, device=device)
+        fov, cmf_a, res, fov_type=fov_type, field_geometry=field_geometry, device=device)
     if constant_num_angles:
         # overwrite isotropic angle sampling to use standard log polar image sampling
         n_angles = torch.tensor([res]*res, device=device)
@@ -636,7 +670,7 @@ def get_isotropic_sampling_coords(
 @add_to_all(__all__)
 def get_logpolar_image_sampling_coords(
         fov, cmf_a, res, device='cpu', force_n_points=None,
-        max_norm_rad=1, fov_type='circular'):
+        max_norm_rad=1, fov_type='circular', field_geometry='planar'):
     """Convenience wrapper for log polar image sampling.
     
     Sample coordinates with the cortical magnification function of the complex log mapping w=log(z+a), where z=x+iy.
@@ -662,12 +696,12 @@ def get_logpolar_image_sampling_coords(
     _validate_fov_type(fov_type, style='logpolar')
     if force_n_points is not None:
         return get_isotropic_sampling_coords(
-            fov, cmf_a, res, fov_type=fov_type, device=device,
+            fov, cmf_a, res, fov_type=fov_type, field_geometry=field_geometry, device=device,
             constant_num_angles=True, force_n_points=force_n_points,
             max_norm_rad=max_norm_rad, filter_to_fov=False)
 
     radius, _ = _compute_isotropic_r_and_num_theta(
-        fov, cmf_a, res, fov_type=fov_type, device=device)
+        fov, cmf_a, res, fov_type=fov_type, field_geometry=field_geometry, device=device)
     radius = radius * max_norm_rad
     angles = torch.arange(res, device=device, dtype=radius.dtype)
     angles = angles * (2 * torch.pi / res)
@@ -713,7 +747,7 @@ def get_warped_cartesian_sampling_coords(
 
 
 def _compute_isotropic_r_and_num_theta(
-        fov, cmf_a, res, fov_type='circular', device='cpu'):
+        fov, cmf_a, res, fov_type='circular', device='cpu', field_geometry='planar'):
     """Compute the radii and angles for isotropic logarithmic sampling.
     
     Args:
@@ -757,8 +791,10 @@ def _compute_isotropic_r_and_num_theta(
     for ii in range(1,res):
         # average curr to prev and curr to next radius dists
         radius_diff = ((radius[ii] - radius[ii-1]) + (radius[ii+1] - radius[ii])) / 2 
-        angles = torch.arange(0,2*torch.pi*radius[ii],radius_diff,device=device)/2*torch.pi*radius[ii]
-        n_angles.append(len(angles))
+        tangential_radius = radius[ii]
+        if field_geometry == 'spherical':
+            tangential_radius = torch.rad2deg(torch.sin(torch.deg2rad(radius[ii])))
+        n_angles.append(len(torch.arange(0, 2 * torch.pi * tangential_radius, radius_diff, device=device)))
     n_angles = torch.tensor(n_angles)  
 
     # remove extra radius
@@ -771,8 +807,20 @@ def _compute_isotropic_r_and_num_theta(
     
 
 @add_to_all(__all__)
+def isotropic_foveal_ring(fov: float, cmf_a: float, res: int,
+                         fov_type: str = 'circular', field_geometry: str = 'planar') -> torch.Tensor:
+    """Return the first noncentral ring as normalized (N, 2) visual coordinates."""
+    if res < 2:
+        raise ValueError("Foveal spacing requires at least two sampling rings")
+    radii, counts = _compute_isotropic_r_and_num_theta(
+        fov, cmf_a, res, fov_type=fov_type, field_geometry=field_geometry)
+    angles = torch.arange(int(counts[1])) * (2 * torch.pi / counts[1])
+    return radii[1] * torch.stack((angles.cos(), angles.sin()), dim=-1)
+
+
+@add_to_all(__all__)
 def num_sampling_coords_isotropic(
-        fov, cmf_a, res, fov_type='circular', device='cpu'):
+        fov, cmf_a, res, fov_type='circular', device='cpu', field_geometry='planar'):
     """Quickly compute the number of sampling coordinates for isotropic sampling.
 
     Useful for optimizing the res (# of radii) to match a certain output n (# of points).
@@ -791,7 +839,7 @@ def num_sampling_coords_isotropic(
     if int(res) == 1:
         return 1
     radius, n_angles = _compute_isotropic_r_and_num_theta(
-        fov, cmf_a, res, fov_type=fov_type, device=device)
+        fov, cmf_a, res, fov_type=fov_type, field_geometry=field_geometry, device=device)
     if fov_type == 'circular':
         return n_angles.sum().item()
 
@@ -826,7 +874,7 @@ def num_sampling_coords_isotropic(
 def find_desired_res(
         fov, cmf_a, n_points_desired, style, device='cpu',
         bounds=(1,1000), force_less_than=False, quiet=False,
-        fov_type='circular'):
+        fov_type='circular', field_geometry='planar'):
     """Find the resolution that gives the desired number of sampling points using binary search.
     
     Args:
@@ -844,6 +892,7 @@ def find_desired_res(
             - int: Resolution that gives the desired number of points.
             - int: Actual number of points achieved.
     """
+    validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
     # Try a range of integer values directly instead of using minimize_scalar
     best_res = None
@@ -855,7 +904,7 @@ def find_desired_res(
         mid = (left + right) // 2
         n = num_sampling_coords(
             fov, cmf_a, mid, style=style, device=device,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry)
         diff = abs(n - n_points_desired)
         
         if diff < best_diff:
@@ -869,21 +918,21 @@ def find_desired_res(
     
     n = num_sampling_coords(
         fov, cmf_a, best_res, style=style, device=device,
-        fov_type=fov_type)
+        fov_type=fov_type, field_geometry=field_geometry)
 
     if force_less_than:
         while n > n_points_desired:
             best_res = best_res - 1
             n = num_sampling_coords(
                 fov, cmf_a, best_res, style=style, device=device,
-                fov_type=fov_type)
+                fov_type=fov_type, field_geometry=field_geometry)
     else:
         while n < n_points_desired:
             # make sure we overshoot slightly so that we can remove angles rather than adding them
             best_res = best_res + 1
             n = num_sampling_coords(
                 fov, cmf_a, best_res, style=style, device=device,
-                fov_type=fov_type)
+                fov_type=fov_type, field_geometry=field_geometry)
 
     if not quiet:
         print(f'found resolution {best_res} giving {n} points (desired: {n_points_desired})')
@@ -895,7 +944,7 @@ def find_desired_res(
 def get_sampling_coords(
         fov, cmf_a, res, device='cpu', style='isotropic', max_val=1,
         isotropic_plotting_type='v1like', fov_type='circular',
-        return_valid_mask=False, return_masked_coords=False):
+        return_valid_mask=False, return_masked_coords=False, field_geometry='planar'):
     """Generate sampling coordinates based on the specified style.
     
     Args:
@@ -926,6 +975,7 @@ def get_sampling_coords(
     if style not in SAMPLING_STYLES:
         raise ValueError(
             f"style must be one of {SAMPLING_STYLES}, got {style!r}")
+    validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
     if style == 'uniform' or style == 'uniform_as_grid':
         step = max_val / res
@@ -951,14 +1001,14 @@ def get_sampling_coords(
         if style == 'logpolar' or style == 'logpolar_as_grid':
             coords, polar_coords, plotting_coords = get_logpolar_image_sampling_coords(
                 fov, cmf_a, res, device=device, force_n_points=None,
-                max_norm_rad=max_val, fov_type=fov_type)
+                max_norm_rad=max_val, fov_type=fov_type, field_geometry=field_geometry)
         else:
             (coords, polar_coords, plotting_coords,
              masked_coords) = get_isotropic_sampling_coords(
                 fov, cmf_a, res, device=device,
                 force_n_points=force_n_points, max_norm_rad=max_val,
                 plotting_type=isotropic_plotting_type,
-                fov_type=fov_type, return_masked_coords=True)
+                fov_type=fov_type, field_geometry=field_geometry, return_masked_coords=True)
         if style == 'logpolar' or style == 'logpolar_as_grid':
             masked_coords = coords.new_empty((0, 2))
         valid_mask = _fov_valid_mask(
@@ -1055,7 +1105,7 @@ def xy_to_colrow(coords, do_norm=True, format='01'):
 @add_to_all(__all__)
 def num_sampling_coords(
         fov, cmf_a, res, style='isotropic', device='cpu',
-        fov_type='circular'):
+        fov_type='circular', field_geometry='planar'):
     """Calculate the number of sampling coordinates for a given style.
     
     Args:
@@ -1068,10 +1118,11 @@ def num_sampling_coords(
     Returns:
         int: Number of sampling coordinates.
     """
+    validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
     if style == 'isotropic':
         return num_sampling_coords_isotropic(
-            fov, cmf_a, res, device=device, fov_type=fov_type)
+            fov, cmf_a, res, device=device, fov_type=fov_type, field_geometry=field_geometry)
     elif style in [
             'logpolar', 'logpolar_as_grid', 'warped_cartesian',
             'warped_cartesian_as_grid', 'isotropic_fixn', 'uniform',
@@ -1140,7 +1191,7 @@ def transform_sampling_grid(sampling_grid, fix_loc, fixation_size, image_size):
 @add_to_all(__all__)
 def auto_match_num_coords(
         fov, cmf_a, cart_res, style, auto_match_cart_resources, device,
-        force_less_than=True, quiet=False, fov_type='circular'):
+        force_less_than=True, quiet=False, fov_type='circular', field_geometry='planar'):
     """Automatically match the number of coordinates to cartesian resolution.
     
     Args:
@@ -1164,7 +1215,7 @@ def auto_match_num_coords(
         in_res, num_coords = find_desired_res(
             fov, cmf_a, cart_res**2, style, device=device,
             force_less_than=force_less_than, quiet=quiet,
-            fov_type=fov_type)
+            fov_type=fov_type, field_geometry=field_geometry)
     else:
         in_res = cart_res
     return in_res, cart_res

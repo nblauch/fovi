@@ -9,4 +9,5 @@ model:
   final_grid_size: 1
 
 saccades:
+  field_geometry: planar
   mode: logpolar_as_grid

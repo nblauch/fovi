@@ -3,4 +3,5 @@ defaults:
   - _self_
 
 saccades:
+  field_geometry: planar
   mode: logpolar_as_grid

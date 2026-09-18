@@ -16,3 +16,6 @@ model:
 
 training:
   batch_size: 512
+
+saccades:
+  field_geometry: planar

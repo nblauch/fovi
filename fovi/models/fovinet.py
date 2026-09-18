@@ -1,15 +1,17 @@
+import warnings
+
 import torch
-import torch.nn as nn
 from einops import rearrange
-from typing import Literal
+from omegaconf import open_dict
+from torch import nn
 from torch.amp import autocast
 
-from ..sensing.retina import RetinalTransform
+from ..arch.knn import KNNBaseLayer
 from ..sensing.policies import FIXATION_POLICY_REGISTRY
-from .probes import FoviNetProbe
+from ..sensing.retina import RetinalTransform
 from ..utils.std_transforms import get_std_transforms
 from .architectures import ARCHITECTURE_REGISTRY
-from ..arch.knn import KNNBaseLayer
+from .probes import FoviNetProbe
 
 __all__ = ['FoviNet']
 
@@ -25,10 +27,30 @@ class FoviNet(nn.Module):
 
         Args:
             cfg: Configuration object containing model and training parameters.
+                Missing saccades.field_geometry selects legacy geometry with a
+                UserWarning. New training configs should explicitly select planar.
             device (str, optional): Device to run the model on. Defaults to 'cuda'.
             dtype (torch.dtype, optional): Data type for model parameters. Defaults to torch.float32.
         """
         super().__init__()
+
+        # Resolve historical configs before either the backbone or retina builds
+        # coordinates. An explicit unresolved value (???) must still fail.
+        if 'field_geometry' not in cfg.saccades.keys():  # noqa: SIM118 - DictConfig membership hides mandatory values.
+            warnings.warn(
+                "saccades.field_geometry is missing; using 'legacy' to preserve "
+                "the geometry of existing checkpoints. Set it explicitly to "
+                "'planar' or 'spherical' for new training, or 'legacy' for weights trained with "
+                "historical geometry. Switching existing weights to 'planar' or 'spherical' "
+                "changes neural-network neighborhoods and can change predictions.",
+                UserWarning,
+                stacklevel=2,
+            )
+            with open_dict(cfg.saccades):
+                cfg.saccades.field_geometry = 'legacy'
+
+        if cfg.saccades.field_geometry == 'spherical' and cfg.saccades.mode is None:
+            raise ValueError("Spherical geometry requires a retinal transform; saccades.mode cannot be null")
 
         self.network = ARCHITECTURE_REGISTRY.get(cfg.model.arch)(cfg, device=device)
 
@@ -70,7 +92,9 @@ class FoviNet(nn.Module):
                 auto_match_cart_resources=cfg.saccades.auto_match_cart_resources,
                 isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
                 sampler_backend=getattr(cfg.saccades, 'sampler_backend', 'auto'),
-                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
+                fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
+                camera_model=getattr(cfg.saccades, 'camera_model', None),
+                gaze_convention=getattr(cfg.saccades, 'gaze_convention', 'camera_xyz'),
             )
 
         self.get_repr_sizes()
@@ -159,7 +183,10 @@ class FoviNet(nn.Module):
 
         in_channels = self.get_in_channels()
 
-        if hasattr(self.fixation_size, '__len__'):
+        if isinstance(self.retinal_transform, RetinalTransform) and self.retinal_transform.field_geometry == 'spherical':
+            image_size = self.retinal_transform.camera_model.image_size
+            x = torch.rand(10, in_channels, *image_size).to(self.device, self.dtype)
+        elif hasattr(self.fixation_size, '__len__'):
             x = torch.rand(10, in_channels, *self.fixation_size).to(self.device, self.dtype)
         else:
             x = torch.rand(10, in_channels, self.fixation_size, self.fixation_size).to(self.device, self.dtype)

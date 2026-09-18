@@ -15,6 +15,7 @@ model:
   # The rf2 variant lives in fovi-resnet18_rf2_bench.yaml.
   ref_frame_mult: 1
 saccades:
+  field_geometry: planar
   color_sigma: null
   fixation_size: 256
   fixation_size_min_frac: 1.0

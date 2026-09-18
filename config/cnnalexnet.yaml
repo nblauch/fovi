@@ -10,5 +10,6 @@ model:
   arch: alexnet2023_baseline
   
 saccades:
+  field_geometry: planar
   mode: uniform_as_grid
   cmf_a: null

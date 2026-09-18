@@ -9,16 +9,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
-from importlib.metadata import version
 import json
 import os
-from pathlib import Path
 import random
 import sys
+from importlib.metadata import version
+from pathlib import Path
 
 import numpy as np
-from PIL import Image
 import torch
+from PIL import Image
 
 MODELS = (
     "fovi-dinov3-splus_a-2.78_res-64_in1k",
@@ -109,7 +109,15 @@ def capture(args: argparse.Namespace) -> None:
         if not (checkpoint / "config.yaml").is_file():
             raise FileNotFoundError(f"Download {name} before running: {checkpoint}")
         model = loader(
-            name, model_dirs=[str(args.model_dir)], device=args.device, quiet=True
+            name,
+            model_dirs=[str(args.model_dir)],
+            device=args.device,
+            quiet=True,
+            **(
+                {"saccades.field_geometry": args.field_geometry}
+                if args.field_geometry
+                else {}
+            ),
         ).eval()
         resolution = int(model.cfg.training.resolution)
         street = Image.open(args.image).convert("RGB").resize((resolution, resolution))
@@ -170,6 +178,7 @@ def capture(args: argparse.Namespace) -> None:
         metadata = {
             "model": name,
             "api": args.api,
+            "field_geometry": getattr(model.cfg.saccades, "field_geometry", None),
             "source": str(source),
             "torch": torch.__version__,
             "device": args.device,
@@ -203,12 +212,15 @@ def compare(args: argparse.Namespace) -> None:
             "model",
             "torch",
             "device",
-            "canonical_state_sha256",
             "checkpoint_sha256",
             "image_sha256",
         ]
+        if not args.diagnostic:
+            fields.append("canonical_state_sha256")
         if not args.allow_transformers_change:
-            fields.extend(("transformers", "state_sha256"))
+            fields.append("transformers")
+            if not args.diagnostic:
+                fields.append("state_sha256")
         for field in fields:
             if before_meta[field] != after_meta[field]:
                 raise AssertionError(f"{name}: {field} differs between captures")
@@ -222,15 +234,18 @@ def compare(args: argparse.Namespace) -> None:
             raise AssertionError(f"{name}: different output keys")
         comparisons = {}
         for key in before:
-            torch.testing.assert_close(
-                after[key], before[key], rtol=args.rtol, atol=args.atol
-            )
+            if not args.diagnostic:
+                torch.testing.assert_close(
+                    after[key], before[key], rtol=args.rtol, atol=args.atol
+                )
+            if before[key].shape != after[key].shape:
+                raise AssertionError(f"{name}: shape changed for {key}")
+            difference = before[key].double() - after[key].double()
             comparisons[key] = {
                 "shape": list(before[key].shape),
                 "exact": torch.equal(before[key], after[key]),
-                "max_abs_error": float(
-                    (before[key].double() - after[key].double()).abs().max()
-                ),
+                "max_abs_error": float(difference.abs().max()),
+                "rmse": float(difference.square().mean().sqrt()),
             }
         results.append(
             {
@@ -242,7 +257,8 @@ def compare(args: argparse.Namespace) -> None:
                 "atol": args.atol,
             }
         )
-        print(f"PASS {name}: {len(comparisons)} tensors", flush=True)
+        label = "DIAGNOSTIC" if args.diagnostic else "PASS"
+        print(f"{label} {name}: {len(comparisons)} tensors", flush=True)
     args.report.write_text(json.dumps(results, indent=2) + "\n")
 
 
@@ -255,6 +271,7 @@ def main() -> None:
     record.add_argument("--api", choices=("legacy", "models"), required=True)
     record.add_argument("--model-dir", type=Path, default=Path.home() / ".cache/fovi")
     record.add_argument("--device", default="cuda:0")
+    record.add_argument("--field-geometry", choices=("planar", "spherical", "legacy"))
     record.add_argument("--image", type=Path, required=True)
     record.add_argument("--output", type=Path, required=True)
     record.add_argument("--models", nargs="+", default=MODELS)
@@ -266,6 +283,11 @@ def main() -> None:
     check.add_argument("--rtol", type=float, default=0.0)
     check.add_argument("--atol", type=float, default=0.0)
     check.add_argument("--allow-transformers-change", action="store_true")
+    check.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="Report activation differences without requiring exact geometry/state parity.",
+    )
     args = parser.parse_args()
     if args.command == "capture":
         capture(args)
