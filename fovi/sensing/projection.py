@@ -338,7 +338,7 @@ def gaze_rotation(directions: Tensor, convention: str = "camera_xyz") -> Tensor:
     if convention == "camera_xyz":
         pitch = torch.atan2(x, torch.sqrt(y * y + z * z))
         roll = torch.atan2(-y, z)
-    elif convention == "pan_tilt":
+    else:
         pitch = torch.atan2(x, z)
         roll = torch.atan2(-y, torch.sqrt(x * x + z * z))
     cp, sp, cr, sr = (

@@ -19,9 +19,12 @@ from .projection import (
     CameraModel,
     angular_directions,
     gaze_rotation,
-    validate_gaze_convention,
 )
-from .validation import validate_output_dtype, validate_sampling_mode
+from .validation import (
+    validate_gaze_convention,
+    validate_output_dtype,
+    validate_sampling_mode,
+)
 
 __all__ = []
 

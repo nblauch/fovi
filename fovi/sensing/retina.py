@@ -7,8 +7,9 @@ import torchvision.transforms.functional as TF
 from scipy.optimize import minimize_scalar
 
 from .coords import find_desired_res
-from .projection import CameraCalibration, CameraModel, validate_gaze_convention
+from .projection import CameraCalibration, CameraModel
 from .samplers import GaussianKNNGridSampler, KNNGridSampler, GridSampler
+from .validation import validate_gaze_convention
 from ..utils import add_to_all
 from ..utils.fastaugs import transforms as fastT
 from ..utils.fastaugs import functional as fastF
