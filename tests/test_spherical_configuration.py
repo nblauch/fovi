@@ -115,7 +115,8 @@ def test_spherical_identity_transform_fails_before_architecture() -> None:
 
 def test_padding_error_reports_geometry_and_padding_extent() -> None:
     with pytest.raises(ValueError, match="FoV.*cmf_a.*padding.*radius"):
-        SamplingCoords(180, 0.759, 30, field_geometry="spherical")
+        # Even the first neighboring ring exceeds the spherical domain.
+        SamplingCoords(180, 0.759, 2, field_geometry="spherical")
 
 
 def test_explicit_spherical_extent_is_preserved() -> None:

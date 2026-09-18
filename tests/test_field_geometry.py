@@ -87,3 +87,29 @@ def test_spherical_absolute_fov_changes_ring_counts() -> None:
         150, 1.5, 80, field_geometry="spherical"
     )
     assert wide[-1] < narrow[-1] * 0.8
+
+
+def test_spherical_padding_margin_starts_at_retinal_rim() -> None:
+    fov = np.rad2deg(1920 * 0.00345 / 2.5)
+    coords = SamplingCoords(fov, 0.1 * fov, 5, device="cpu", field_geometry="spherical")
+    radii = torch.unique(coords.polar[:, 0]).sort().values
+    step = radii[-1] - radii[-2]
+    # Only the first outer ring fits within the half-radius padding margin.
+    expected_radius = radii[-1] + step
+    torch.testing.assert_close(
+        coords.cartesian_pad_coords.norm(dim=1),
+        expected_radius.expand(len(coords.cartesian_pad_coords)),
+    )
+    assert coords.cartesian.norm(dim=1).max().item() == pytest.approx(1.0)
+    assert torch.isfinite(coords.cortical_pad_coords).all()
+
+
+def test_coarse_spherical_padding_keeps_one_complete_neighbor_ring() -> None:
+    coords = SamplingCoords(150, 15, 3, device="cpu", field_geometry="spherical")
+    radii = torch.unique(coords.polar[:, 0]).sort().values
+    step = radii[-1] - radii[-2]
+    assert step > 0.5
+    torch.testing.assert_close(
+        coords.cartesian_pad_coords.norm(dim=1),
+        (radii[-1] + step).expand(len(coords.cartesian_pad_coords)),
+    )

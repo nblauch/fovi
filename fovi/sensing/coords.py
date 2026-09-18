@@ -316,9 +316,18 @@ class SamplingCoords():
             # still receive a surrounding padding ring.
             radius_diff = sorted_radii[-1] / max(self.resolution - 1, 1)
         start_radius = sorted_radii[-1] + radius_diff
-        for radius in torch.arange(
+        padding_radii = torch.arange(
                 start_radius, start_radius + padding_distance, radius_diff,
-                device=self.polar.device, dtype=self.polar.dtype):
+                device=self.polar.device, dtype=self.polar.dtype)
+        if self.field_geometry == 'spherical':
+            # Measure the margin from the real rim, not the first padding ring.
+            # The extra ring can exceed the spherical embedding domain at
+            # coarse resolutions. Keep one full neighbor ring when its spacing
+            # exceeds the requested margin; domain validation still applies.
+            padding_radii = padding_radii[
+                (padding_radii <= sorted_radii[-1] + padding_distance)
+                | (padding_radii == start_radius)]
+        for radius in padding_radii:
             for angle in torch.arange(
                     0, 2*np.pi, radius_diff, device=self.polar.device,
                     dtype=self.polar.dtype):
