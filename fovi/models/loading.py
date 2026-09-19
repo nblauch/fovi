@@ -124,20 +124,46 @@ def find_config(
     model_dirs: Sequence[str | Path] | None = None,
     device: str | torch.device = "cuda",
 ) -> ConfigCheckpoint:
-    """Search explicit local locations, then download a model from the Hub.
+    """Load local/Hub models or an explicitly selected ``wandb://`` snapshot.
 
     An existing local model with malformed configuration or missing weights raises
     immediately. It must not silently select a different checkpoint from the Hub.
     """
+    model_path = resolve_model_path(base_fn, model_dirs)
+    return load_config(model_path.name, load, model_path.parent, device=device)
+
+
+def resolve_model_path(
+    base_fn: str,
+    model_dirs: Sequence[str | Path] | None = None,
+    *,
+    expected_checkpoint_md5: str | None = None,
+) -> Path:
+    """Resolve a local model, Hub identifier, or ``wandb://`` run to a local path.
+
+    W&B runs may be selected by exact display name or run ID, with an optional
+    ``#filename.pth`` (default ``model.pth``). Their checkpoint and embedded config
+    form an immutable cached snapshot. Resolve once and reuse the returned path
+    when configuring a sensor and loading its perception model together.
+    ``expected_checkpoint_md5`` pins a W&B URI to a previous snapshot's checksum
+    (from ``source.json``); it is not used for local paths or Hub identifiers.
+    """
+    if base_fn.startswith("wandb:"):
+        from .wandb import download_wandb_model
+
+        return download_wandb_model(
+            base_fn, expected_checkpoint_md5=expected_checkpoint_md5
+        )
+    if expected_checkpoint_md5 is not None:
+        raise ValueError("expected_checkpoint_md5 requires a wandb:// model URI")
     folders = default_model_dirs() if model_dirs is None else model_dirs
     for folder in folders:
         base_dir = Path(folder) / base_fn
         if base_dir.exists() or Path(f"{base_dir}.yaml").exists():
-            return load_config(base_fn, load, folder, device=device)
+            return base_dir.resolve()
     from .hub import download_model
 
-    model_path = Path(download_model(base_fn))
-    return load_config(model_path.name, load, model_path.parent, device=device)
+    return Path(download_model(base_fn)).resolve()
 
 
 def get_model_from_base_fn(
@@ -153,7 +179,7 @@ def get_model_from_base_fn(
     """Construct a model and restore weights without creating a Trainer.
 
     Args:
-        base_fn: Local model name or HuggingFace repository identifier.
+        base_fn: Local model name, HuggingFace identifier, or ``wandb://`` run URI.
         load: Whether to restore weights.
         load_strict: Passed to the model's state-dict loader.
         quiet: Suppress model construction output.

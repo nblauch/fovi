@@ -1,5 +1,7 @@
 """Training artifacts persist the settings selected while building the model."""
 
+from __future__ import annotations
+
 import copy
 import json
 from pathlib import Path
@@ -7,11 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from fovi.models import dinov3
-from fovi.models.loading import load_config
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 from transformers import DINOv3ViTConfig, DINOv3ViTModel
+
+from fovi.models import dinov3
+from fovi.models.loading import load_config
 
 
 @pytest.mark.parametrize("space", [None, "cortical", "cartesian"])
@@ -73,6 +76,7 @@ def test_trainer_saves_resolved_positions_and_preserves_launch_config(
         "fovi.training.trainer.wandb.init",
         lambda **kwargs: remote_configs.append(copy.deepcopy(kwargs["config"])),
     )
+    monkeypatch.setattr("fovi.training.trainer.wandb.save", lambda *args, **kwargs: [])
     trainer = Trainer(None, cfg, load_checkpoint=False)
     expected = "cortical" if space is None else space
     assert trainer.cfg_dict["model"]["vit"]["position_coordinate_space"] == expected

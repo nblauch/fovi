@@ -205,6 +205,7 @@ class Trainer:
             temporary_path = resolved_path.with_suffix('.yaml.tmp')
             OmegaConf.save(OmegaConf.create(self.cfg_dict), temporary_path)
             temporary_path.replace(resolved_path)
+            self.publish_checkpoint_file(resolved_path)
 
     def setup_distributed(self):
         """Initialize distributed training process group."""
@@ -581,13 +582,17 @@ class Trainer:
 
         if self.rank == 0:
             self.save_checkpoint(epoch + 1)
+            final_path = self.log_folder / 'final_weights.pth'
+            temporary_path = final_path.with_suffix('.pth.tmp')
             torch.save(dict(
                 epoch=epoch,
                 state_dict=self.model_.state_dict(),
                 probes=self.probes.state_dict(),
                 params=self.cfg_dict,
                 lr_scheduler=self.lr_scheduler.state_dict() if self.lr_schedule else None,
-            ), self.log_folder / 'final_weights.pth')
+            ), temporary_path)
+            temporary_path.replace(final_path)
+            self.publish_checkpoint_file(final_path, epoch=epoch + 1)
 
         return all_stats
 
@@ -668,7 +673,23 @@ class Trainer:
                 params=params
             )
             save_name = f"model.pth"
-        torch.save(state, self.log_folder / save_name)
+        checkpoint_path = self.log_folder / save_name
+        temporary_path = checkpoint_path.with_suffix('.pth.tmp')
+        torch.save(state, temporary_path)
+        temporary_path.replace(checkpoint_path)
+        self.publish_checkpoint_file(checkpoint_path, epoch=epoch)
+
+    def publish_checkpoint_file(self, path: Path, *, epoch: int | None = None) -> None:
+        """Publish complete checkpoint/config files while training continues."""
+        if self.rank == 0 and self.cfg.logging.use_wandb:
+            if epoch is not None:
+                snapshots = self.log_folder / 'checkpoints'
+                snapshots.mkdir(exist_ok=True)
+                snapshot = snapshots / f'epoch-{epoch:06d}-{path.stem}-{uuid4().hex}.pth'
+                # A hard link pins the saved inode without another state copy.
+                os.link(path, snapshot)
+                wandb.save(str(snapshot), base_path=str(self.log_folder), policy='now')
+            wandb.save(str(path), base_path=str(self.log_folder), policy='now')
 
     def train_loop(self, epoch, max_batches=None):
         """Execute one epoch of training.
