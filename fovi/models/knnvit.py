@@ -1,9 +1,15 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 import numpy as np
 import math
+from transformers import DINOv3ViTConfig
+from transformers.models.dinov3_vit.modeling_dinov3_vit import augment_patches_center_coordinates
 
 from ..arch.knn import get_in_out_coords
 from ..arch.knn import KNNConvLayer
@@ -507,7 +513,8 @@ class KNNViT(VisionTransformer):
 class FoviDinoV3RoPE(nn.Module):
     inv_freq: torch.Tensor
 
-    def __init__(self, base: int, head_dim: int, coords: torch.Tensor, device: str = 'cuda'):
+    def __init__(self, base: int, head_dim: int, coords: torch.Tensor, device: str = 'cuda',
+                 position_config: DINOv3ViTConfig | None = None):
         """Initialize DinoV3RoPE positional encoding.
 
         Args:
@@ -515,16 +522,25 @@ class FoviDinoV3RoPE(nn.Module):
             head_dim: Dimension of attention head
             coords: Coordinate tensor
             device: Device to run on
+            position_config: Optional native DINO position augmentation settings.
         """
         super().__init__()
 
         self.base = base
         self.head_dim = head_dim
-        self.coords = coords
+        self.register_buffer("coords", coords.to(device=device), persistent=False)
         self.device = device
+        self.position_config = position_config
 
         inv_freq = 1 / self.base ** torch.arange(0, 1, 4 / self.head_dim, dtype=torch.float32, device=device)  # (head_dim / 4,)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+    def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> FoviDinoV3RoPE:
+        # Positions must retain float32 accuracy when backbone weights use BF16.
+        coords = self.coords
+        super()._apply(fn, recurse=recurse)
+        self.coords = coords.to(device=self.coords.device)
+        return self
 
     def forward(self, pixel_values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass for RoPE positional encoding.
@@ -539,8 +555,14 @@ class FoviDinoV3RoPE(nn.Module):
         device_type = device.type if isinstance(device.type, str) and device.type != "mps" else "cpu"
 
         with torch.autocast(device_type=device_type, enabled=False):  # Force float32
+            coords = self.coords
+            if self.training and self.position_config is not None:
+                coords = augment_patches_center_coordinates(
+                    coords, shift=self.position_config.pos_embed_shift,
+                    jitter=self.position_config.pos_embed_jitter,
+                    rescale=self.position_config.pos_embed_rescale)
             # (height * width, 2, head_dim / 4) -> (height * width, head_dim / 2) -> (height * width, head_dim)
-            angles = 2 * math.pi * self.coords[:, :, None] * self.inv_freq[None, None, :]
+            angles = 2 * math.pi * coords[:, :, None] * self.inv_freq[None, None, :]
             angles = angles.flatten(1, 2)
             angles = angles.tile(2)
 

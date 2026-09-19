@@ -7,6 +7,7 @@ from torch import nn
 import fovi.arch.knn as knn_module
 from fovi.arch.knn import KNNPoolingLayer
 from fovi.sensing.samplers import BaseGridSampler, KNNGridSampler
+from fovi.sensing.coords import SamplingCoords
 
 
 def _stub_pooler(*, invalid_output=False) -> KNNPoolingLayer:
@@ -28,6 +29,19 @@ def _stub_pooler(*, invalid_output=False) -> KNNPoolingLayer:
 
 
 class TestKNNPoolingSampler(unittest.TestCase):
+    def test_gaussian_pooling_equal_distance_neighbors_stays_finite(self):
+        incoming = SamplingCoords(1, .1, 16, style="warped_cartesian_as_grid")
+        outgoing = incoming.clone(resolution=8)
+        pool = KNNPoolingLayer(3, incoming, outgoing, mode="gaussian",
+                               sample_cortex=True, device="cpu")
+        values = torch.ones(2, 3, len(incoming))
+        values[:, :, ~incoming.valid_mask] = 1e6
+        result = pool(values)
+        self.assertTrue(torch.isfinite(result).all())
+        torch.testing.assert_close(result[:, :, outgoing.valid_mask],
+                                   torch.ones_like(result[:, :, outgoing.valid_mask]))
+        self.assertEqual(torch.count_nonzero(result[:, :, ~outgoing.valid_mask]), 0)
+
     def test_fractional_resolution_multiplier_is_rounded_once(self):
         sampler = KNNGridSampler(
             fov=1.0,

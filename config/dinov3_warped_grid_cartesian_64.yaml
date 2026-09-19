@@ -1,0 +1,9 @@
+defaults:
+  - dinov3_warped_grid_cartesian_128
+  - _self_
+
+model:
+  vit:
+    patch_size: 8
+saccades:
+  resize_size: 64

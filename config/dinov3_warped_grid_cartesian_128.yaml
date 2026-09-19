@@ -1,0 +1,6 @@
+defaults:
+  - dinov3_native_grid_comparison
+  - _self_
+
+saccades:
+  mode: warped_cartesian_as_grid

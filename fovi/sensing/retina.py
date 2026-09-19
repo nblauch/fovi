@@ -188,7 +188,10 @@ class RetinalTransform(nn.Module):
             **kwargs: Additional arguments.
 
         Returns:
-            torch.Tensor: Transformed tensor.
+            torch.Tensor: Samples in (B, C, N) order, or (B, C, H, W) for
+                ``_as_grid`` styles. Cartesian grids use ordinary image rows
+                and columns; log-polar grids use angle and eccentricity.
+                Sampler coordinates remain in canonical vector order.
         """
 
         # Spherical retinal extent is angular and fixed by the calibrated window.
@@ -240,7 +243,7 @@ class RetinalTransform(nn.Module):
             x = TF.rgb_to_grayscale(x.unsqueeze(3), num_output_channels=3).clone().squeeze(3)
 
         if self.reshape_as_grid:
-            x = x.reshape(x.shape[0], x.shape[1], self.resolution, self.resolution)
+            x = self.sampler.coords.as_grid(x)
 
         return x.to(self.dtype)
 
