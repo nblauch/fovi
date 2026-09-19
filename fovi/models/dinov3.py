@@ -1,16 +1,81 @@
+from __future__ import annotations
+
 import torch
 from torch import nn
 import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel, AutoConfig
 from transformers.models.dinov3_vit.modeling_dinov3_vit import DINOv3ViTRopePositionEmbedding
 import os
-import copy
+from omegaconf import open_dict
 
+from ..sensing.coords import SamplingCoords
 from ..utils.lora import apply_lora
 from ..utils import add_to_all
 from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioningPatchEmbedding, FoviDinoV3RoPE, resample_patch_embed_conv
 
 __all__ = []
+
+
+@add_to_all(__all__)
+def configure_dinov3_positions(
+    model: nn.Module,
+    *,
+    sensor_coords: SamplingCoords,
+    patch_size: int,
+    position_coordinate_space: str | None = None,
+) -> None:
+    """Configure dense DINO RoPE using a Fovi sensor's native or visual positions.
+
+    Args:
+        model: Loaded Hugging Face DINOv3 model with its dense patch embedding.
+        sensor_coords: Full-resolution grid sensor, before patch embedding.
+        patch_size: Square convolutional patch size in sensor pixels.
+        position_coordinate_space: ``cortical`` for ordinary image positions or
+            ``cartesian`` for visual-field patch positions. None preserves saved
+            model metadata, or selects cortical for an ordinary pretrained model.
+
+    The resolved setting and sensor parameters are saved in the model config.
+    No model weights or patch convolution are changed by this function.
+    """
+    if not sensor_coords.style.endswith('_as_grid'):
+        raise ValueError("Dense DINO positions require an _as_grid sensor")
+    space = position_coordinate_space
+    if space is None:
+        space = getattr(model.config, 'position_coordinate_space', 'cortical')
+    if space not in ('cortical', 'cartesian'):
+        raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")
+    if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0 or sensor_coords.resolution % patch_size:
+        raise ValueError("Sensor resolution must be divisible by positive patch_size")
+    patch_embedding = model.embeddings.patch_embeddings
+    expected_shape = (patch_size, patch_size)
+    if patch_embedding.kernel_size != expected_shape or patch_embedding.stride != expected_shape:
+        raise ValueError("patch_size must match the dense patch convolution kernel and stride")
+    model.config.patch_size = patch_size
+    model.config.image_size = sensor_coords.resolution
+    model.config.position_coordinate_space = space
+    model.config.fovi_sensor = {
+        'fov': sensor_coords.fov, 'cmf_a': sensor_coords.cmf_a,
+        'resolution': sensor_coords.resolution, 'style': sensor_coords.style,
+        'fov_type': sensor_coords.fov_type, 'field_geometry': sensor_coords.field_geometry,
+    }
+    device = model.embeddings.patch_embeddings.weight.device
+    native_rope = DINOv3ViTRopePositionEmbedding(model.config).to(device)
+    native_rope.inv_freq.copy_(model.rope_embeddings.inv_freq)
+    native_rope.train(model.training)
+    if space == 'cortical':
+        model.rope_embeddings = native_rope
+    elif space == 'cartesian':
+        patches = sensor_coords.clone(
+            resolution=sensor_coords.resolution // patch_size, device=device)
+        positions = patches.as_grid(patches.cartesian_rowcol, sample_dim=0).reshape(-1, 2)
+        rope = FoviDinoV3RoPE(
+            model.config.rope_theta,
+            model.config.hidden_size // model.config.num_attention_heads,
+            positions, device=device, position_config=model.config)
+        # Use the upstream frequency initialization exactly, including rounding.
+        rope.inv_freq.copy_(native_rope.inv_freq)
+        rope.train(model.training)
+        model.rope_embeddings = rope
 
 
 def _get_dinov3_layers(model):
@@ -122,6 +187,15 @@ def build_fovi_dinov3(cfg, device='cuda'):
     load_weights = getattr(cfg.pretrained_model, 'load_weights', True)
     model, processor = load_dinov3(cfg.pretrained_model.path, device=device, pretrained=load_weights)
 
+    position_space = cfg.model.vit.get('position_coordinate_space')
+    if position_space is None:
+        default_space = 'cortical' if cfg.saccades.mode.endswith('_as_grid') else 'cartesian'
+        position_space = getattr(model.config, 'position_coordinate_space', default_space)
+    if position_space not in ('cortical', 'cartesian'):
+        raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")
+    with open_dict(cfg.model.vit):
+        cfg.model.vit.position_coordinate_space = position_space
+
     if 'as_grid' not in cfg.saccades.mode:
         if cfg.model.vit.partitioning_patches == 'KNN':
             patch_cls = KNNPartitioningPatchEmbedding
@@ -171,8 +245,15 @@ def build_fovi_dinov3(cfg, device='cuda'):
         # replace standard patch embedding with foveated version
         model.embeddings.patch_embeddings = patch_embed.to(device)
 
-        # initialize new rope encodings
-        model.rope_embeddings = FoviDinoV3RoPE(model.config.rope_theta, model.config.hidden_size // model.config.num_attention_heads, model.embeddings.patch_embeddings.out_coords.cartesian_rowcol, device=device)
+        patch_coords = model.embeddings.patch_embeddings.out_coords
+        if position_space == 'cartesian':
+            positions = patch_coords.cartesian_rowcol
+        elif position_space == 'cortical':
+            if patch_coords.cortical is None or patch_coords.cortical.shape[-1] != 2:
+                raise ValueError("Cortical positions require a native two-dimensional manifold")
+            positions = patch_coords.cortical
+        model.rope_embeddings = FoviDinoV3RoPE(model.config.rope_theta, model.config.hidden_size // model.config.num_attention_heads, positions, device=device)
+        model.config.position_coordinate_space = position_space
 
          # convenience access to total number of outputs units
         model.total_embed_dim = model.embeddings.patch_embeddings.out_channels * len(model.embeddings.patch_embeddings.out_coords)
@@ -190,11 +271,14 @@ def build_fovi_dinov3(cfg, device='cuda'):
             preserve_kernel_norm=getattr(cfg.pretrained_model, 'preserve_patch_norm', False),
         )
 
-        # ensure RoPE is properly adapted to new image and token sizes
-        new_config = copy.deepcopy(model.config)
-        new_config.patch_size = cfg.model.vit.patch_size
-        new_config.image_size = cfg.saccades.resize_size
-        model.rope_embeddings = DINOv3ViTRopePositionEmbedding(new_config)
+        sensor_coords = SamplingCoords(
+            cfg.saccades.fov, cfg.saccades.cmf_a, cfg.saccades.resize_size,
+            device=device, style=cfg.saccades.mode,
+            fov_type=cfg.saccades.get('fov_type', 'circular'),
+            field_geometry=cfg.saccades.field_geometry)
+        configure_dinov3_positions(
+            model, sensor_coords=sensor_coords, patch_size=cfg.model.vit.patch_size,
+            position_coordinate_space=position_space)
 
     # create wrapper to make a fovinet model
     model.forward_head = lambda x: x # just replace the forward_head function with an identity mapper

@@ -217,8 +217,9 @@ class TestWarpedCartesian(unittest.TestCase):
                         16.0, 0.5, 16, style="warped_cartesian",
                         fov_type=fov_type)
 
-    def test_flat_and_grid_outputs_are_identical_and_invalid_samples_zero(self):
-        image = torch.ones(2, 3, 128, 128)
+    def test_flat_and_grid_outputs_match_image_order_and_invalid_samples_zero(self):
+        image = torch.arange(128 ** 2, dtype=torch.float32).reshape(1, 1, 128, 128)
+        image = image.expand(2, 3, -1, -1)
         fixation = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
         for fov_type in ("circular", "square", "wang"):
             kwargs = dict(
@@ -235,14 +236,15 @@ class TestWarpedCartesian(unittest.TestCase):
 
             self.assertEqual(flat_output.shape, (2, 3, 16 ** 2))
             self.assertEqual(grid_output.shape, (2, 3, 16, 16))
-            torch.testing.assert_close(flat_output, grid_output.flatten(2))
+            expected_grid = flat_output.reshape(2, 3, 16, 16).transpose(-2, -1).flip(-2)
+            torch.testing.assert_close(expected_grid, grid_output)
             torch.testing.assert_close(flat.valid_mask, grid.valid_mask)
             if fov_type == "square":
                 self.assertTrue(torch.any(~flat.valid_mask))
             self.assertTrue(torch.all(
                 flat_output[:, :, ~flat.valid_mask] == 0))
             self.assertTrue(torch.all(
-                flat_output[:, :, flat.valid_mask] == 1))
+                flat_output[:, :, flat.valid_mask] > 0))
 
     def test_knn_convolution_zeros_invalid_output_locations(self):
         coords = SamplingCoords(

@@ -55,12 +55,13 @@ def _inverse_warped_cartesian(
     """
     plotting_radius = torch.linalg.vector_norm(plotting_coords, dim=1)
     warped_radius = plotting_radius / radius_normalizer
-    rho_axis = np.log((fov / 2.0 + cmf_a) / cmf_a)
+    rho_axis = np.log1p((fov / 2.0) / cmf_a)
     visual_radius = (
         cmf_a * torch.expm1(warped_radius * rho_axis) / (fov / 2.0))
     scale = torch.where(
-        plotting_radius > 0, visual_radius / plotting_radius,
-        torch.zeros_like(plotting_radius))
+        plotting_radius > 0,
+        visual_radius / plotting_radius.clamp_min(torch.finfo(plotting_radius.dtype).tiny),
+        torch.full_like(plotting_radius, cmf_a * rho_axis / (radius_normalizer * fov / 2.0)))
     cartesian = plotting_coords * scale[:, None]
     polar = torch.stack((
         visual_radius,
@@ -84,8 +85,8 @@ def _warped_cartesian_radius_normalizer(
         nominal_radius = fov / 2.0
         square_half_extent = max_val
         rho_at_square_side = (
-            np.log((square_half_extent * nominal_radius + cmf_a) / cmf_a)
-            / np.log((nominal_radius + cmf_a) / cmf_a))
+            np.log1p(square_half_extent * nominal_radius / cmf_a)
+            / np.log1p(nominal_radius / cmf_a))
         return max_val / rho_at_square_side
     return 1.0
 
@@ -136,8 +137,13 @@ class SamplingCoords():
 
         validate_field_geometry(field_geometry)
         self.field_geometry = field_geometry
-        if field_geometry == 'spherical' and ('logpolar' in style or 'warped_cartesian' in style):
+        if field_geometry == 'spherical' and 'logpolar' in style:
             raise ValueError("Spherical geometry requires an angular sample set, not a flattened grid topology")
+        if 'warped_cartesian' in style:
+            if not all(np.isfinite(value) and value > 0 for value in (fov, cmf_a)):
+                raise ValueError("Warped Cartesian fov and cmf_a must be finite and positive")
+            if field_geometry == 'spherical' and fov > 180:
+                raise ValueError("Spherical field diameter must not exceed 180 degrees")
         self.fov = fov
         self.cmf_a = cmf_a
         self.resolution = res
@@ -177,6 +183,10 @@ class SamplingCoords():
                 isotropic_plotting_type=isotropic_plotting_type,
                 fov_type=self.fov_type, field_geometry=self.field_geometry, return_valid_mask=True,
                 return_masked_coords=True)
+            if field_geometry == 'spherical' and 'warped_cartesian' in style:
+                active_angles = self.polar[self.valid_mask, 0] * (fov / 2.0)
+                if torch.any(active_angles >= 180):
+                    raise ValueError("Spherical warped Cartesian samples must stay below 180 degrees eccentricity")
             # image format (row, col)
             self.cartesian_rowcol = xy_to_rowcol(self.cartesian, do_norm=False, format='-11')
 
@@ -187,7 +197,7 @@ class SamplingCoords():
             self.cartesian_pad_coords = torch.cat((
                 self.fov_padding_coords, outer_padding_coords), dim=0)
 
-            if field_geometry == 'spherical' and 'uniform' not in style:
+            if field_geometry == 'spherical' and 'isotropic' in style:
                 extent = float(self.cartesian_pad_coords.norm(dim=1).max())
                 pad_radius = extent * fov / 2
                 limit = spherical_radius_limit(cmf_a)
@@ -231,11 +241,70 @@ class SamplingCoords():
                 self.cortical_pad_coords = vis_to_sensor_manifold(self.cartesian_pad_coords.cpu().numpy(), cmf_a, fov, as_tensor=True, device=device, field_geometry=field_geometry).to(dtype=dtype)
 
         self.cartesian = self.cartesian.to(dtype)
+        self.cartesian_rowcol = xy_to_rowcol(self.cartesian, do_norm=False, format='-11')
         if self.cortical is not None:
             self.cortical = self.cortical.to(dtype)
         self.polar = self.polar.to(dtype)
         self.plotting = self.plotting.to(dtype)
         self.shape = self.cartesian.shape
+
+    def as_grid(self, values: torch.Tensor, sample_dim: int = -1) -> torch.Tensor:
+        """Replace a canonical sample axis with the sensor's image axes.
+
+        Cartesian grids return upright rows down and columns right. Log-polar
+        grids retain their radius/angle ordering. Other axes are unchanged.
+
+        Args:
+            values: Tensor with one axis containing all canonical samples.
+            sample_dim: Sample axis; use zero for coordinates shaped (N, 2).
+
+        Returns:
+            Tensor with the sample axis replaced by height and width.
+        """
+        if not self.style.endswith('_as_grid'):
+            raise ValueError(f"Grid layout requires an _as_grid style, got {self.style!r}")
+        sample_dim %= values.ndim
+        if values.shape[sample_dim] != self.resolution ** 2:
+            raise ValueError("Sample axis does not match the sensor grid resolution")
+        shape = (*values.shape[:sample_dim], self.resolution, self.resolution,
+                 *values.shape[sample_dim + 1:])
+        grid = values.reshape(shape)
+        if self.style in ('uniform_as_grid', 'warped_cartesian_as_grid'):
+            grid = grid.transpose(sample_dim, sample_dim + 1).flip(sample_dim)
+        return grid.contiguous()
+
+    def native_to_visual(self, coordinates: torch.Tensor) -> torch.Tensor:
+        """Map (..., 2) native warped Cartesian coordinates to the visual chart.
+
+        Visual chart radius one is half the configured FoV. For spherical
+        geometry this is angular eccentricity, not a pinhole projection.
+        The unbounded chart includes masked cells outside the model footprint;
+        renderers must handle their own angular padding domain.
+        """
+        if self.style not in WARPED_CARTESIAN_STYLES:
+            raise ValueError("Analytic native mapping requires a warped Cartesian sensor")
+        if coordinates.shape[-1] != 2:
+            raise ValueError("Native coordinates must end in a two-coordinate axis")
+        visual, _ = _inverse_warped_cartesian(
+            coordinates.reshape(-1, 2), self.fov, self.cmf_a,
+            radius_normalizer=_warped_cartesian_radius_normalizer(
+                self.fov_type, self.fov, self.cmf_a, self.max_val))
+        return visual.reshape(coordinates.shape)
+
+    def visual_to_native(self, coordinates: torch.Tensor) -> torch.Tensor:
+        """Map (..., 2) normalized visual-chart positions to the native grid."""
+        if self.style not in WARPED_CARTESIAN_STYLES:
+            raise ValueError("Analytic native mapping requires a warped Cartesian sensor")
+        if coordinates.shape[-1] != 2:
+            raise ValueError("Visual coordinates must end in a two-coordinate axis")
+        radius = torch.linalg.vector_norm(coordinates, dim=-1, keepdim=True)
+        axis_scale = np.log1p((self.fov / 2.0) / self.cmf_a)
+        normalizer = _warped_cartesian_radius_normalizer(
+            self.fov_type, self.fov, self.cmf_a, self.max_val)
+        native_radius = normalizer * torch.log1p(radius * (self.fov / 2.0) / self.cmf_a) / axis_scale
+        scale = torch.where(radius > 0, native_radius / radius.clamp_min(torch.finfo(radius.dtype).tiny),
+                            torch.full_like(radius, normalizer * (self.fov / 2.0) / self.cmf_a / axis_scale))
+        return coordinates * scale
     
     def pad_cartesian(self, padding_distance=0.5, device=None, dtype=None):
         """Generate additional cartesian coordinates for padding around the sampling grid.

@@ -220,7 +220,11 @@ class GridSampler(BaseGridSampler):
         self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
-        self.register_buffer('canonical_directions', angular_directions(self.coords.cartesian.float(), fov), persistent=False)
+        angular_coords = self.coords.cartesian.float()
+        if field_geometry == 'spherical' and 'warped_cartesian' in style:
+            # Masked corners belong to an unbounded chart, not physical camera rays.
+            angular_coords = torch.where(self.coords.valid_mask[:, None], angular_coords, 0)
+        self.register_buffer('canonical_directions', angular_directions(angular_coords, fov), persistent=False)
         self._native_calibrated = None
         self.register_buffer(
             'valid_mask', self.coords.valid_mask, persistent=False)
@@ -468,7 +472,7 @@ class GridSampler(BaseGridSampler):
             target_valid = torch.ones(rotation.shape[0], dtype=torch.bool, device=rotation.device)
         directions = self.canonical_directions.to(rotation.dtype) @ rotation.transpose(-1, -2)
         pixels, valid = camera.project(directions)
-        return pixels, valid & target_valid[..., None]
+        return pixels, valid & target_valid[..., None] & self.valid_mask
 
     def _sample_calibrated(self, image: torch.Tensor, pixels: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
         """Gather compact samples without converting the full uint8 image."""

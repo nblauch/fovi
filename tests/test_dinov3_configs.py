@@ -15,6 +15,32 @@ def compose_config(name):
 
 
 class TestDINOv3Configs(unittest.TestCase):
+    def test_native_grid_comparison_is_matched_and_training_complete(self):
+        for resolution, patch_size in ((64, 8), (128, 16)):
+            cortical = compose_config(f"dinov3_warped_grid_cortical_{resolution}")
+            cartesian = compose_config(f"dinov3_warped_grid_cartesian_{resolution}")
+            isotropic = compose_config(f"dinov3_isotropic_cartesian_{resolution}")
+            expected_cartesian = copy.deepcopy(cortical)
+            expected_cartesian.model.vit.position_coordinate_space = "cartesian"
+            self.assertEqual(OmegaConf.to_container(expected_cartesian),
+                             OmegaConf.to_container(cartesian))
+            expected_isotropic = copy.deepcopy(cartesian)
+            expected_isotropic.saccades.mode = "isotropic"
+            self.assertEqual(OmegaConf.to_container(expected_isotropic),
+                             OmegaConf.to_container(isotropic))
+            for cfg in (cortical, cartesian, isotropic):
+                self.assertEqual(cfg.saccades.resize_size, resolution)
+                self.assertEqual(cfg.model.vit.patch_size, patch_size)
+                self.assertAlmostEqual(cfg.saccades.cmf_a / cfg.saccades.fov, .036021)
+                self.assertEqual(cfg.saccades.sampler, "grid_nn")
+                self.assertEqual(cfg.saccades.fov_type, "circular")
+                self.assertEqual(cfg.saccades.field_geometry, "planar")
+                self.assertGreater(cfg.data.num_workers, 0)
+                self.assertEqual(cfg.training.batch_size * cfg.dist.world_size, 512)
+                self.assertEqual(cfg.pretrained_model.lora.r, 64)
+                self.assertEqual(cfg.pretrained_model.lora.alpha, 64)
+                self.assertEqual(list(cfg.pretrained_model.lora.layers), [-1, 0, 1, 2, 3, 4, 5])
+
     def test_configs_compose(self):
         for name in (
             "fovi-dinov3-splus",

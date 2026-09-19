@@ -72,7 +72,9 @@ def load_config(
         TypeError: Configuration is not a mapping.
     """
     base_dir = Path(folder) / base_fn
-    if (base_dir / "hydra/config.yaml").is_file():
+    if (base_dir / "resolved_config.yaml").is_file():
+        cfg = OmegaConf.load(base_dir / "resolved_config.yaml")
+    elif (base_dir / "hydra/config.yaml").is_file():
         cfg = OmegaConf.load(base_dir / "hydra/config.yaml")
     elif (base_dir / "config.yaml").is_file():
         cfg = OmegaConf.load(base_dir / "config.yaml")

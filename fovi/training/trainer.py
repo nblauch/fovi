@@ -60,10 +60,6 @@ class Trainer:
         """
         self.cfg = cfg
 
-        # Convert config to dictionary once for efficiency
-        self.cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-        self.cfg_dict_flat = flatten_dict(self.cfg_dict)
-
         reproducible_results(cfg.training.seed)
 
         # Extract distributed training parameters from config
@@ -92,8 +88,6 @@ class Trainer:
         self.batch_size = cfg.training.batch_size
         self.uid = str(uuid4())
 
-        self.initialize_remote_logger()
-
         self.start_epoch = 0
         self.loss_name = cfg.training.loss
         self.use_amp = cfg.training.use_amp
@@ -102,6 +96,10 @@ class Trainer:
         # Create SSL model, scaler, and optimizer
         self.model, self.scaler = self.create_model_and_scaler()
         self.model_ = get_model(self.model, cfg.training.distributed)
+        # Model construction resolves optional geometry and positional settings.
+        self.cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+        self.cfg_dict_flat = flatten_dict(self.cfg_dict)
+        self.initialize_remote_logger()
         if not cfg.training.train_probes_only:
             print(self.model_)
         self.num_features = self.model_.num_features
@@ -199,6 +197,14 @@ class Trainer:
         # Load models if checkpoint exists
         if load_checkpoint:
             self.load_checkpoint()
+
+        if self.rank == 0:
+            # Publish only after checkpoint restoration succeeds; retain the
+            # original Hydra launch files as provenance, including on resume.
+            resolved_path = self.log_folder / 'resolved_config.yaml'
+            temporary_path = resolved_path.with_suffix('.yaml.tmp')
+            OmegaConf.save(OmegaConf.create(self.cfg_dict), temporary_path)
+            temporary_path.replace(resolved_path)
 
     def setup_distributed(self):
         """Initialize distributed training process group."""
@@ -1111,21 +1117,21 @@ class Trainer:
 
         self.log_folder = Path(folder)
 
-    def copy_hydra_outputs(self):
-        """Copy Hydra output files to our log directory."""
+    def copy_hydra_outputs(self) -> None:
+        """Archive launch configuration without overwriting the original on resume."""
         if self.rank != 0:
             return
-        try:
-            hydra_cfg = hydra.core.hydra_config.HydraConfig.get()
-        except Exception as e:
-            print(e)
-            print('skipping hydra directory copying')
+        if not hydra.core.hydra_config.HydraConfig.initialized():
             return
+        hydra_cfg = hydra.core.hydra_config.HydraConfig.get()
         hydra_output_dir = Path(hydra_cfg.run.dir)
 
         # Only copy if Hydra output directory is different from our log directory
         if hydra_output_dir != self.log_folder and hydra_output_dir.exists():
-            shutil.copytree(hydra_output_dir / '.hydra', self.log_folder / 'hydra')
+            destination = self.log_folder / 'hydra'
+            if destination.exists() and (self.cfg.training.from_checkpoint or self.cfg.training.eval_only):
+                destination = self.log_folder / 'hydra-resumes' / str(uuid4())
+            shutil.copytree(hydra_output_dir / '.hydra', destination)
         print(f"Copying Hydra outputs from {hydra_output_dir} to {self.log_folder}")
 
     def initialize_remote_logger(self):
