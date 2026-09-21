@@ -596,7 +596,7 @@ class Trainer:
                 lr_scheduler=self.lr_scheduler.state_dict() if self.lr_schedule else None,
             ), temporary_path)
             temporary_path.replace(final_path)
-            self.publish_checkpoint_file(final_path, epoch=epoch + 1)
+            self.publish_checkpoint_file(final_path)
 
         return all_stats
 
@@ -681,18 +681,15 @@ class Trainer:
         temporary_path = checkpoint_path.with_suffix('.pth.tmp')
         torch.save(state, temporary_path)
         temporary_path.replace(checkpoint_path)
-        self.publish_checkpoint_file(checkpoint_path, epoch=epoch)
+        self.publish_checkpoint_file(checkpoint_path)
 
-    def publish_checkpoint_file(self, path: Path, *, epoch: int | None = None) -> None:
-        """Publish complete checkpoint/config files while training continues."""
+    def publish_checkpoint_file(self, path: Path) -> None:
+        """Publish a completed checkpoint or config file while training continues.
+
+        W&B run files are keyed by name, so each upload replaces the run's
+        previous copy and only the latest checkpoint is ever stored.
+        """
         if self.rank == 0 and self.cfg.logging.use_wandb:
-            if epoch is not None:
-                snapshots = self.log_folder / 'checkpoints'
-                snapshots.mkdir(exist_ok=True)
-                snapshot = snapshots / f'epoch-{epoch:06d}-{path.stem}-{uuid4().hex}.pth'
-                # A hard link pins the saved inode without another state copy.
-                os.link(path, snapshot)
-                wandb.save(str(snapshot), base_path=str(self.log_folder), policy='now')
             wandb.save(str(path), base_path=str(self.log_folder), policy='now')
 
     def train_loop(self, epoch, max_batches=None):

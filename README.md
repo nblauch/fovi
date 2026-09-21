@@ -129,8 +129,10 @@ The default checkpoint is `model.pth`; append `#final_weights.pth` to select a
 different published checkpoint. Run names must match exactly and uniquely;
 ambiguous names require the run ID. Each load checks for an updated checkpoint,
 and caches its weights and embedded configuration together. Normal Fovi training
-publishes checkpoints at `logging.checkpoint_freq` and at completion when W&B is
-enabled, including immutable files under `checkpoints/` for repeatable playback.
+publishes its latest checkpoint at `logging.checkpoint_freq` and at completion
+when W&B is enabled; each upload replaces the run's previous copy, so a run keeps
+only its newest checkpoint. Loading an exact revision of a still-training run
+therefore needs its checksum, reported in a cached snapshot's `source.json`.
 Older runs need their existing checkpoint uploaded to the run first.
 For consumers that configure a sensor before loading weights,
 `fovi.models.resolve_model_path(uri)` pins both to one immutable local snapshot.

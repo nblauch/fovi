@@ -36,11 +36,7 @@ def test_checkpoint_publication_sees_complete_replacement(
     published = []
 
     def save(path: str, *, base_path: str, policy: str) -> None:
-        if Path(path).parent == tmp_path / "checkpoints":
-            assert Path(path).name.startswith("epoch-")
-            assert Path(path).stat().st_ino == (tmp_path / "model.pth").stat().st_ino
-        else:
-            assert Path(path) == tmp_path / "model.pth"
+        assert Path(path) == tmp_path / "model.pth"
         assert base_path == str(tmp_path)
         assert policy == "now"
         assert not (tmp_path / "model.pth.tmp").exists()
@@ -53,7 +49,7 @@ def test_checkpoint_publication_sees_complete_replacement(
     assert loaded["epoch"] == 5
     assert loaded["params"] == {"width": 2}
     torch.testing.assert_close(loaded["model"]["weight"], trainer.model_.weight)
-    assert len(published) == 2 * int(publish)
+    assert len(published) == 1 * int(publish)
     if publish:
         assert published[0]["epoch"] == 5
         torch.testing.assert_close(
@@ -67,11 +63,12 @@ def test_checkpoint_publication_sees_complete_replacement(
     assert latest["epoch"] == 10
     torch.testing.assert_close(latest["model"]["weight"], trainer.model_.weight)
     if publish:
-        snapshot = next((tmp_path / "checkpoints").glob("epoch-000005-model-*.pth"))
-        assert snapshot.read_bytes() == original
-        saved = torch.load(snapshot, weights_only=True)
-        torch.testing.assert_close(saved["model"]["weight"], loaded["model"]["weight"])
-        assert not torch.equal(saved["model"]["weight"], latest["model"]["weight"])
+        # Only the latest checkpoint is kept, locally and under its published
+        # name, and it still carries the state needed to resume the run.
+        assert not torch.equal(loaded["model"]["weight"], latest["model"]["weight"])
+        assert sorted(path.name for path in tmp_path.iterdir()) == ["model.pth"]
+        assert "optimizer" in latest and "optimizer_probes" in latest
+        assert published[-1]["epoch"] == 10
     original = (tmp_path / "model.pth").read_bytes()
 
     def fail_during_save(payload: dict[str, torch.Tensor], path: Path) -> None:
@@ -82,4 +79,4 @@ def test_checkpoint_publication_sees_complete_replacement(
     with pytest.raises(OSError, match="disk write failed"):
         trainer.save_checkpoint(15)
     assert (tmp_path / "model.pth").read_bytes() == original
-    assert len(published) == 4 * int(publish)
+    assert len(published) == 2 * int(publish)
