@@ -17,11 +17,12 @@ from matplotlib.patches import Circle, Rectangle
 from PIL import Image
 from torchvision.transforms.functional import pil_to_tensor
 
-from fovi.sensing.coords import get_warped_cartesian_sampling_coords
+from fovi.sensing.coords import SamplingCoords, get_warped_cartesian_sampling_coords
 from fovi.sensing.retina import RetinalTransform
 
 
 SENSORS = (
+    ("square_foveated_as_grid", "square_foveated", ("square",)),
     ("warped_cartesian_as_grid", "warped_cartesian",
      ("circular", "square", "wang")),
     ("logpolar_as_grid", "logpolar", ("circular", "square")),
@@ -113,14 +114,8 @@ def save_source_reference(image, args):
 
 def render_grid(samples, style, path, dpi):
     rgb = samples[0].detach().cpu()
-    if style == "warped_cartesian_as_grid":
-        # The native tensor axes are x then y. Orient x horizontally and +y up
-        # for display without changing the stored downstream representation.
-        rgb = rgb.permute(2, 1, 0).flip(0)
-    else:
-        # Native log-polar image axes are angle then eccentricity, so the
-        # ordinary CHW-to-HWC conversion already gives the intended display.
-        rgb = rgb.permute(1, 2, 0)
+    # RetinalTransform already returns upright Cartesian images.
+    rgb = rgb.permute(1, 2, 0)
 
     fig, ax = plt.subplots(figsize=(6, 4), facecolor="black")
     ax.set_facecolor("black")
@@ -150,6 +145,34 @@ def render_isotropic(samples, retinal_transform, path, dpi):
     plt.close(fig)
 
 
+def render_square_shell_comparison(args: argparse.Namespace) -> Path:
+    """Show native square shells and samples after each Cartesian warp."""
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    edge = torch.linspace(-1, 1, 129)
+    perimeter = torch.cat((
+        torch.stack((edge, -torch.ones_like(edge)), -1),
+        torch.stack((torch.ones_like(edge), edge), -1),
+        torch.stack((edge.flip(0), torch.ones_like(edge)), -1),
+        torch.stack((-torch.ones_like(edge), edge.flip(0)), -1),
+    ))
+    for ax, style, coverage, title in zip(
+            axes, ('square_foveated', 'warped_cartesian'), ('square', 'wang'),
+            ('Square foveated', 'Warped Cartesian / Wang')):
+        coords = SamplingCoords(args.fov, args.cmf_a, 24, style=style, fov_type=coverage)
+        ax.scatter(*coords.cartesian.T.numpy(), s=2, color='black', alpha=0.4)
+        for radius in (0.2, 0.4, 0.6, 0.8, 1.0):
+            shell = coords.native_to_visual(perimeter * radius)
+            ax.plot(*shell.T.numpy(), linewidth=1)
+        ax.add_patch(Rectangle((-1, -1), 2, 2, fill=False, linestyle='--', color='black'))
+        ax.set(title=title, xlabel='Visual x / half-FoV', ylabel='Visual y / half-FoV')
+        ax.set_aspect('equal')
+    fig.tight_layout()
+    path = args.output_dir / 'square_shell_comparison.png'
+    fig.savefig(path, dpi=args.dpi)
+    plt.close(fig)
+    return path
+
+
 def main():
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -158,7 +181,7 @@ def main():
     fixation = torch.tensor(
         [[args.fixation_row, args.fixation_col]], dtype=batch.dtype)
 
-    generated = [save_source_reference(image, args)]
+    generated = [save_source_reference(image, args), render_square_shell_comparison(args)]
     metadata = []
     for style, filename_stem, fov_types in SENSORS:
         for fov_type in fov_types:

@@ -9,6 +9,7 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
 
    read_me
    quickstart
+   square_foveated
    package_boundaries
    releases
 
@@ -30,5 +31,4 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
    api/fovi.paths
    api/fovi.trainer
    api/fovi.visualizer
-
 

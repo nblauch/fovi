@@ -4,6 +4,9 @@ Welcome to the `fovi` codebase, a PyTorch library for implementing foveated visi
 
 We provide an interactive walkthrough of the methods and results at https://nblauch.github.io/fovi/
 
+For a full square image with concentric-square foveation, see
+[square-foveated sensing](docs/square_foveated.md).
+
 Version **2.0.0** introduces the sensing, model, and training package boundaries.
 The pre-refactor source is the 1.0 baseline. Main can advance between releases; record a Git
 commit for reproducible source installs. See [versions and releases](https://nblauch.github.io/fovi/docs/releases.html).

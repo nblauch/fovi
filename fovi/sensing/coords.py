@@ -11,15 +11,21 @@ SAMPLING_STYLES = (
     'isotropic', 'isotropic_fixn',
     'logpolar', 'logpolar_as_grid',
     'warped_cartesian', 'warped_cartesian_as_grid',
+    'square_foveated', 'square_foveated_as_grid',
     'uniform', 'uniform_as_grid',
 )
 FOV_TYPES = ('circular', 'square', 'wang')
 WARPED_CARTESIAN_STYLES = (
     'warped_cartesian', 'warped_cartesian_as_grid')
+SQUARE_FOVEATED_STYLES = ('square_foveated', 'square_foveated_as_grid')
+CARTESIAN_WARP_STYLES = (*WARPED_CARTESIAN_STYLES, *SQUARE_FOVEATED_STYLES)
+CARTESIAN_GRID_STYLES = ('warped_cartesian_as_grid', 'square_foveated_as_grid')
 
 
 def _validate_fov_type(fov_type, style=None):
     """Validate an FoV type and its optional sensor-style constraint."""
+    if style in SQUARE_FOVEATED_STYLES and fov_type != 'square':
+        raise ValueError("Square-foveated sensors require fov_type='square'")
     if fov_type not in FOV_TYPES:
         raise ValueError(
             f"fov_type must be one of {FOV_TYPES}, got {fov_type!r}")
@@ -43,6 +49,39 @@ def _fov_valid_mask(cartesian, fov_type, max_val=1.0):
     return (
         torch.amax(torch.abs(cartesian), dim=1)
         <= square_half_extent + eps)
+
+
+def _validate_square_geometry(fov: float, cmf_a: float, res: int,
+                              max_val: float, field_geometry: str = 'planar') -> None:
+    if not all(np.isfinite(value) and value > 0 for value in (fov, cmf_a, max_val)):
+        raise ValueError("Square-foveated fov, cmf_a, and max_val must be finite and positive")
+    if isinstance(res, bool) or not isinstance(res, (int, np.integer)) or res <= 0:
+        raise ValueError("Square-foveated resolution must be a positive integer")
+    if field_geometry == 'spherical' and (fov > 180 or np.sqrt(2) * max_val * fov / 2 >= 180):
+        raise ValueError("Spherical square footprint must stay below 180 degrees eccentricity and FoV must not exceed 180 degrees")
+
+
+def _square_foveated_mapping(coordinates: torch.Tensor, fov: float,
+                             cmf_a: float, max_val: float,
+                             *, inverse: bool = False) -> torch.Tensor:
+    """Map (..., 2) coordinates between native and visual square charts.
+
+    The infinity norm makes every square shell share one magnification.
+    The analytic center limit preserves finite derivatives at the origin.
+    """
+    radius = coordinates.abs().amax(dim=-1, keepdim=True)
+    half_fov = fov / 2.0
+    axis_scale = np.log1p(max_val * half_fov / cmf_a)
+    if inverse:
+        mapped_radius = max_val * torch.log1p(radius * half_fov / cmf_a) / axis_scale
+        center_scale = max_val * half_fov / (cmf_a * axis_scale)
+    else:
+        mapped_radius = cmf_a / half_fov * torch.expm1(radius / max_val * axis_scale)
+        center_scale = cmf_a * axis_scale / (half_fov * max_val)
+    scale = torch.where(
+        radius > 0, mapped_radius / radius.clamp_min(torch.finfo(radius.dtype).tiny),
+        torch.full_like(radius, center_scale))
+    return coordinates * scale
 
 
 def _inverse_warped_cartesian(
@@ -127,6 +166,7 @@ class SamplingCoords():
         dtype (torch.dtype): What data type to use.
         fov_type (str): One of ``'circular'``, ``'square'``, or ``'wang'``.
             The last is only valid for warped Cartesian sensor styles.
+            Square-foveated styles require ``'square'`` and retain every cell.
     """
     def __init__(self, fov, cmf_a, res, device='cpu', style='isotropic',
                  dtype=torch.float,
@@ -137,6 +177,8 @@ class SamplingCoords():
 
         validate_field_geometry(field_geometry)
         self.field_geometry = field_geometry
+        if style in SQUARE_FOVEATED_STYLES:
+            _validate_square_geometry(fov, cmf_a, res, max_val, field_geometry)
         if field_geometry == 'spherical' and 'logpolar' in style:
             raise ValueError("Spherical geometry requires an angular sample set, not a flattened grid topology")
         if 'warped_cartesian' in style:
@@ -164,7 +206,7 @@ class SamplingCoords():
                 0, 2, device=device, dtype=dtype)
             self.cartesian_pad_coords = torch.empty(
                 0, 2, device=device, dtype=dtype)
-            if 'warped_cartesian' in style or 'logpolar' in style:
+            if style in CARTESIAN_WARP_STYLES or 'logpolar' in style:
                 self.cortical = torch.zeros(
                     1, 2, device=device, dtype=dtype)
                 self.cortical_pad_coords = torch.empty(
@@ -209,9 +251,9 @@ class SamplingCoords():
                         f"grid requires FoV <= {2 * limit / extent:g} degrees; "
                         "padding changes when the grid is rebuilt at a different FoV.")
 
-            if 'warped_cartesian' in style:
+            if style in CARTESIAN_WARP_STYLES:
                 # The native topology of this sensor is its regular Cartesian
-                # lattice in the radially warped plane.
+                # lattice in the warped plane.
                 self.cortical = self.plotting.clone()
                 self.cortical_pad_coords = self._warped_cartesian_pad_plotting.to(
                     device=device, dtype=dtype)
@@ -269,22 +311,24 @@ class SamplingCoords():
         shape = (*values.shape[:sample_dim], self.resolution, self.resolution,
                  *values.shape[sample_dim + 1:])
         grid = values.reshape(shape)
-        if self.style in ('uniform_as_grid', 'warped_cartesian_as_grid'):
+        if self.style in ('uniform_as_grid', *CARTESIAN_GRID_STYLES):
             grid = grid.transpose(sample_dim, sample_dim + 1).flip(sample_dim)
         return grid.contiguous()
 
     def native_to_visual(self, coordinates: torch.Tensor) -> torch.Tensor:
-        """Map (..., 2) native warped Cartesian coordinates to the visual chart.
+        """Map (..., 2) native Cartesian warp coordinates to the visual chart.
 
         Visual chart radius one is half the configured FoV. For spherical
         geometry this is angular eccentricity, not a pinhole projection.
         The unbounded chart includes masked cells outside the model footprint;
         renderers must handle their own angular padding domain.
         """
-        if self.style not in WARPED_CARTESIAN_STYLES:
-            raise ValueError("Analytic native mapping requires a warped Cartesian sensor")
+        if self.style not in CARTESIAN_WARP_STYLES:
+            raise ValueError("Analytic native mapping requires a Cartesian warp sensor")
         if coordinates.shape[-1] != 2:
             raise ValueError("Native coordinates must end in a two-coordinate axis")
+        if self.style in SQUARE_FOVEATED_STYLES:
+            return _square_foveated_mapping(coordinates, self.fov, self.cmf_a, self.max_val)
         visual, _ = _inverse_warped_cartesian(
             coordinates.reshape(-1, 2), self.fov, self.cmf_a,
             radius_normalizer=_warped_cartesian_radius_normalizer(
@@ -293,10 +337,13 @@ class SamplingCoords():
 
     def visual_to_native(self, coordinates: torch.Tensor) -> torch.Tensor:
         """Map (..., 2) normalized visual-chart positions to the native grid."""
-        if self.style not in WARPED_CARTESIAN_STYLES:
-            raise ValueError("Analytic native mapping requires a warped Cartesian sensor")
+        if self.style not in CARTESIAN_WARP_STYLES:
+            raise ValueError("Analytic native mapping requires a Cartesian warp sensor")
         if coordinates.shape[-1] != 2:
             raise ValueError("Visual coordinates must end in a two-coordinate axis")
+        if self.style in SQUARE_FOVEATED_STYLES:
+            return _square_foveated_mapping(
+                coordinates, self.fov, self.cmf_a, self.max_val, inverse=True)
         radius = torch.linalg.vector_norm(coordinates, dim=-1, keepdim=True)
         axis_scale = np.log1p((self.fov / 2.0) / self.cmf_a)
         normalizer = _warped_cartesian_radius_normalizer(
@@ -324,7 +371,7 @@ class SamplingCoords():
         Returns:
             torch.Tensor: Additional cartesian coordinates for padding.
         """
-        if 'warped_cartesian' in self.style:
+        if self.style in CARTESIAN_WARP_STYLES:
             step = 2 * self.max_val / self.resolution
             centers = torch.linspace(
                 -self.max_val + step / 2, self.max_val - step / 2,
@@ -347,10 +394,7 @@ class SamplingCoords():
                     offsets[None, :] < self.resolution))
             plotting_pad = plotting_grid[~inner]
             self._warped_cartesian_pad_plotting = plotting_pad
-            pad_coords, _ = _inverse_warped_cartesian(
-                plotting_pad, self.fov, self.cmf_a,
-                radius_normalizer=_warped_cartesian_radius_normalizer(
-                    self.fov_type, self.fov, self.cmf_a, self.max_val))
+            pad_coords = self.native_to_visual(plotting_pad)
             return pad_coords.to(device=device, dtype=dtype)
 
         if 'logpolar' in self.style:
@@ -788,6 +832,40 @@ def get_logpolar_image_sampling_coords(
 
 
 @add_to_all(__all__)
+def get_square_foveated_sampling_coords(
+        fov: float, cmf_a: float, res: int, device: str = 'cpu',
+        max_val: float = 1, fov_type: str = 'square',
+        return_valid_mask: bool = False) -> tuple[torch.Tensor, ...]:
+    """Build a pixel-centered lattice with concentric-square CMF growth.
+
+    Args:
+        fov: Visual chart side extent in degrees at max_val=1.
+        cmf_a: Positive CMF offset in degrees.
+        res: Number of samples per native axis.
+        device: Device for the returned tensors.
+        max_val: Half-side of both native and visual chart boundaries.
+        fov_type: Must be ``square``.
+        return_valid_mask: Append an all-valid mask.
+
+    Returns:
+        Visual Cartesian, Euclidean polar, and native coordinates, each
+        shaped (res * res, 2), followed by the optional validity mask.
+    """
+    _validate_fov_type(fov_type, style='square_foveated')
+    _validate_square_geometry(fov, cmf_a, res, max_val)
+    step = max_val / res
+    axis = torch.linspace(-max_val + step, max_val - step, res, device=device)
+    xx, yy = torch.meshgrid(axis, axis, indexing='ij')
+    native = torch.stack((xx, yy), dim=-1).reshape(-1, 2)
+    visual = _square_foveated_mapping(native, fov, cmf_a, max_val)
+    polar = torch.stack((visual.norm(dim=-1), torch.atan2(visual[:, 1], visual[:, 0])), dim=-1)
+    result = (visual, polar, native)
+    if return_valid_mask:
+        return (*result, torch.ones(res * res, dtype=torch.bool, device=device))
+    return result
+
+
+@add_to_all(__all__)
 def get_warped_cartesian_sampling_coords(
         fov, cmf_a, res, device='cpu', max_val=1,
         fov_type='circular', return_valid_mask=False):
@@ -1022,7 +1100,8 @@ def get_sampling_coords(
         res (int): Resolution parameter.
         device (str, optional): Device to run computation on. Defaults to 'cpu'.
         style (str): Sampling style, including ``isotropic``, ``logpolar``,
-            ``warped_cartesian``, and their supported ``_as_grid`` variants.
+            ``warped_cartesian``, ``square_foveated``, and their supported
+            ``_as_grid`` variants.
         max_val (float, optional): Maximum x/y value. Defaults to 1.
         fov_type (str, optional): FoV geometry. ``'wang'`` is only valid with
             a warped-Cartesian sensor style.
@@ -1046,6 +1125,8 @@ def get_sampling_coords(
             f"style must be one of {SAMPLING_STYLES}, got {style!r}")
     validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
+    if style in SQUARE_FOVEATED_STYLES:
+        _validate_square_geometry(fov, cmf_a, res, max_val, field_geometry)
     if style == 'uniform' or style == 'uniform_as_grid':
         step = max_val / res
         coords = torch.linspace(-max_val + step, max_val - step, res)
@@ -1053,6 +1134,11 @@ def get_sampling_coords(
         polar_coords = torch.stack([torch.sqrt(coords[:,0]**2 + coords[:,1]**2), torch.arctan2(coords[:,1], coords[:,0])], dim=1)
         plotting_coords = coords.clone()
         valid_mask = torch.ones(coords.shape[0], device=device, dtype=torch.bool)
+        masked_coords = coords.new_empty((0, 2))
+    elif style in SQUARE_FOVEATED_STYLES:
+        coords, polar_coords, plotting_coords, valid_mask = get_square_foveated_sampling_coords(
+            fov, cmf_a, res, device=device, max_val=max_val,
+            fov_type=fov_type, return_valid_mask=True)
         masked_coords = coords.new_empty((0, 2))
     elif 'warped_cartesian' in style:
         coords, polar_coords, plotting_coords, valid_mask = (
@@ -1189,6 +1275,9 @@ def num_sampling_coords(
     """
     validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
+    if style in SQUARE_FOVEATED_STYLES:
+        _validate_square_geometry(fov, cmf_a, res, 1.0, field_geometry)
+        return res ** 2
     if style == 'isotropic':
         return num_sampling_coords_isotropic(
             fov, cmf_a, res, device=device, fov_type=fov_type, field_geometry=field_geometry)

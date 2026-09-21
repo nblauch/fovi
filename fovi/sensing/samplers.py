@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from ..arch.knn import KNNPoolingLayer
 from ..utils import add_to_all
-from .coords import SamplingCoords, transform_sampling_grid, xy_to_colrow
+from .coords import CARTESIAN_WARP_STYLES, SamplingCoords, transform_sampling_grid, xy_to_colrow
 from .projection import (
     CameraCalibration,
     CameraModel,
@@ -221,7 +221,7 @@ class GridSampler(BaseGridSampler):
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
         angular_coords = self.coords.cartesian.float()
-        if field_geometry == 'spherical' and 'warped_cartesian' in style:
+        if field_geometry == 'spherical' and style in CARTESIAN_WARP_STYLES:
             # Masked corners belong to an unbounded chart, not physical camera rays.
             angular_coords = torch.where(self.coords.valid_mask[:, None], angular_coords, 0)
         self.register_buffer('canonical_directions', angular_directions(angular_coords, fov), persistent=False)
