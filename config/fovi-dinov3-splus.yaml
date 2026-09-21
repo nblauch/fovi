@@ -27,6 +27,7 @@ model:
     mlp_ratio: 4.0
     dropout: 0.2
     pos_emb_type: rope
+    position_coordinate_space: null  # Native cortical positions for grids, Cartesian for vectors.
     patch_overlap_factor: null
     force_patches_less_than_matched: false
     new_parameterization: null

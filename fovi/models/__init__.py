@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from .._optional import require_dependencies
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from torch import nn
 
     from .architectures import ARCHITECTURE_REGISTRY
@@ -18,6 +20,7 @@ if TYPE_CHECKING:
         find_config,
         get_model_from_base_fn,
         load_config,
+        resolve_model_path,
     )
 
 require_dependencies(
@@ -31,6 +34,7 @@ __all__ = [
     "find_config",
     "get_model_from_base_fn",
     "load_config",
+    "resolve_model_path",
 ]
 
 
@@ -39,7 +43,7 @@ def __getattr__(
 ) -> (
     type[FoviNet]
     | dict[str, Callable[..., nn.Module]]
-    | Callable[..., nn.Module | ConfigCheckpoint]
+    | Callable[..., nn.Module | ConfigCheckpoint | Path]
 ):
     modules = {
         "FoviNet": "fovi.models.fovinet",
@@ -47,6 +51,7 @@ def __getattr__(
         "find_config": "fovi.models.loading",
         "load_config": "fovi.models.loading",
         "get_model_from_base_fn": "fovi.models.loading",
+        "resolve_model_path": "fovi.models.loading",
     }
     if name not in modules:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

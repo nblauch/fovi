@@ -60,10 +60,6 @@ class Trainer:
         """
         self.cfg = cfg
 
-        # Convert config to dictionary once for efficiency
-        self.cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-        self.cfg_dict_flat = flatten_dict(self.cfg_dict)
-
         reproducible_results(cfg.training.seed)
 
         # Extract distributed training parameters from config
@@ -92,8 +88,6 @@ class Trainer:
         self.batch_size = cfg.training.batch_size
         self.uid = str(uuid4())
 
-        self.initialize_remote_logger()
-
         self.start_epoch = 0
         self.loss_name = cfg.training.loss
         self.use_amp = cfg.training.use_amp
@@ -102,6 +96,10 @@ class Trainer:
         # Create SSL model, scaler, and optimizer
         self.model, self.scaler = self.create_model_and_scaler()
         self.model_ = get_model(self.model, cfg.training.distributed)
+        # Model construction resolves optional geometry and positional settings.
+        self.cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+        self.cfg_dict_flat = flatten_dict(self.cfg_dict)
+        self.initialize_remote_logger()
         if not cfg.training.train_probes_only:
             print(self.model_)
         self.num_features = self.model_.num_features
@@ -199,6 +197,19 @@ class Trainer:
         # Load models if checkpoint exists
         if load_checkpoint:
             self.load_checkpoint()
+
+        if self.rank == 0 and not cfg.training.eval_only:
+            # This file describes the run that owns the folder's checkpoints, so
+            # only a run that writes them may republish it, and only once
+            # checkpoint restoration has succeeded. An evaluation run reuses the
+            # folder without writing checkpoints, and its overrides must not
+            # redefine how those checkpoints are later loaded. The original
+            # Hydra launch files stay as provenance, including on resume.
+            resolved_path = self.log_folder / 'resolved_config.yaml'
+            temporary_path = resolved_path.with_suffix('.yaml.tmp')
+            OmegaConf.save(OmegaConf.create(self.cfg_dict), temporary_path)
+            temporary_path.replace(resolved_path)
+            self.publish_checkpoint_file(resolved_path)
 
     def setup_distributed(self):
         """Initialize distributed training process group."""
@@ -575,13 +586,17 @@ class Trainer:
 
         if self.rank == 0:
             self.save_checkpoint(epoch + 1)
+            final_path = self.log_folder / 'final_weights.pth'
+            temporary_path = final_path.with_suffix('.pth.tmp')
             torch.save(dict(
                 epoch=epoch,
                 state_dict=self.model_.state_dict(),
                 probes=self.probes.state_dict(),
                 params=self.cfg_dict,
                 lr_scheduler=self.lr_scheduler.state_dict() if self.lr_schedule else None,
-            ), self.log_folder / 'final_weights.pth')
+            ), temporary_path)
+            temporary_path.replace(final_path)
+            self.publish_checkpoint_file(final_path)
 
         return all_stats
 
@@ -662,7 +677,20 @@ class Trainer:
                 params=params
             )
             save_name = f"model.pth"
-        torch.save(state, self.log_folder / save_name)
+        checkpoint_path = self.log_folder / save_name
+        temporary_path = checkpoint_path.with_suffix('.pth.tmp')
+        torch.save(state, temporary_path)
+        temporary_path.replace(checkpoint_path)
+        self.publish_checkpoint_file(checkpoint_path)
+
+    def publish_checkpoint_file(self, path: Path) -> None:
+        """Publish a completed checkpoint or config file while training continues.
+
+        W&B run files are keyed by name, so each upload replaces the run's
+        previous copy and only the latest checkpoint is ever stored.
+        """
+        if self.rank == 0 and self.cfg.logging.use_wandb:
+            wandb.save(str(path), base_path=str(self.log_folder), policy='now')
 
     def train_loop(self, epoch, max_batches=None):
         """Execute one epoch of training.
@@ -1111,21 +1139,21 @@ class Trainer:
 
         self.log_folder = Path(folder)
 
-    def copy_hydra_outputs(self):
-        """Copy Hydra output files to our log directory."""
+    def copy_hydra_outputs(self) -> None:
+        """Archive launch configuration without overwriting the original on resume."""
         if self.rank != 0:
             return
-        try:
-            hydra_cfg = hydra.core.hydra_config.HydraConfig.get()
-        except Exception as e:
-            print(e)
-            print('skipping hydra directory copying')
+        if not hydra.core.hydra_config.HydraConfig.initialized():
             return
+        hydra_cfg = hydra.core.hydra_config.HydraConfig.get()
         hydra_output_dir = Path(hydra_cfg.run.dir)
 
         # Only copy if Hydra output directory is different from our log directory
         if hydra_output_dir != self.log_folder and hydra_output_dir.exists():
-            shutil.copytree(hydra_output_dir / '.hydra', self.log_folder / 'hydra')
+            destination = self.log_folder / 'hydra'
+            if destination.exists() and (self.cfg.training.from_checkpoint or self.cfg.training.eval_only):
+                destination = self.log_folder / 'hydra-resumes' / str(uuid4())
+            shutil.copytree(hydra_output_dir / '.hydra', destination)
         print(f"Copying Hydra outputs from {hydra_output_dir} to {self.log_folder}")
 
     def initialize_remote_logger(self):

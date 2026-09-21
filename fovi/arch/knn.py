@@ -413,8 +413,11 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
             torch.Tensor: Gaussian weights of shape (k, num_output_nodes)
         """
 
-        # Normalize over each neighborhood
-        k_distances = normalize(self.knn_distances, dim=0)
+        # Equal-distance native-grid neighbors must receive equal weights.
+        distance_min = self.knn_distances.min(dim=0, keepdim=True).values
+        distance_span = self.knn_distances.max(dim=0, keepdim=True).values - distance_min
+        distance_span = torch.where(distance_span > 0, distance_span, 1)
+        k_distances = (self.knn_distances - distance_min) / distance_span
         
         # Compute Gaussian weights: exp(-distance^2 / (2 * sigma^2))
         gaussian_weights = torch.exp(-k_distances**2 / (2 * self.gauss_sigma**2))

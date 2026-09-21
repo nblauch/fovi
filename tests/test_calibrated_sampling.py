@@ -63,6 +63,46 @@ def test_gaze_rotation_preserves_angles(convention: str) -> None:
     assert float(rotated[0] @ rotated[1]) == pytest.approx(0.5, abs=1e-6)
 
 
+@pytest.mark.parametrize("convention", ["camera_xyz", "pan_tilt"])
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("autocast", [False, True])
+def test_gaze_rotation_retains_float32_precision(
+    convention: str,
+    device: str,
+    autocast: bool,
+) -> None:
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    # Near-axis commands still need the small second-order diagonal terms.
+    x = torch.linspace(-0.02, 0.02, 48)
+    targets = torch.stack((x, x.flip(0) * 0.7, torch.ones_like(x)), -1)
+    targets = torch.cat((targets, torch.tensor([[0.5, -0.3, 1.0], [-0.8, 0.4, 0.2]])))
+    expected = gaze_rotation(targets.double(), convention)
+    targets = targets.to(device)
+    previous_precision = torch.get_float32_matmul_precision()
+    try:
+        torch.set_float32_matmul_precision("high")
+        with torch.autocast(device, dtype=torch.bfloat16, enabled=autocast):
+            actual = gaze_rotation(targets, convention)
+    finally:
+        torch.set_float32_matmul_precision(previous_precision)
+    assert actual.dtype == torch.float32
+    actual = actual.double().cpu()
+    torch.testing.assert_close(actual, expected, atol=2e-7, rtol=2e-7)
+    torch.testing.assert_close(
+        actual.transpose(-1, -2) @ actual,
+        torch.eye(3, dtype=torch.float64).expand_as(actual),
+        atol=3e-7,
+        rtol=3e-7,
+    )
+    torch.testing.assert_close(
+        actual[..., 2],
+        torch.nn.functional.normalize(targets.double().cpu(), dim=-1),
+        atol=2e-7,
+        rtol=2e-7,
+    )
+
+
 def test_off_axis_sampling_uses_rotated_rays() -> None:
     camera = CameraModel("pinhole", (80, 120), (60, 60, 59.5, 39.5))
     sampler = GridSampler(

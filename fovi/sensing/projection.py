@@ -347,11 +347,10 @@ def gaze_rotation(directions: Tensor, convention: str = "camera_xyz") -> Tensor:
         torch.cos(roll),
         torch.sin(roll),
     )
-    zero, one = torch.zeros_like(cp), torch.ones_like(cp)
-    rx = torch.stack((one, zero, zero, zero, cr, -sr, zero, sr, cr), -1).reshape(
-        *x.shape, 3, 3
-    )
-    ry = torch.stack((cp, zero, sp, zero, one, zero, -sp, zero, cp), -1).reshape(
-        *x.shape, 3, 3
-    )
-    return rx @ ry if convention == "camera_xyz" else ry @ rx
+    zero = torch.zeros_like(cp)
+    # Scalar products preserve rotation precision under autocast and TF32.
+    if convention == "camera_xyz":
+        entries = (cp, zero, sp, sr * sp, cr, -sr * cp, -cr * sp, sr, cr * cp)
+    else:
+        entries = (cp, sp * sr, sp * cr, zero, cr, -sr, -sp, cp * sr, cp * cr)
+    return torch.stack(entries, -1).reshape(*x.shape, 3, 3)

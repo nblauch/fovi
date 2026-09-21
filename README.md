@@ -105,7 +105,7 @@ model = get_model_from_base_fn(
 images = torch.randint(0, 256, (1, 3, 256, 256), dtype=torch.uint8, device='cuda')
 with torch.inference_mode():
     embeddings, layers, retinal_samples = model(
-        images, setting='supervised', fixations=[(0.5, 0.5)],
+        images, setting='supervised', fixations=[torch.tensor([0.5, 0.5])],
         n_fixations=1, do_postproc=False,
     )
     logits = model.head(embeddings)
@@ -115,6 +115,27 @@ Inference uses `.[models]` and needs no FFCV, datasets, trainer, or `FOVI_*_DIR`
 environment variables. The checkpoint configuration retains its historical `training`
 section for model dimensions and preprocessing; reading that data does not import the
 training runtime.
+
+Training checkpoints can also be loaded directly from W&B while a run is still
+training (install `wandb` alongside `fovi[models]`):
+
+```python
+model = get_model_from_base_fn(
+    'wandb://entity/project/exact-run-name-or-id', device='cuda'
+).eval()
+```
+
+The default checkpoint is `model.pth`; append `#final_weights.pth` to select a
+different published checkpoint. Run names must match exactly and uniquely;
+ambiguous names require the run ID. Each load checks for an updated checkpoint,
+and caches its weights and embedded configuration together. Normal Fovi training
+publishes its latest checkpoint at `logging.checkpoint_freq` and at completion
+when W&B is enabled; each upload replaces the run's previous copy, so a run keeps
+only its newest checkpoint. Loading an exact revision of a still-training run
+therefore needs its checksum, reported in a cached snapshot's `source.json`.
+Older runs need their existing checkpoint uploaded to the run first.
+For consumers that configure a sensor before loading weights,
+`fovi.models.resolve_model_path(uri)` pins both to one immutable local snapshot.
 
 ## 📝 Example notebooks
 

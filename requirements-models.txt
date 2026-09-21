@@ -1,4 +1,5 @@
 accelerate
+filelock
 huggingface_hub
 hydra-core
 omegaconf

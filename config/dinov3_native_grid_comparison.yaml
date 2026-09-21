@@ -1,0 +1,26 @@
+# Matched sensor/position comparison; batch_size is per GPU.
+defaults:
+  - fovi-dinov3-splus
+  - _self_
+
+model:
+  vit:
+    patch_size: 16
+    position_coordinate_space: cartesian
+
+saccades:
+  field_geometry: planar
+  resize_size: 128
+  fov: 16.0
+  cmf_a: 0.576336  # cmf_a / fov = 0.036021
+  fov_type: circular
+  sampler: grid_nn
+
+training:
+  batch_size: 128
+  distributed: 1
+
+dist:
+  ngpus: 4
+  world_size: 4
+  port: 29500
