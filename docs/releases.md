@@ -45,6 +45,30 @@ previous upload. Training also writes `resolved_config.yaml` alongside its
 checkpoints, recording the settings resolved while building the model;
 checkpoint loading prefers it over the original Hydra launch config.
 
+## 2.1.0
+
+Version 2.1.0 corrects the planar field geometry and adds calibrated spherical
+sampling, selected through the new `saccades.field_geometry` setting.
+
+- `planar` uses the corrected unbounded planar field.
+- `spherical` treats eccentricity as an angle on the sphere, bounded by the
+  cortical-magnification limit. It requires a retinal transform, so
+  `saccades.mode` cannot be null.
+- `legacy` reproduces the pre-2.1.0 integration mesh and endpoints exactly.
+
+A configuration without `saccades.field_geometry` resolves to `legacy` and warns,
+so existing checkpoints keep the geometry they were trained with. Set the value
+explicitly: choose `planar` or `spherical` for new training, and `legacy` for
+weights trained before 2.1.0. Moving existing weights onto `planar` or
+`spherical` changes KNN neighborhoods and can change predictions.
+
+Foveal density can be fit at construction time against a calibrated source
+camera model, with a CUDA sampling path for the calibrated grids.
+
+## 2.0.1
+
+Optional KNN backend discovery is cached outside forward passes.
+
 ## 2.0.0
 
 Version 2.0.0 separates sensing, models, and training within a single `fovi`
