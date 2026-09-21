@@ -18,9 +18,9 @@ git rev-parse HEAD
 git status --short
 ```
 
-## 2.1.0
+## 2.2.0
 
-Version 2.1.0 reorients grid-shaped sensor outputs, makes DINOv3 position
+Version 2.2.0 reorients grid-shaped sensor outputs, makes DINOv3 position
 coordinates selectable, and adds checkpoint loading from W&B runs.
 
 **Breaking: grid-shaped sensor outputs are now upright.** The `uniform_as_grid`
@@ -28,9 +28,9 @@ and `warped_cartesian_as_grid` styles return rows ordered top to bottom and
 columns left to right. Previously they kept the sampler's
 `meshgrid(indexing='ij')` order, which is a transpose and a vertical flip away
 from the new layout. Nothing records which layout a checkpoint was trained with,
-so a model trained on either style before 2.1.0 receives rotated and mirrored
+so a model trained on either style before 2.2.0 receives rotated and mirrored
 input after upgrading, and its accuracy collapses without raising an error.
-Retrain those models on 2.1.0, or pin the earlier version to keep using them.
+Retrain those models on 2.2.0, or pin 2.1.0 to keep using them.
 Styles that do not end in `_as_grid` are unaffected.
 
 DINOv3 position coordinates are selectable through
