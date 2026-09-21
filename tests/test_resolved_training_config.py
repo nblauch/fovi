@@ -100,6 +100,18 @@ def test_trainer_saves_resolved_positions_and_preserves_launch_config(
     assert (tmp_path / "model" / "hydra" / "config.yaml").read_text() == original
     assert len(list((tmp_path / "model" / "hydra-resumes").iterdir())) == 1
 
+    # An evaluation run reuses the folder without writing checkpoints, so its
+    # overrides must not redefine how those checkpoints are later loaded.
+    evaluation = copy.deepcopy(saved)
+    evaluation.training.eval_only = True
+    evaluation.training.epochs = 99
+    evaluation.saccades.fixation_size = 16
+    Trainer(None, evaluation)
+    evaluated, _, _ = load_config("model", False, tmp_path)
+    assert evaluated.training.epochs == 2
+    assert evaluated.saccades.fixation_size == 32
+    assert len(list((tmp_path / "model" / "hydra-resumes").iterdir())) == 2
+
     resolved_path = tmp_path / "model" / "resolved_config.yaml"
     resolved_before_failure = resolved_path.read_bytes()
     del checkpoint["model"][next(iter(checkpoint["model"]))]

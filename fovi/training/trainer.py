@@ -198,9 +198,13 @@ class Trainer:
         if load_checkpoint:
             self.load_checkpoint()
 
-        if self.rank == 0:
-            # Publish only after checkpoint restoration succeeds; retain the
-            # original Hydra launch files as provenance, including on resume.
+        if self.rank == 0 and not cfg.training.eval_only:
+            # This file describes the run that owns the folder's checkpoints, so
+            # only a run that writes them may republish it, and only once
+            # checkpoint restoration has succeeded. An evaluation run reuses the
+            # folder without writing checkpoints, and its overrides must not
+            # redefine how those checkpoints are later loaded. The original
+            # Hydra launch files stay as provenance, including on resume.
             resolved_path = self.log_folder / 'resolved_config.yaml'
             temporary_path = resolved_path.with_suffix('.yaml.tmp')
             OmegaConf.save(OmegaConf.create(self.cfg_dict), temporary_path)
