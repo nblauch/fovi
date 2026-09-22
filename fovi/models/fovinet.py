@@ -93,6 +93,7 @@ class FoviNet(nn.Module):
                 isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
                 sampler_backend=getattr(cfg.saccades, 'sampler_backend', 'auto'),
                 fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
+                radius_norm=getattr(cfg.saccades, 'radius_norm', 2.0),
                 camera_model=getattr(cfg.saccades, 'camera_model', None),
                 gaze_convention=getattr(cfg.saccades, 'gaze_convention', 'camera_xyz'),
             )

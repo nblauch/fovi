@@ -48,6 +48,7 @@ class KNNResNetBasicBlock(nn.Module):
                  device='cuda', auto_match_cart_resources=0,
                  isotropic_plotting_type='v1like',
                  fov_type='circular',
+                 radius_norm=2.0,
                  ref_frame_mult=1, field_geometry='planar',
                  ):
         super().__init__()
@@ -79,6 +80,7 @@ class KNNResNetBasicBlock(nn.Module):
             device=device,
             isotropic_plotting_type=isotropic_plotting_type,
             fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm,
         )
 
         # first conv does the stride to out_coords
@@ -182,6 +184,7 @@ class KNNResNetBottleneck(nn.Module):
                  device='cuda', auto_match_cart_resources=0,
                  isotropic_plotting_type='v1like',
                  fov_type='circular',
+                 radius_norm=2.0,
                  ref_frame_mult=1, field_geometry='planar',
                  ):
         super().__init__()
@@ -205,6 +208,7 @@ class KNNResNetBottleneck(nn.Module):
             device=device,
             isotropic_plotting_type=isotropic_plotting_type,
             fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm,
         )
 
         expanded_channels = out_channels * self.expansion
@@ -346,6 +350,7 @@ class KNNResNet(nn.Module):
                  num_classes=None,
                  isotropic_plotting_type='v1like',
                  fov_type='circular',
+                 radius_norm=2.0,
                  ref_frame_mult=1, field_geometry='planar',
                  ):
         super(KNNResNet, self).__init__()
@@ -379,6 +384,7 @@ class KNNResNet(nn.Module):
             auto_match_cart_resources=auto_match_cart_resources,
             isotropic_plotting_type=isotropic_plotting_type,
             fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm,
             ref_frame_mult=ref_frame_mult,
         )
 
@@ -396,6 +402,7 @@ class KNNResNet(nn.Module):
             device=device,
             isotropic_plotting_type=isotropic_plotting_type,
             fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm,
         )
 
         # Always use KNNConvLayer for the first conv; higher-res reference frame per
@@ -429,6 +436,7 @@ class KNNResNet(nn.Module):
             device=device,
             isotropic_plotting_type=isotropic_plotting_type,
             fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm,
         )
         self.in_res = self.pool_coords.resolution
 

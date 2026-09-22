@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from ..arch.knn import KNNPoolingLayer
 from ..utils import add_to_all
-from .coords import CARTESIAN_WARP_STYLES, SamplingCoords, transform_sampling_grid, xy_to_colrow
+from .coords import WARPED_CARTESIAN_STYLES, SamplingCoords, transform_sampling_grid, xy_to_colrow
 from .projection import (
     CameraCalibration,
     CameraModel,
@@ -159,7 +159,7 @@ class GridSampler(BaseGridSampler):
                  mode='nearest', style='isotropic', coords=None,
                  isotropic_plotting_type='v1like', backend='auto',
                  output_dtype=None, fov_type='circular', field_geometry='planar',
-                 camera_model=None, gaze_convention='camera_xyz'):
+                 camera_model=None, gaze_convention='camera_xyz', radius_norm=2.0):
         """
         Initialize the GridSampler.
         
@@ -204,6 +204,7 @@ class GridSampler(BaseGridSampler):
         self._native_uint8_sample_fn = None
         self._native_float_sample_fn = None
         self.fov_type = fov_type
+        self.radius_norm = radius_norm
         self.field_geometry = field_geometry
         self.camera_model = camera_model
         self.gaze_convention = gaze_convention
@@ -213,7 +214,8 @@ class GridSampler(BaseGridSampler):
                 fov, cmf_a, resolution, device=device, style=style,
                 dtype=torch.float32 if field_geometry == 'spherical' else dtype,
                 isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=fov_type, field_geometry=field_geometry)
+                fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm)
         else:
             self.coords = coords
             
@@ -221,7 +223,7 @@ class GridSampler(BaseGridSampler):
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
         angular_coords = self.coords.cartesian.float()
-        if field_geometry == 'spherical' and style in CARTESIAN_WARP_STYLES:
+        if field_geometry == 'spherical' and style in WARPED_CARTESIAN_STYLES:
             # Masked corners belong to an unbounded chart, not physical camera rays.
             angular_coords = torch.where(self.coords.valid_mask[:, None], angular_coords, 0)
         self.register_buffer('canonical_directions', angular_directions(angular_coords, fov), persistent=False)
@@ -638,7 +640,7 @@ class GridSampler(BaseGridSampler):
     def __repr__(self):
         """String representation of the GridSampler."""
         return (f'GridSampler(fov={self.fov}, cmf_a={self.cmf_a}, '
-                f'fov_type={self.fov_type!r}, style={self.style}, '
+                f'fov_type={self.fov_type!r}, radius_norm={self.radius_norm!r}, style={self.style}, '
                 f'resolution={self.resolution}, mode={self.mode}, backend={self.backend}, '
                 f'output_dtype={self.output_dtype}, n={len(self.coords)})')
     
@@ -661,7 +663,8 @@ class KNNGridSampler(BaseGridSampler):
     def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1,
                  fixation_size=3000, k=None, style='isotropic', sample_cortex=True,
                  dtype=torch.float, device='cuda', isotropic_plotting_type='v1like',
-                 backend='auto', output_dtype=None, fov_type='circular', field_geometry='planar'):
+                 backend='auto', output_dtype=None, fov_type='circular', field_geometry='planar',
+                 radius_norm=2.0):
         """
         Initialize the KNNGridSampler.
         
@@ -687,11 +690,13 @@ class KNNGridSampler(BaseGridSampler):
             fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
             device=device, style=style, dtype=dtype,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
         self.coords = SamplingCoords(
             fov, cmf_a, resolution, device=device, style=style, dtype=dtype,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
 
         if k is None:
             # default to the ratio of the number of pixels in the retinal and cortical grids
@@ -705,7 +710,8 @@ class KNNGridSampler(BaseGridSampler):
             device=device, dtype=dtype,
             mode='nearest', style=style, coords=self.highres_coords,
             isotropic_plotting_type=isotropic_plotting_type, backend=backend,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
         self.backend = backend
         self._last_backend = None
 
@@ -730,6 +736,7 @@ class KNNGridSampler(BaseGridSampler):
         self.device = device
         self.style = style
         self.fov_type = fov_type
+        self.radius_norm = radius_norm
         self.num_coords = len(self.coords)
         self.sample_cortex = sample_cortex
 

@@ -2,6 +2,7 @@
 """Render reproducible FoV examples for each supported sensor topology."""
 
 import argparse
+import math
 from pathlib import Path
 import sys
 
@@ -21,12 +22,14 @@ from fovi.sensing.coords import SamplingCoords, get_warped_cartesian_sampling_co
 from fovi.sensing.retina import RetinalTransform
 
 
+# (style, filename stem, fov types, radius norm)
 SENSORS = (
-    ("square_foveated_as_grid", "square_foveated", ("square",)),
+    ("warped_cartesian_as_grid", "warped_cartesian_square_shells",
+     ("square",), math.inf),
     ("warped_cartesian_as_grid", "warped_cartesian",
-     ("circular", "square", "wang")),
-    ("logpolar_as_grid", "logpolar", ("circular", "square")),
-    ("isotropic", "fovi_isotropic_schwartz", ("circular", "square")),
+     ("circular", "square", "wang"), 2.0),
+    ("logpolar_as_grid", "logpolar", ("circular", "square"), 2.0),
+    ("isotropic", "fovi_isotropic_schwartz", ("circular", "square"), 2.0),
 )
 
 
@@ -155,10 +158,12 @@ def render_square_shell_comparison(args: argparse.Namespace) -> Path:
         torch.stack((edge.flip(0), torch.ones_like(edge)), -1),
         torch.stack((-torch.ones_like(edge), edge.flip(0)), -1),
     ))
-    for ax, style, coverage, title in zip(
-            axes, ('square_foveated', 'warped_cartesian'), ('square', 'wang'),
-            ('Square foveated', 'Warped Cartesian / Wang')):
-        coords = SamplingCoords(args.fov, args.cmf_a, 24, style=style, fov_type=coverage)
+    for ax, radius_norm, coverage, title in zip(
+            axes, (math.inf, 2.0), ('square', 'wang'),
+            ('radius_norm=inf (square shells)', 'radius_norm=2.0 / Wang')):
+        coords = SamplingCoords(
+            args.fov, args.cmf_a, 24, style='warped_cartesian',
+            fov_type=coverage, radius_norm=radius_norm)
         ax.scatter(*coords.cartesian.T.numpy(), s=2, color='black', alpha=0.4)
         for radius in (0.2, 0.4, 0.6, 0.8, 1.0):
             shell = coords.native_to_visual(perimeter * radius)
@@ -183,7 +188,7 @@ def main():
 
     generated = [save_source_reference(image, args), render_square_shell_comparison(args)]
     metadata = []
-    for style, filename_stem, fov_types in SENSORS:
+    for style, filename_stem, fov_types, radius_norm in SENSORS:
         for fov_type in fov_types:
             retinal_transform = RetinalTransform(
                 resolution=args.resolution,
@@ -197,6 +202,7 @@ def main():
                 auto_match_cart_resources=True,
                 isotropic_plotting_type="schwartz",
                 fov_type=fov_type,
+                radius_norm=radius_norm,
             ).eval()
             with torch.no_grad():
                 samples = retinal_transform(

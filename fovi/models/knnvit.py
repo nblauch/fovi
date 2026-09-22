@@ -48,7 +48,7 @@ class KNNPatchEmbedding(KNNConvLayer):
                  sample_cortex='geodesic',
                  ref_frame_side_length=None,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular', field_geometry='planar',
+                 fov_type='circular', field_geometry='planar', radius_norm=2.0,
                  **kwargs,
                  ):
         """Initialize KNN tokenization layer.
@@ -88,7 +88,8 @@ class KNNPatchEmbedding(KNNConvLayer):
             force_out_match_less_than=force_patches_less_than_matched,
             max_out_coord_val=max_coord_val,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
 
         if not new_parameterization:
             k = int((cart_patch_size*(out_cart_res)/(np.sqrt(len(out_coords)))*patch_overlap_factor)**2)
@@ -142,7 +143,7 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
                  in_coords=None,
                  out_coords=None,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular', field_geometry='planar',
+                 fov_type='circular', field_geometry='planar', radius_norm=2.0,
                  ):
         """Initialize partitioning patch embedding layer.
 
@@ -180,7 +181,8 @@ class PartitioningPatchEmbedding(KNNPatchEmbedding):
                 force_out_match_less_than=force_patches_less_than_matched,
                 max_out_coord_val=max_coord_val,
                 isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=fov_type, field_geometry=field_geometry)
+                fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm)
 
         self.in_channels = in_channels
         self.out_channels = embed_dim
@@ -298,6 +300,7 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
                 sample_cortex='geodesic',
                 isotropic_plotting_type='v1like',
                 fov_type='circular',
+                radius_norm=2.0,
                 in_coords=None,
                 out_coords=None,
                 field_geometry='planar',
@@ -341,6 +344,7 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
                 max_out_coord_val=max_coord_val,
                 isotropic_plotting_type=isotropic_plotting_type,
                 fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm,
             )
 
         k = int(len(in_coords) / len(out_coords)) # set temporary k for use in geodesic dist computation, if necessary
@@ -411,7 +415,7 @@ class KNNViT(VisionTransformer):
                  aggregation='cls_token',
                  ref_frame_side_length=None,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular', field_geometry='planar',
+                 fov_type='circular', field_geometry='planar', radius_norm=2.0,
                  ):
         """Initialize KNNViT model.
 
@@ -464,6 +468,7 @@ class KNNViT(VisionTransformer):
             ref_frame_side_length=ref_frame_side_length,
             isotropic_plotting_type=isotropic_plotting_type,
             fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm,
         )
 
         # Get cartesian coordinates for positional encoding

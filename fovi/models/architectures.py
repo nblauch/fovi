@@ -130,6 +130,7 @@ def fovi_alexnet2023(cfg, device='cuda'):
         device=device,
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
         fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
+        radius_norm=getattr(cfg.saccades, 'radius_norm', 2.0),
         )
 
     return arch_wrapper(knn, cfg, device=device)
@@ -297,6 +298,7 @@ def build_fovi_resnet_backbone(cfg,
                  num_classes=None,
                  isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
                  fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
+                 radius_norm=getattr(cfg.saccades, 'radius_norm', 2.0),
                  ref_frame_mult=getattr(cfg.model, 'ref_frame_mult', 1) or 1,
         )
 
@@ -402,6 +404,7 @@ def fovi_vit(cfg, embed_dim, num_heads, device='cuda'):
         ref_frame_side_length=cfg.model.vit.get('ref_frame_side_length', None),
         isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
         fov_type=getattr(cfg.saccades, 'fov_type', 'circular'), field_geometry=cfg.saccades.field_geometry,
+        radius_norm=getattr(cfg.saccades, 'radius_norm', 2.0),
     )
 
     return arch_wrapper(backbone, cfg, device=device)

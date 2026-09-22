@@ -50,7 +50,7 @@ class KNNAlexNetBlock(nn.Module):
                  activation=nn.ReLU, sample_cortex=True,
                  device='cuda', auto_match_cart_resources=0, ref_frame_mult=None,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular', field_geometry='planar',
+                 fov_type='circular', field_geometry='planar', radius_norm=2.0,
                  ):
         super().__init__()
 
@@ -63,7 +63,8 @@ class KNNAlexNetBlock(nn.Module):
             auto_match_cart_resources=auto_match_cart_resources,
             in_cart_res=cart_res, device=device,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
 
         # Compute ref_frame_side_length from ref_frame_mult if provided
         if ref_frame_mult is not None:
@@ -101,7 +102,8 @@ class KNNAlexNetBlock(nn.Module):
                 auto_match_cart_resources=auto_match_cart_resources,
                 in_cart_res=out_cart_res, device=device,
                 isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=fov_type, field_geometry=field_geometry)
+                fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm)
 
             self.pool = KNNPoolingLayer(
                 k=pool_k,
@@ -176,7 +178,7 @@ class KNNAlexNet(nn.Module):
                  device='cuda', sample_cortex=True,
                  ref_frame_mult=None,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular', field_geometry='planar',
+                 fov_type='circular', field_geometry='planar', radius_norm=2.0,
                  ):
         super().__init__()
         self.layers = []
@@ -201,6 +203,7 @@ class KNNAlexNet(nn.Module):
                 ref_frame_mult=ref_frame_mult,
                 isotropic_plotting_type=isotropic_plotting_type,
                 fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm,
             )
 
             in_channels = features_per_layer[i]

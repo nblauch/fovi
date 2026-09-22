@@ -127,7 +127,7 @@ class ConvNeXtV2(nn.Module):
                  depths=[3, 3, 9, 3], dims=[96, 192, 384, 768],
                  drop_path_rate=0., head_init_scale=1.,
                  isotropic_plotting_type='v1like',
-                 fov_type='circular', field_geometry='planar',
+                 fov_type='circular', field_geometry='planar', radius_norm=2.0,
                  **kwargs,
                  ):
         super().__init__()
@@ -139,7 +139,8 @@ class ConvNeXtV2(nn.Module):
             auto_match_cart_resources=auto_match_cart_resources,
             in_cart_res=None, device=device,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
 
         self.stage_coords = [out_coords]
 
@@ -155,7 +156,8 @@ class ConvNeXtV2(nn.Module):
                 auto_match_cart_resources=auto_match_cart_resources,
                 in_cart_res=out_cart_res, device=device,
                 isotropic_plotting_type=isotropic_plotting_type,
-                fov_type=fov_type, field_geometry=field_geometry)
+                fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm)
             downsample_layer = nn.Sequential(
                     LayerNorm(dims[i], eps=1e-6, data_format="channels_first"),
                     KNNConvLayer(dims[i], dims[i+1], k=4, in_coords=in_coords, out_coords=out_coords, device=device, bias=True, **kwargs),
@@ -186,7 +188,8 @@ class ConvNeXtV2(nn.Module):
         self.out_coords = SamplingCoords(
             fov, cmf_a, 1, None, style=style, device=device,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
         self.total_embed_dim = dims[-1]
 
     def _init_weights(self, m):
