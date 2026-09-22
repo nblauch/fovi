@@ -123,8 +123,6 @@ def test_spherical_grid_sampling_masks_unbounded_corners(
 ) -> None:
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    if device == "cpu" and backend == "cuda":
-        pytest.skip("native backend requires CUDA")
     retina = RetinalTransform(
         32,
         fov=150,
@@ -140,7 +138,15 @@ def test_spherical_grid_sampling_masks_unbounded_corners(
     assert (coords.polar[:, 0] * 75).max() > 180
     images = torch.rand(2, 3, 128, 128, device=device)
     fixations = torch.tensor([[0.5, 0.5], [0.45, 0.55]], device=device)
+    if device == "cpu" and backend == "cuda":
+        with pytest.raises(
+            RuntimeError,
+            match="CUDA calibrated sampling requires supported CUDA inputs",
+        ):
+            retina(images, fixations)
+        return
     output = retina(images, fixations)
+    assert retina.sampler.last_backend == f"{backend}_calibrated"
     assert output.shape == (2, 3, 32, 32)
     assert torch.isfinite(output).all()
     mask = coords.as_grid(coords.valid_mask)

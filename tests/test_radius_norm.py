@@ -48,9 +48,6 @@ def shell_radius(points: torch.Tensor, radius_norm: float) -> torch.Tensor:
 def test_shells_and_padding(
     radius_norm: float, res: int, max_val: float, field: str
 ) -> None:
-    if field == "spherical" and radius_norm == 2.0 and max_val > 1.0:
-        # The Euclidean corner overshoots past the sphere at this extent.
-        pytest.skip("Euclidean shells exceed 180 degrees beyond the nominal FoV")
     coords = make_coords(radius_norm, res, max_val, field)
     assert len(coords) == res * res
     assert coords.cortical.shape == (res * res, 2)
