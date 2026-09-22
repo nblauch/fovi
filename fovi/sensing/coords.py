@@ -1287,6 +1287,7 @@ def num_sampling_coords(
     """
     validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
+    _validate_radius_norm(radius_norm, fov_type=fov_type, style=style)
     if style == 'isotropic':
         return num_sampling_coords_isotropic(
             fov, cmf_a, res, device=device, fov_type=fov_type, field_geometry=field_geometry)
