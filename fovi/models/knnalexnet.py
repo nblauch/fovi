@@ -189,7 +189,8 @@ class KNNAlexNet(nn.Module):
 
         in_res, cart_res = auto_match_num_coords(
             fov, cmf_a, in_res, style, auto_match_cart_resources,
-            device, quiet=True, fov_type=fov_type, field_geometry=field_geometry)
+            device, quiet=True, fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
 
         for i in range(len(features_per_layer)):
 

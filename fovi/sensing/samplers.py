@@ -203,8 +203,6 @@ class GridSampler(BaseGridSampler):
         self._native_errors = {}
         self._native_uint8_sample_fn = None
         self._native_float_sample_fn = None
-        self.fov_type = fov_type
-        self.radius_norm = radius_norm
         self.field_geometry = field_geometry
         self.camera_model = camera_model
         self.gaze_convention = gaze_convention
@@ -218,7 +216,11 @@ class GridSampler(BaseGridSampler):
                 radius_norm=radius_norm)
         else:
             self.coords = coords
-            
+        # A prebuilt coords object owns its own geometry, which need not match
+        # this constructor's defaults; report what we actually hold.
+        self.fov_type = self.coords.fov_type
+        self.radius_norm = self.coords.radius_norm
+
         self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
