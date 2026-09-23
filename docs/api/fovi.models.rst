@@ -25,3 +25,4 @@ fovi.models package
    fovi.models.probes
    fovi.models.resnet
    fovi.models.vit
+   fovi.models.wandb
