@@ -98,6 +98,27 @@ def generate_module_rst(module_name: str, output_dir: Path) -> None:
     print(f"Generated: {rst_file}")
 
 
+# Prose pages that anchor the Getting Started toctree. Anything else found in
+# docs/ is appended alphabetically, so a new page shows up without editing the
+# generated index by hand.
+PROSE_PAGE_ORDER = ("read_me", "quickstart")
+PROSE_PAGE_LAST = ("package_boundaries", "releases")
+PROSE_PAGE_EXCLUDE = {"index", "examples"}
+
+
+def find_prose_pages(docs_dir: Path) -> list[str]:
+    """Return Getting Started toctree entries for the hand-written docs pages."""
+    found = {
+        path.stem
+        for path in docs_dir.glob("*")
+        if path.suffix in (".md", ".rst") and path.stem not in PROSE_PAGE_EXCLUDE
+    }
+    ordered = [page for page in PROSE_PAGE_ORDER if page in found]
+    last = [page for page in PROSE_PAGE_LAST if page in found]
+    middle = sorted(found - set(ordered) - set(last))
+    return ordered + middle + last
+
+
 def generate_main_index_rst(output_dir: Path, project_root: Path) -> None:
     """Generate the main index.rst with organized sections."""
     # Find all modules and subpackages
@@ -122,11 +143,11 @@ fovi is a PyTorch library for implementing foveated vision. This library provide
    :maxdepth: 2
    :caption: Getting Started
 
-   read_me
-   quickstart
-   package_boundaries
-   releases
+"""
+    for page in find_prose_pages(output_dir):
+        rst_content += f"   {page}\n"
 
+    rst_content += """
 .. toctree::
    :maxdepth: 2
    :caption: Core Components
