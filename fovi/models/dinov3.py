@@ -57,6 +57,7 @@ def configure_dinov3_positions(
         'fov': sensor_coords.fov, 'cmf_a': sensor_coords.cmf_a,
         'resolution': sensor_coords.resolution, 'style': sensor_coords.style,
         'fov_type': sensor_coords.fov_type, 'field_geometry': sensor_coords.field_geometry,
+        'radius_norm': sensor_coords.radius_norm,
     }
     device = model.embeddings.patch_embeddings.weight.device
     native_rope = DINOv3ViTRopePositionEmbedding(model.config).to(device)
@@ -234,6 +235,7 @@ def build_fovi_dinov3(cfg, device='cuda'):
             isotropic_plotting_type=getattr(cfg.saccades, 'isotropic_plotting_type', 'v1like'),
             fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
             field_geometry=cfg.saccades.field_geometry,
+            radius_norm=getattr(cfg.saccades, 'radius_norm', 2.0),
             **kwargs,
         )
         # load in pretrained weights to foveated patch embedding
@@ -275,7 +277,8 @@ def build_fovi_dinov3(cfg, device='cuda'):
             cfg.saccades.fov, cfg.saccades.cmf_a, cfg.saccades.resize_size,
             device=device, style=cfg.saccades.mode,
             fov_type=cfg.saccades.get('fov_type', 'circular'),
-            field_geometry=cfg.saccades.field_geometry)
+            field_geometry=cfg.saccades.field_geometry,
+            radius_norm=cfg.saccades.get('radius_norm', 2.0))
         configure_dinov3_positions(
             model, sensor_coords=sensor_coords, patch_size=cfg.model.vit.patch_size,
             position_coordinate_space=position_space)

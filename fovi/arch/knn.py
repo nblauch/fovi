@@ -1134,7 +1134,7 @@ def get_in_out_coords(
         auto_match_cart_resources=1, in_cart_res=None, device='cuda',
         in_coords=None, force_out_match_less_than=True,
         max_out_coord_val=1, isotropic_plotting_type='v1like',
-        fov_type='circular', field_geometry='planar'):
+        fov_type='circular', field_geometry='planar', radius_norm=2.0):
     """
     Convenience function to generate input and output coordinates for KNN layers.
     
@@ -1167,11 +1167,13 @@ def get_in_out_coords(
             in_res, in_cart_res = auto_match_num_coords(
                 fov, cmf_a, in_cart_res, style,
                 auto_match_cart_resources, device, force_less_than=True,
-                quiet=True, fov_type=fov_type, field_geometry=field_geometry)
+                quiet=True, fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm)
         in_coords = SamplingCoords(
             fov, cmf_a, in_res, device=device, style=style,
             isotropic_plotting_type=isotropic_plotting_type,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
 
     if max_out_coord_val == 'auto':
         tmp_max_val = 1

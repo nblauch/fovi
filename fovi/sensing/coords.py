@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import torch
 
@@ -16,6 +18,9 @@ SAMPLING_STYLES = (
 FOV_TYPES = ('circular', 'square', 'wang')
 WARPED_CARTESIAN_STYLES = (
     'warped_cartesian', 'warped_cartesian_as_grid')
+#: Norms available for measuring native-plane radius in the Cartesian warp.
+#: ``2.0`` gives circular iso-eccentricity shells, ``inf`` gives square ones.
+RADIUS_NORMS = (2.0, math.inf)
 
 
 def _validate_fov_type(fov_type, style=None):
@@ -28,6 +33,31 @@ def _validate_fov_type(fov_type, style=None):
         raise ValueError(
             "fov_type='wang' is only supported by "
             f"{WARPED_CARTESIAN_STYLES}, got style={style!r}")
+
+
+def _validate_radius_norm(radius_norm, fov_type=None, style=None):
+    """Validate the native-plane radius norm against its FoV and style."""
+    if radius_norm not in RADIUS_NORMS:
+        raise ValueError(
+            f"radius_norm must be one of {RADIUS_NORMS}, got {radius_norm!r}")
+    if radius_norm == math.inf and fov_type == 'wang':
+        raise ValueError(
+            "fov_type='wang' normalizes the Euclidean radius at the native "
+            "square's side centers and is undefined for radius_norm=inf")
+    # Only the Cartesian warp measures a native-plane radius, so a non-default
+    # norm would be silently discarded by every other style.
+    if (radius_norm != 2.0 and style is not None
+            and style not in WARPED_CARTESIAN_STYLES):
+        raise ValueError(
+            f"radius_norm={radius_norm!r} only applies to "
+            f"{WARPED_CARTESIAN_STYLES}, got style={style!r}")
+
+
+def _native_radius(coordinates, radius_norm, dim=-1, keepdim=True):
+    """Measure native-plane radius in the requested norm."""
+    if radius_norm == math.inf:
+        return coordinates.abs().amax(dim=dim, keepdim=keepdim)
+    return torch.linalg.vector_norm(coordinates, dim=dim, keepdim=keepdim)
 
 
 def _fov_valid_mask(cartesian, fov_type, max_val=1.0):
@@ -45,17 +75,53 @@ def _fov_valid_mask(cartesian, fov_type, max_val=1.0):
         <= square_half_extent + eps)
 
 
+def _validate_square_shell_geometry(fov: float, cmf_a: float, res: int,
+                                    max_val: float,
+                                    field_geometry: str = 'planar') -> None:
+    """Validate an infinity-norm sensor, whose corners reach sqrt(2) * max_val."""
+    if not all(np.isfinite(value) and value > 0 for value in (fov, cmf_a, max_val)):
+        raise ValueError("Square-shell fov, cmf_a, and max_val must be finite and positive")
+    if isinstance(res, bool) or not isinstance(res, (int, np.integer)) or res <= 0:
+        raise ValueError("Square-shell resolution must be a positive integer")
+    if field_geometry == 'spherical' and (fov > 180 or np.sqrt(2) * max_val * fov / 2 >= 180):
+        raise ValueError("Spherical square footprint must stay below 180 degrees eccentricity and FoV must not exceed 180 degrees")
+
+
+def _warp_law(fov, cmf_a, radius_norm, fov_type='circular', max_val=1.0):
+    """Return the ``(radius_normalizer, rho_axis)`` pair defining the CMF warp.
+
+    Both norms integrate the same inverse-linear CMF ``M(e) ~ 1/(e + cmf_a)``;
+    they differ only in which norm measures the native radius, and in how
+    ``max_val`` reaches the normalizer. Under the Euclidean norm the native
+    unit circle maps to the nominal visual radius and ``max_val`` bounds the
+    footprint by masking. Under the infinity norm the native square of
+    half-side ``max_val`` maps exactly onto the visual square of half-side
+    ``max_val``, so nothing needs masking.
+    """
+    half_fov = fov / 2.0
+    if radius_norm == math.inf:
+        return max_val, np.log1p(max_val * half_fov / cmf_a)
+    normalizer = _warped_cartesian_radius_normalizer(
+        fov_type, fov, cmf_a, max_val)
+    return normalizer, np.log1p(half_fov / cmf_a)
+
+
 def _inverse_warped_cartesian(
-        plotting_coords, fov, cmf_a, radius_normalizer=1.0):
+        plotting_coords, fov, cmf_a, radius_normalizer=1.0,
+        rho_axis=None, radius_norm=2.0):
     """Inverse the radial CMF warp from its Cartesian plane to visual space.
 
     ``radius_normalizer=1`` maps the native unit circle to the nominal visual
     radius. The Wang-style footprint uses a CMF-dependent normalizer so the
     side centers of the native square map to the outer-square half-side.
+    ``radius_norm`` selects the norm measuring native radius: ``2.0`` gives
+    circular iso-eccentricity shells, ``inf`` gives square ones.
     """
-    plotting_radius = torch.linalg.vector_norm(plotting_coords, dim=1)
+    if rho_axis is None:
+        rho_axis = np.log1p((fov / 2.0) / cmf_a)
+    plotting_radius = _native_radius(
+        plotting_coords, radius_norm, dim=1, keepdim=False)
     warped_radius = plotting_radius / radius_normalizer
-    rho_axis = np.log1p((fov / 2.0) / cmf_a)
     visual_radius = (
         cmf_a * torch.expm1(warped_radius * rho_axis) / (fov / 2.0))
     scale = torch.where(
@@ -63,8 +129,13 @@ def _inverse_warped_cartesian(
         visual_radius / plotting_radius.clamp_min(torch.finfo(plotting_radius.dtype).tiny),
         torch.full_like(plotting_radius, cmf_a * rho_axis / (radius_normalizer * fov / 2.0)))
     cartesian = plotting_coords * scale[:, None]
+    # ``visual_radius`` is measured in ``radius_norm``; polar radius is always
+    # Euclidean, so recompute it when the two differ.
+    polar_radius = (
+        torch.linalg.vector_norm(cartesian, dim=1)
+        if radius_norm == math.inf else visual_radius)
     polar = torch.stack((
-        visual_radius,
+        polar_radius,
         torch.atan2(cartesian[:, 1], cartesian[:, 0])), dim=1)
     return cartesian, polar
 
@@ -127,16 +198,25 @@ class SamplingCoords():
         dtype (torch.dtype): What data type to use.
         fov_type (str): One of ``'circular'``, ``'square'``, or ``'wang'``.
             The last is only valid for warped Cartesian sensor styles.
+        radius_norm (float): Norm measuring native-plane radius for warped
+            Cartesian styles. ``2.0`` gives circular iso-eccentricity shells;
+            ``inf`` gives square shells, which pair with ``fov_type='square'``
+            to retain every cell.
     """
     def __init__(self, fov, cmf_a, res, device='cpu', style='isotropic',
                  dtype=torch.float,
                  max_val=1,
                  isotropic_plotting_type='v1like',
                  fov_type='circular', field_geometry='planar',
+                 radius_norm=2.0,
                  ):
 
         validate_field_geometry(field_geometry)
         self.field_geometry = field_geometry
+        _validate_radius_norm(radius_norm, fov_type=fov_type, style=style)
+        if radius_norm == math.inf and style in WARPED_CARTESIAN_STYLES:
+            _validate_square_shell_geometry(
+                fov, cmf_a, res, max_val, field_geometry)
         if field_geometry == 'spherical' and 'logpolar' in style:
             raise ValueError("Spherical geometry requires an angular sample set, not a flattened grid topology")
         if 'warped_cartesian' in style:
@@ -154,6 +234,7 @@ class SamplingCoords():
         self.isotropic_plotting_type = isotropic_plotting_type
         _validate_fov_type(fov_type, style=style)
         self.fov_type = fov_type
+        self.radius_norm = radius_norm
 
         if res == 1:
             self.cartesian = torch.zeros(1, 2, device=device, dtype=dtype)
@@ -164,7 +245,7 @@ class SamplingCoords():
                 0, 2, device=device, dtype=dtype)
             self.cartesian_pad_coords = torch.empty(
                 0, 2, device=device, dtype=dtype)
-            if 'warped_cartesian' in style or 'logpolar' in style:
+            if style in WARPED_CARTESIAN_STYLES or 'logpolar' in style:
                 self.cortical = torch.zeros(
                     1, 2, device=device, dtype=dtype)
                 self.cortical_pad_coords = torch.empty(
@@ -182,7 +263,7 @@ class SamplingCoords():
                 fov, cmf_a, res, device=device, style=style, max_val=max_val,
                 isotropic_plotting_type=isotropic_plotting_type,
                 fov_type=self.fov_type, field_geometry=self.field_geometry, return_valid_mask=True,
-                return_masked_coords=True)
+                return_masked_coords=True, radius_norm=self.radius_norm)
             if field_geometry == 'spherical' and 'warped_cartesian' in style:
                 active_angles = self.polar[self.valid_mask, 0] * (fov / 2.0)
                 if torch.any(active_angles >= 180):
@@ -209,9 +290,9 @@ class SamplingCoords():
                         f"grid requires FoV <= {2 * limit / extent:g} degrees; "
                         "padding changes when the grid is rebuilt at a different FoV.")
 
-            if 'warped_cartesian' in style:
+            if style in WARPED_CARTESIAN_STYLES:
                 # The native topology of this sensor is its regular Cartesian
-                # lattice in the radially warped plane.
+                # lattice in the warped plane.
                 self.cortical = self.plotting.clone()
                 self.cortical_pad_coords = self._warped_cartesian_pad_plotting.to(
                     device=device, dtype=dtype)
@@ -274,7 +355,7 @@ class SamplingCoords():
         return grid.contiguous()
 
     def native_to_visual(self, coordinates: torch.Tensor) -> torch.Tensor:
-        """Map (..., 2) native warped Cartesian coordinates to the visual chart.
+        """Map (..., 2) native Cartesian warp coordinates to the visual chart.
 
         Visual chart radius one is half the configured FoV. For spherical
         geometry this is angular eccentricity, not a pinhole projection.
@@ -282,25 +363,26 @@ class SamplingCoords():
         renderers must handle their own angular padding domain.
         """
         if self.style not in WARPED_CARTESIAN_STYLES:
-            raise ValueError("Analytic native mapping requires a warped Cartesian sensor")
+            raise ValueError("Analytic native mapping requires a Cartesian warp sensor")
         if coordinates.shape[-1] != 2:
             raise ValueError("Native coordinates must end in a two-coordinate axis")
+        normalizer, rho_axis = _warp_law(
+            self.fov, self.cmf_a, self.radius_norm, self.fov_type, self.max_val)
         visual, _ = _inverse_warped_cartesian(
             coordinates.reshape(-1, 2), self.fov, self.cmf_a,
-            radius_normalizer=_warped_cartesian_radius_normalizer(
-                self.fov_type, self.fov, self.cmf_a, self.max_val))
+            radius_normalizer=normalizer, rho_axis=rho_axis,
+            radius_norm=self.radius_norm)
         return visual.reshape(coordinates.shape)
 
     def visual_to_native(self, coordinates: torch.Tensor) -> torch.Tensor:
         """Map (..., 2) normalized visual-chart positions to the native grid."""
         if self.style not in WARPED_CARTESIAN_STYLES:
-            raise ValueError("Analytic native mapping requires a warped Cartesian sensor")
+            raise ValueError("Analytic native mapping requires a Cartesian warp sensor")
         if coordinates.shape[-1] != 2:
             raise ValueError("Visual coordinates must end in a two-coordinate axis")
-        radius = torch.linalg.vector_norm(coordinates, dim=-1, keepdim=True)
-        axis_scale = np.log1p((self.fov / 2.0) / self.cmf_a)
-        normalizer = _warped_cartesian_radius_normalizer(
-            self.fov_type, self.fov, self.cmf_a, self.max_val)
+        radius = _native_radius(coordinates, self.radius_norm)
+        normalizer, axis_scale = _warp_law(
+            self.fov, self.cmf_a, self.radius_norm, self.fov_type, self.max_val)
         native_radius = normalizer * torch.log1p(radius * (self.fov / 2.0) / self.cmf_a) / axis_scale
         scale = torch.where(radius > 0, native_radius / radius.clamp_min(torch.finfo(radius.dtype).tiny),
                             torch.full_like(radius, normalizer * (self.fov / 2.0) / self.cmf_a / axis_scale))
@@ -324,7 +406,7 @@ class SamplingCoords():
         Returns:
             torch.Tensor: Additional cartesian coordinates for padding.
         """
-        if 'warped_cartesian' in self.style:
+        if self.style in WARPED_CARTESIAN_STYLES:
             step = 2 * self.max_val / self.resolution
             centers = torch.linspace(
                 -self.max_val + step / 2, self.max_val - step / 2,
@@ -347,10 +429,7 @@ class SamplingCoords():
                     offsets[None, :] < self.resolution))
             plotting_pad = plotting_grid[~inner]
             self._warped_cartesian_pad_plotting = plotting_pad
-            pad_coords, _ = _inverse_warped_cartesian(
-                plotting_pad, self.fov, self.cmf_a,
-                radius_normalizer=_warped_cartesian_radius_normalizer(
-                    self.fov_type, self.fov, self.cmf_a, self.max_val))
+            pad_coords = self.native_to_visual(plotting_pad)
             return pad_coords.to(device=device, dtype=dtype)
 
         if 'logpolar' in self.style:
@@ -446,7 +525,8 @@ class SamplingCoords():
             out_radii, num_coords = find_desired_res(
                 self.fov, self.cmf_a, out_cart_res**2, style=self.style,
                 device=self.device, force_less_than=force_less_than, quiet=True,
-                fov_type=self.fov_type, field_geometry=self.field_geometry)
+                fov_type=self.fov_type, field_geometry=self.field_geometry,
+                radius_norm=self.radius_norm)
         else:
             """
             no matching to cartesian sampling resolution -- not recommended since it makes comparisons very difficult
@@ -458,7 +538,8 @@ class SamplingCoords():
         out_coords = SamplingCoords(
             self.fov, self.cmf_a, out_radii, self.device, self.style, self.dtype,
             max_val=max_val, isotropic_plotting_type=self.isotropic_plotting_type,
-            fov_type=self.fov_type, field_geometry=self.field_geometry)
+            fov_type=self.fov_type, field_geometry=self.field_geometry,
+            radius_norm=self.radius_norm)
 
         return out_coords, out_radii, out_cart_res
     
@@ -510,7 +591,7 @@ class SamplingCoords():
     
     def clone(self, fov=None, cmf_a=None, resolution=None, device=None, style=None,
               dtype=None, max_val=None, isotropic_plotting_type=None,
-              fov_type=None, field_geometry=None):
+              fov_type=None, field_geometry=None, radius_norm=None):
         """Return a deep copy of the SamplingCoords object with optional parameter overrides.
         
         Args:
@@ -536,6 +617,7 @@ class SamplingCoords():
             self.isotropic_plotting_type if isotropic_plotting_type is None else isotropic_plotting_type,
             self.fov_type if fov_type is None else fov_type,
             self.field_geometry if field_geometry is None else field_geometry,
+            self.radius_norm if radius_norm is None else radius_norm,
             )
         return new_coords
 
@@ -547,7 +629,7 @@ class SamplingCoords():
         """String representation of the SamplingCoords object."""
         return (f'SamplingCoords(length={len(self)}, fov={self.fov}, cmf_a={self.cmf_a}, '
                 f'resolution={self.resolution}, style={self.style}, '
-                f'fov_type={self.fov_type!r})')
+                f'fov_type={self.fov_type!r}, radius_norm={self.radius_norm!r})')
 
 
 def _get_sampling_plotting_coords(
@@ -790,24 +872,30 @@ def get_logpolar_image_sampling_coords(
 @add_to_all(__all__)
 def get_warped_cartesian_sampling_coords(
         fov, cmf_a, res, device='cpu', max_val=1,
-        fov_type='circular', return_valid_mask=False):
+        fov_type='circular', return_valid_mask=False, radius_norm=2.0):
     """Build a regular Cartesian lattice in the radial-CMF warp plane.
 
     Each output location is inverse-mapped analytically into normalized visual
     coordinates. Circular FoVs retain the mapped circle, square FoVs retain
     the square circumscribing that circle, and Wang FoVs map the full native
     square without masking.
+
+    ``radius_norm=inf`` measures native radius in the infinity norm, so
+    iso-eccentricity shells are squares rather than circles and the native
+    square maps exactly onto the visual square, leaving every cell valid.
     """
     _validate_fov_type(fov_type, style='warped_cartesian')
+    _validate_radius_norm(radius_norm, fov_type=fov_type)
     step = max_val / res
     axis = torch.linspace(
         -max_val + step, max_val - step, res, device=device)
     xx, yy = torch.meshgrid(axis, axis, indexing='ij')
     plotting_coords = torch.stack((xx, yy), dim=-1).reshape(-1, 2)
+    normalizer, rho_axis = _warp_law(
+        fov, cmf_a, radius_norm, fov_type, max_val)
     coords, polar_coords = _inverse_warped_cartesian(
-        plotting_coords, fov, cmf_a,
-        radius_normalizer=_warped_cartesian_radius_normalizer(
-            fov_type, fov, cmf_a, max_val))
+        plotting_coords, fov, cmf_a, radius_normalizer=normalizer,
+        rho_axis=rho_axis, radius_norm=radius_norm)
     valid_mask = _fov_valid_mask(coords, fov_type, max_val=max_val)
     result = (coords, polar_coords, plotting_coords)
     if return_valid_mask:
@@ -943,7 +1031,7 @@ def num_sampling_coords_isotropic(
 def find_desired_res(
         fov, cmf_a, n_points_desired, style, device='cpu',
         bounds=(1,1000), force_less_than=False, quiet=False,
-        fov_type='circular', field_geometry='planar'):
+        fov_type='circular', field_geometry='planar', radius_norm=2.0):
     """Find the resolution that gives the desired number of sampling points using binary search.
     
     Args:
@@ -973,7 +1061,8 @@ def find_desired_res(
         mid = (left + right) // 2
         n = num_sampling_coords(
             fov, cmf_a, mid, style=style, device=device,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
         diff = abs(n - n_points_desired)
         
         if diff < best_diff:
@@ -987,21 +1076,24 @@ def find_desired_res(
     
     n = num_sampling_coords(
         fov, cmf_a, best_res, style=style, device=device,
-        fov_type=fov_type, field_geometry=field_geometry)
+        fov_type=fov_type, field_geometry=field_geometry,
+        radius_norm=radius_norm)
 
     if force_less_than:
         while n > n_points_desired:
             best_res = best_res - 1
             n = num_sampling_coords(
                 fov, cmf_a, best_res, style=style, device=device,
-                fov_type=fov_type, field_geometry=field_geometry)
+                fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm)
     else:
         while n < n_points_desired:
             # make sure we overshoot slightly so that we can remove angles rather than adding them
             best_res = best_res + 1
             n = num_sampling_coords(
                 fov, cmf_a, best_res, style=style, device=device,
-                fov_type=fov_type, field_geometry=field_geometry)
+                fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm)
 
     if not quiet:
         print(f'found resolution {best_res} giving {n} points (desired: {n_points_desired})')
@@ -1013,7 +1105,8 @@ def find_desired_res(
 def get_sampling_coords(
         fov, cmf_a, res, device='cpu', style='isotropic', max_val=1,
         isotropic_plotting_type='v1like', fov_type='circular',
-        return_valid_mask=False, return_masked_coords=False, field_geometry='planar'):
+        return_valid_mask=False, return_masked_coords=False, field_geometry='planar',
+        radius_norm=2.0):
     """Generate sampling coordinates based on the specified style.
     
     Args:
@@ -1046,6 +1139,10 @@ def get_sampling_coords(
             f"style must be one of {SAMPLING_STYLES}, got {style!r}")
     validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
+    _validate_radius_norm(radius_norm, fov_type=fov_type, style=style)
+    if radius_norm == math.inf and style in WARPED_CARTESIAN_STYLES:
+        _validate_square_shell_geometry(
+            fov, cmf_a, res, max_val, field_geometry)
     if style == 'uniform' or style == 'uniform_as_grid':
         step = max_val / res
         coords = torch.linspace(-max_val + step, max_val - step, res)
@@ -1058,7 +1155,8 @@ def get_sampling_coords(
         coords, polar_coords, plotting_coords, valid_mask = (
             get_warped_cartesian_sampling_coords(
                 fov, cmf_a, res, device=device, max_val=max_val,
-                fov_type=fov_type, return_valid_mask=True))
+                fov_type=fov_type, return_valid_mask=True,
+                radius_norm=radius_norm))
         # These styles retain masked cells in their native rectangular layout.
         # KNN layers use valid_mask to treat them as padding in-place.
         masked_coords = coords.new_empty((0, 2))
@@ -1174,7 +1272,7 @@ def xy_to_colrow(coords, do_norm=True, format='01'):
 @add_to_all(__all__)
 def num_sampling_coords(
         fov, cmf_a, res, style='isotropic', device='cpu',
-        fov_type='circular', field_geometry='planar'):
+        fov_type='circular', field_geometry='planar', radius_norm=2.0):
     """Calculate the number of sampling coordinates for a given style.
     
     Args:
@@ -1189,6 +1287,7 @@ def num_sampling_coords(
     """
     validate_field_geometry(field_geometry)
     _validate_fov_type(fov_type, style=style)
+    _validate_radius_norm(radius_norm, fov_type=fov_type, style=style)
     if style == 'isotropic':
         return num_sampling_coords_isotropic(
             fov, cmf_a, res, device=device, fov_type=fov_type, field_geometry=field_geometry)
@@ -1260,7 +1359,8 @@ def transform_sampling_grid(sampling_grid, fix_loc, fixation_size, image_size):
 @add_to_all(__all__)
 def auto_match_num_coords(
         fov, cmf_a, cart_res, style, auto_match_cart_resources, device,
-        force_less_than=True, quiet=False, fov_type='circular', field_geometry='planar'):
+        force_less_than=True, quiet=False, fov_type='circular', field_geometry='planar',
+        radius_norm=2.0):
     """Automatically match the number of coordinates to cartesian resolution.
     
     Args:
@@ -1284,7 +1384,8 @@ def auto_match_num_coords(
         in_res, num_coords = find_desired_res(
             fov, cmf_a, cart_res**2, style, device=device,
             force_less_than=force_less_than, quiet=quiet,
-            fov_type=fov_type, field_geometry=field_geometry)
+            fov_type=fov_type, field_geometry=field_geometry,
+            radius_norm=radius_norm)
     else:
         in_res = cart_res
     return in_res, cart_res

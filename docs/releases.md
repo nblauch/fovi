@@ -18,6 +18,28 @@ git rev-parse HEAD
 git status --short
 ```
 
+## 2.3.0
+
+Version 2.3.0 adds square iso-eccentricity shells to the warped-Cartesian
+sensor, through a new `radius_norm` argument.
+
+`radius_norm` selects the norm that measures radius in the sensor's native
+plane. The default `2.0` is the Euclidean radius and the existing behavior,
+unchanged. `math.inf` uses the Chebyshev radius, so iso-eccentricity shells are
+squares rather than circles and the native square maps exactly onto the visual
+square, leaving every cell valid instead of masking the corners. Along the four
+axes the two norms are the same map; they differ only off-axis.
+
+The argument is accepted anywhere `fov_type` is, including `RetinalTransform`
+and the `saccades` config block, where `.inf` is the YAML spelling. Existing
+configs and checkpoints are unaffected: omitting `radius_norm` keeps the
+Euclidean warp, which is byte-for-byte identical to 2.2.0. `fov_type='wang'`
+normalizes the Euclidean radius at the native square's side centers, so it has
+no infinity-norm counterpart and is rejected.
+
+See [the radius norm](radius_norm.md) for the mapping, its behavior on the
+diagonals, and related work.
+
 ## 2.2.0
 
 Version 2.2.0 reorients grid-shaped sensor outputs, makes DINOv3 position

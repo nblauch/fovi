@@ -30,6 +30,7 @@ saccades:
   sampler: 'grid_nn'
   sampler_backend: 'auto'  # uint8/float: auto | torch | cuda; env override supported
   fov_type: circular
+  radius_norm: 2.0  # native-plane radius norm for warped_cartesian: 2.0 (circular shells) or .inf (square shells)
   field_geometry: planar
   fov: 16
   rescale_fov: 1

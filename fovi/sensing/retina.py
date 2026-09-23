@@ -49,6 +49,7 @@ class RetinalTransform(nn.Module):
                  isotropic_plotting_type='v1like',
                  sampler_backend='auto',
                  fov_type='circular', field_geometry='planar',
+                 radius_norm=2.0,
                  camera_model: CameraModel | CameraCalibration | None = None,
                  gaze_convention='camera_xyz',
                  **kwargs, # passed to the sampler
@@ -87,6 +88,7 @@ class RetinalTransform(nn.Module):
         self.cmf_a = cmf_a
         self.fov = fov
         self.fov_type = fov_type
+        self.radius_norm = radius_norm
         self.field_geometry = field_geometry
         if field_geometry == 'spherical' and sampler not in ('grid_nn', 'grid_bilinear'):
             raise ValueError("Spherical geometry requires grid_nn or grid_bilinear sampling")
@@ -109,7 +111,8 @@ class RetinalTransform(nn.Module):
                 resolution, num_coords = find_desired_res(
                     fov, cmf_a, num_coords, style=style,
                     device=self.device, force_less_than=True, quiet=True,
-                    fov_type=fov_type, field_geometry=field_geometry)
+                    fov_type=fov_type, field_geometry=field_geometry,
+                    radius_norm=radius_norm)
 
         self.resolution = resolution
 
@@ -131,27 +134,31 @@ class RetinalTransform(nn.Module):
                 self.fov, self.cmf_a, resolution,
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm, **kwargs)
         elif sampler == 'pooling':
             self.sampler = KNNGridSampler(
                 self.fov, self.cmf_a, resolution,
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm, **kwargs)
         elif sampler == 'grid_nn':
             self.sampler = GridSampler(
                 self.fov, self.cmf_a, resolution, device=device,
                 mode='nearest', style=style,
                 camera_model=camera_model, gaze_convention=gaze_convention,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm, **kwargs)
         elif sampler == 'grid_bilinear':
             self.sampler = GridSampler(
                 self.fov, self.cmf_a, resolution, device=device,
                 mode='bilinear', style=style,
                 camera_model=camera_model, gaze_convention=gaze_convention,
                 isotropic_plotting_type=isotropic_plotting_type,
-                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry, **kwargs)
+                backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,
+                radius_norm=radius_norm, **kwargs)
 
         else:
             raise ValueError(f'Invalid sampler: {sampler}')
