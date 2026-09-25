@@ -76,7 +76,11 @@ __device__ bool project(Real x, Real y, Real z, const Camera& c, Real& u, Real& 
     distort(x / fmax(z, EPS), y / fmax(z, EPS), c, u, v);
 #endif
     u = u * c.fx + c.cx; v = v * c.fy + c.cy;
+#if FISHEYE
+    return pixel_valid(u, v, c) && theta <= c.max_angle;
+#else
     return pixel_valid(u, v, c) && theta <= c.max_angle && z > 0;
+#endif
 }
 
 extern "C" __global__ void prepare_gaze(
