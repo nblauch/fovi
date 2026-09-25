@@ -115,8 +115,10 @@ class CameraModel:
             math.isfinite(v) for v in self.distortion
         ):
             raise ValueError(f"Invalid {self.model} distortion coefficients")
-        if not 0 < self.max_angle_deg <= 90:
-            raise ValueError("max_angle_deg must be in (0, 90]")
+        if self.model == "pinhole" and not 0 < self.max_angle_deg <= 90:
+            raise ValueError("Pinhole max_angle_deg must be in (0, 90]")
+        if self.model == "fisheye" and not 0 < self.max_angle_deg < 180:
+            raise ValueError("Fisheye max_angle_deg must be in (0, 180)")
         if self.image_circle is not None and (
             len(self.image_circle) != 3
             or not all(math.isfinite(v) for v in self.image_circle)
@@ -239,11 +241,11 @@ class CameraModel:
             xy = directions[..., :2] * scale[..., None]
         fx, fy, cx, cy = self.intrinsics
         pixels = torch.stack((xy[..., 0] * fx + cx, xy[..., 1] * fy + cy), -1)
-        valid = (
-            self.pixel_validity(pixels)
-            & (theta <= math.radians(self.max_angle_deg))
-            & (z > 0)
+        valid = self.pixel_validity(pixels) & (
+            theta <= math.radians(self.max_angle_deg)
         )
+        if self.model == "pinhole":
+            valid = valid & (z > 0)
         return pixels, valid
 
     def unproject(self, pixels: Tensor) -> tuple[Tensor, Tensor]:
