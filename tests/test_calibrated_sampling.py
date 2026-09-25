@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -40,6 +41,59 @@ def test_projection_matches_opencv_and_roundtrips(
         rtol=1e-8,
     )
     assert (valid & inverse_valid).all()
+
+
+@pytest.mark.parametrize("distortion", [(), (0.01, -0.001, 0.0002, 0.0)])
+def test_fisheye_projects_full_frame_beyond_front_hemisphere(
+    distortion: tuple[float, ...],
+) -> None:
+    camera = CameraModel(
+        "fisheye",
+        (240, 320),
+        (110, 110, 159.5, 119.5),
+        distortion,
+        max_angle_deg=110,
+    )
+    corners = torch.tensor(
+        [[0, 0], [319, 0], [0, 239], [319, 239]], dtype=torch.float64
+    )
+    rays, inverse_valid = camera.unproject(corners)
+    assert inverse_valid.all()
+    assert (rays[:, 2] < 0).all()
+    recovered, project_valid = camera.project(rays)
+    assert project_valid.all()
+    torch.testing.assert_close(recovered, corners, atol=1e-8, rtol=0)
+    _, limited_valid = replace(camera, max_angle_deg=90).project(rays)
+    assert not limited_valid.any()
+
+
+def test_fisheye_angular_domain_keeps_pinhole_limit() -> None:
+    with pytest.raises(ValueError, match="max_angle_deg"):
+        CameraModel("pinhole", (240, 320), (110, 110, 159.5, 119.5), max_angle_deg=110)
+    with pytest.raises(ValueError, match="max_angle_deg"):
+        CameraModel("fisheye", (240, 320), (110, 110, 159.5, 119.5), max_angle_deg=180)
+
+
+def test_fisheye_field_of_view_can_span_more_than_half_a_sphere() -> None:
+    camera = CameraModel(
+        "fisheye", (240, 320), (70, 70, 159.5, 119.5), max_angle_deg=150
+    )
+    assert camera.field_of_view("long") == pytest.approx(261.9, abs=0.2)
+    assert camera.field_of_view("short") == pytest.approx(196.4, abs=0.2)
+
+
+def test_fisheye_sampler_retains_rearward_fixation() -> None:
+    camera = CameraModel(
+        "fisheye", (240, 320), (110, 110, 159.5, 119.5), max_angle_deg=110
+    )
+    sampler = GridSampler(
+        60, 2, 12, device="cpu", field_geometry="spherical", camera_model=camera
+    )
+    image = torch.ones((1, 1, 240, 320))
+    fixation = torch.tensor([[0.05, 0.05]])
+    gaze, valid = camera.unproject(torch.tensor([[15.5, 5.5]]))
+    assert valid.all() and (gaze[:, 2] < 0).all()
+    assert sampler(image, fixation)[0, 0, 0] == 1
 
 
 def test_window_uses_selected_angular_axis() -> None:

@@ -247,3 +247,19 @@ def test_angular_calibration_limit(model: str, distortion: tuple[float, ...]) ->
     torch.testing.assert_close(
         sampler(image, (0.5, 0.5))[0, 0], expected.float(), rtol=0, atol=0
     )
+
+
+def test_native_fisheye_samples_fixation_behind_optical_hemisphere() -> None:
+    camera = CameraModel(
+        "fisheye", (240, 320), (110, 110, 159.5, 119.5), max_angle_deg=110
+    )
+    sampler = GridSampler(
+        60, 2, 12, device="cuda", field_geometry="spherical", camera_model=camera
+    )
+    image = torch.ones((1, 1, 240, 320), device="cuda")
+    fixation = torch.tensor([[0.05, 0.05]], device="cuda")
+    actual = sampler(image, fixation)
+    assert sampler.last_backend == "cuda_calibrated"
+    expected = sampler(image, fixation, direct=True)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=1e-5)
+    assert actual[0, 0, 0] == 1
