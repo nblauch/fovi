@@ -327,6 +327,17 @@ def angular_directions(cartesian: Tensor, fov_deg: float) -> Tensor:
     return torch.cat((xy * scale[..., None], torch.cos(radius * half)[..., None]), -1)
 
 
+def field_of_view_pair(camera: CameraModel, fraction: float = 1.0) -> tuple[float, float]:
+    """Measure vertical and horizontal spans of the same centered image fraction."""
+    height, width = camera.image_size
+    vertical_side = "short" if height <= width else "long"
+    horizontal_side = "long" if width >= height else "short"
+    return (
+        camera.field_of_view(vertical_side, fraction),
+        camera.field_of_view(horizontal_side, fraction),
+    )
+
+
 def gaze_rotation(directions: Tensor, convention: str = "camera_xyz") -> Tensor:
     """Aim +Z at (B, 3) directions using the declared zero-torsion convention.
 
