@@ -115,8 +115,10 @@ class CameraModel:
             math.isfinite(v) for v in self.distortion
         ):
             raise ValueError(f"Invalid {self.model} distortion coefficients")
-        if not 0 < self.max_angle_deg <= 90:
-            raise ValueError("max_angle_deg must be in (0, 90]")
+        if self.model == "pinhole" and not 0 < self.max_angle_deg <= 90:
+            raise ValueError("Pinhole max_angle_deg must be in (0, 90]")
+        if self.model == "fisheye" and not 0 < self.max_angle_deg < 180:
+            raise ValueError("Fisheye max_angle_deg must be in (0, 180)")
         if self.image_circle is not None and (
             len(self.image_circle) != 3
             or not all(math.isfinite(v) for v in self.image_circle)
@@ -239,11 +241,11 @@ class CameraModel:
             xy = directions[..., :2] * scale[..., None]
         fx, fy, cx, cy = self.intrinsics
         pixels = torch.stack((xy[..., 0] * fx + cx, xy[..., 1] * fy + cy), -1)
-        valid = (
-            self.pixel_validity(pixels)
-            & (theta <= math.radians(self.max_angle_deg))
-            & (z > 0)
+        valid = self.pixel_validity(pixels) & (
+            theta <= math.radians(self.max_angle_deg)
         )
+        if self.model == "pinhole":
+            valid = valid & (z > 0)
         return pixels, valid
 
     def unproject(self, pixels: Tensor) -> tuple[Tensor, Tensor]:
@@ -298,7 +300,8 @@ class CameraModel:
             [extent if horizontal else 0, 0 if horizontal else extent],
             dtype=torch.float64,
         )
-        rays, _ = self.unproject(torch.stack((center - offset, center + offset)))
+        window_pixels = torch.stack((center - offset, center, center + offset))
+        rays, _ = self.unproject(window_pixels)
         # Boundary endpoints are intentionally allowed; validate inversion separately.
         recovered, _ = self.project(rays)
         angular_valid = rays[:, 2] >= math.cos(math.radians(self.max_angle_deg)) - 1e-12
@@ -307,7 +310,7 @@ class CameraModel:
             or not torch.isfinite(rays).all()
             or not torch.allclose(
                 recovered,
-                torch.stack((center - offset, center + offset)),
+                window_pixels,
                 atol=1e-3,
                 rtol=0,
             )
@@ -315,7 +318,13 @@ class CameraModel:
             raise ValueError(
                 "Retinal window extends outside the invertible calibration domain"
             )
-        return math.degrees(float(torch.acos((rays[0] * rays[1]).sum().clamp(-1, 1))))
+        # Measure each half about the window center so spans over 180 degrees
+        # remain continuous even when the optical axis misses this scanline.
+        span = sum(
+            torch.acos((rays[index] * rays[1]).sum().clamp(-1, 1))
+            for index in (0, 2)
+        )
+        return math.degrees(float(span))
 
 
 def angular_directions(cartesian: Tensor, fov_deg: float) -> Tensor:
