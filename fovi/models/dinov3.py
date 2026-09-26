@@ -44,8 +44,10 @@ def configure_dinov3_positions(
         space = getattr(model.config, 'position_coordinate_space', 'cortical')
     if space not in ('cortical', 'cartesian'):
         raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")
-    if (isinstance(patch_size, bool) or not isinstance(patch_size, int)
-            or patch_size <= 0 or any(side % patch_size for side in sensor_coords.grid_shape)):
+    if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
+        raise ValueError("patch_size must be a positive integer")
+    paired_fov = isinstance(sensor_coords.fov, (tuple, list, ListConfig))
+    if not paired_fov and any(side % patch_size for side in sensor_coords.grid_shape):
         raise ValueError("Sensor resolution must be divisible by positive patch_size")
     patch_embedding = model.embeddings.patch_embeddings
     expected_shape = (patch_size, patch_size)
@@ -69,15 +71,36 @@ def configure_dinov3_positions(
     if space == 'cortical':
         model.rope_embeddings = native_rope
     elif space == 'cartesian':
-        if isinstance(sensor_coords.fov, (tuple, list, ListConfig)):
+        square_pair = (paired_fov and sensor_coords.fov[0] == sensor_coords.fov[1]
+                       and sensor_coords.grid_shape[0] == sensor_coords.grid_shape[1]
+                       and sensor_coords.grid_shape[0] % patch_size == 0)
+        if paired_fov and not square_pair:
             height, width = sensor_coords.grid_shape
             grid = sensor_coords.as_grid(sensor_coords.cartesian_rowcol, sample_dim=0)
-            positions = grid.reshape(
-                height // patch_size, patch_size, width // patch_size, patch_size, 2
-            ).mean(dim=(1, 3)).reshape(-1, 2)
+            pad_height = (-height) % patch_size
+            pad_width = (-width) % patch_size
+            top, left = pad_height // 2, pad_width // 2
+            padded = torch.nn.functional.pad(
+                grid.permute(2, 0, 1),
+                (left, pad_width - left, top, pad_height - top),
+            ).permute(1, 2, 0)
+            valid = torch.nn.functional.pad(
+                torch.ones((height, width), device=grid.device, dtype=grid.dtype),
+                (left, pad_width - left, top, pad_height - top),
+            )
+            patch_rows = (height + pad_height) // patch_size
+            patch_cols = (width + pad_width) // patch_size
+            patch_sum = padded.reshape(
+                patch_rows, patch_size, patch_cols, patch_size, 2
+            ).sum(dim=(1, 3))
+            counts = valid.reshape(
+                patch_rows, patch_size, patch_cols, patch_size
+            ).sum(dim=(1, 3))
+            positions = (patch_sum / counts[..., None]).reshape(-1, 2)
         else:
+            fov = sensor_coords.fov[0] if square_pair else sensor_coords.fov
             patches = sensor_coords.clone(
-                resolution=sensor_coords.resolution // patch_size, device=device)
+                fov=fov, resolution=sensor_coords.resolution // patch_size, device=device)
             positions = patches.as_grid(patches.cartesian_rowcol, sample_dim=0).reshape(-1, 2)
         rope = FoviDinoV3RoPE(
             model.config.rope_theta,

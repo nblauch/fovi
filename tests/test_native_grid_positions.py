@@ -11,11 +11,11 @@ from fovi.sensing.retina import RetinalTransform
 from transformers import DINOv3ViTConfig, DINOv3ViTModel
 
 
-def make_model() -> DINOv3ViTModel:
+def make_model(patch_size: int = 8) -> DINOv3ViTModel:
     return DINOv3ViTModel(
         DINOv3ViTConfig(
             image_size=32,
-            patch_size=8,
+            patch_size=patch_size,
             hidden_size=32,
             num_hidden_layers=1,
             num_attention_heads=4,
@@ -57,6 +57,42 @@ def test_cartesian_positions_follow_upright_warp() -> None:
     torch.testing.assert_close(model.rope_embeddings.coords, expected.reshape(-1, 2))
     assert "coords" in dict(model.rope_embeddings.named_buffers())
     assert "rope_embeddings.coords" not in model.state_dict()
+
+
+def test_square_fov_pair_preserves_cartesian_patch_positions() -> None:
+    scalar = SamplingCoords(60.0, 1.0, 32, style="warped_cartesian_as_grid", fov_type="square")
+    pair = SamplingCoords((60.0, 60.0), 1.0, 32, style="warped_cartesian_as_grid", fov_type="square")
+    scalar_model = make_model()
+    pair_model = make_model()
+    configure_dinov3_positions(
+        scalar_model, sensor_coords=scalar, patch_size=8, position_coordinate_space="cartesian"
+    )
+    configure_dinov3_positions(
+        pair_model, sensor_coords=pair, patch_size=8, position_coordinate_space="cartesian"
+    )
+    torch.testing.assert_close(pair_model.rope_embeddings.coords, scalar_model.rope_embeddings.coords)
+
+
+@pytest.mark.parametrize("space", ["cortical", "cartesian"])
+def test_dense_positions_match_symmetrically_padded_rectangular_grid(space: str) -> None:
+    coords = SamplingCoords(
+        (96.697, 155.184), 96.697 * 0.036021, 128,
+        style="warped_cartesian_as_grid", fov_type="square", field_geometry="spherical",
+    )
+    assert coords.grid_shape == (119, 138)
+    model = make_model(patch_size=16)
+    configure_dinov3_positions(
+        model, sensor_coords=coords, patch_size=16, position_coordinate_space=space
+    )
+    with torch.no_grad():
+        tokens = model(torch.randn(1, 3, 128, 144)).last_hidden_state
+    assert tokens.shape[1] == 1 + 8 * 9
+    if space == "cartesian":
+        assert model.rope_embeddings.coords.shape == (72, 2)
+        grid = coords.as_grid(coords.cartesian_rowcol, sample_dim=0)
+        torch.testing.assert_close(
+            model.rope_embeddings.coords[0], grid[:12, :13].mean(dim=(0, 1))
+        )
 
 
 @pytest.mark.parametrize("space", ["cortical", "cartesian"])
