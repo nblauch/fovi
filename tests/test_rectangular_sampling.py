@@ -66,6 +66,15 @@ def test_two_axis_isotropic_padding_uses_generated_ring_radii(
     assert coords.pad_cartesian().shape[0] < 100_000
 
 
+@pytest.mark.parametrize("style", ["isotropic", "isotropic_fixn"])
+def test_square_pair_isotropic_padding_ignores_corner_roundoff(style: str) -> None:
+    coords = SamplingCoords(
+        (90.0, 90.0), 1.0, 12, style=style, fov_type="square"
+    )
+    assert coords.cartesian_pad_coords.shape[0] < 100_000
+    assert torch.isfinite(coords.cartesian_pad_coords).all()
+
+
 def test_asymmetric_wang_field_is_rejected() -> None:
     with pytest.raises(ValueError, match="Asymmetric FoV"):
         SamplingCoords(

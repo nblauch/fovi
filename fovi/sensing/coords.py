@@ -654,8 +654,14 @@ class SamplingCoords():
 
         pad_coords = []
         sorted_radii = torch.sort(torch.unique(self.polar[:,0])).values
-        if sorted_radii.numel() > 1:
-            radius_diff = sorted_radii[-1] - sorted_radii[-2]
+        radial_gaps = torch.diff(sorted_radii)
+        # Exact square corners can differ from the generated outer ring by
+        # float roundoff; that difference is not a padding-ring interval.
+        gap_tolerance = (32 * torch.finfo(sorted_radii.dtype).eps
+                         * sorted_radii[-1].abs().clamp(min=1))
+        meaningful_gaps = radial_gaps[radial_gaps > gap_tolerance]
+        if meaningful_gaps.numel():
+            radius_diff = meaningful_gaps[-1]
         else:
             # A very small square fixed-count grid can retain only its four
             # equal-radius corners. Use the nominal radial interval so it can
