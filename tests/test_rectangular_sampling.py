@@ -75,6 +75,42 @@ def test_rectangular_native_warp_roundtrip_and_grid_orientation(
     assert grid[0, 0, 1] > grid[-1, 0, 1]
 
 
+@pytest.mark.parametrize("fov_type", ["circular", "square"])
+def test_rectangular_l2_warp_preserves_scalar_radial_cmf(fov_type: str) -> None:
+    rectangular = SamplingCoords(
+        96.7,
+        3.5,
+        (10, 16),
+        style="warped_cartesian_as_grid",
+        fov_type=fov_type,
+        field_geometry="spherical",
+        radius_norm=2.0,
+    )
+    scalar = SamplingCoords(
+        96.7,
+        3.5,
+        10,
+        style="warped_cartesian_as_grid",
+        fov_type=fov_type,
+        field_geometry="spherical",
+        radius_norm=2.0,
+    )
+    native = torch.tensor([[0.5, 0.0], [0.0, 0.5], [0.3, 0.4]])
+    torch.testing.assert_close(
+        rectangular.native_to_visual(native), scalar.native_to_visual(native)
+    )
+    visual = torch.tensor([[0.5, 0.0], [0.0, 0.5], [0.3, 0.4]])
+    torch.testing.assert_close(
+        rectangular.visual_to_native(visual), scalar.visual_to_native(visual)
+    )
+    native_x, native_y = rectangular.native_half_extents
+    field_edges = torch.tensor([[native_x, 0.0], [0.0, native_y]])
+    torch.testing.assert_close(
+        rectangular.native_to_visual(field_edges),
+        torch.tensor([[1.6, 0.0], [0.0, 1.0]]),
+    )
+
+
 def test_rectangular_isotropic_keeps_physical_angles() -> None:
     coords, _, _ = get_isotropic_sampling_coords(
         96.7, 3.5, (10, 16), fov_type="square", field_geometry="spherical"
@@ -97,8 +133,9 @@ def test_planar_crop_applies_rectangular_aspect_once() -> None:
         backend="torch",
     )
     grid = sampler.sampling_grid[0, 0]
-    assert grid[:, 0].abs().max() <= 1
-    assert grid[:, 1].abs().max() <= 1
+    active_grid = grid[sampler.valid_mask]
+    assert active_grid[:, 0].abs().max() <= 1
+    assert active_grid[:, 1].abs().max() <= 1
     image = torch.rand(1, 3, 80, 128)
     output = sampler(image, fix_loc=(0.5, 0.5), fixation_size=(80, 128))
     assert output.shape[-1] == 160

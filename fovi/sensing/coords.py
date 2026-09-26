@@ -57,15 +57,17 @@ def _footprint_radius(angle, fov_type, aspect, max_val=1.0):
 
 def _rectangular_native_to_visual(coordinates, fov, cmf_a, fov_type,
                                   aspect, max_val, radius_norm):
-    radius = torch.linalg.vector_norm(coordinates, dim=-1, keepdim=True)
+    if radius_norm == 2.0:
+        normalizer, rho_axis = _warp_law(fov, cmf_a, radius_norm, fov_type, max_val)
+        visual, _ = _inverse_warped_cartesian(
+            coordinates.reshape(-1, 2), fov, cmf_a,
+            radius_normalizer=normalizer, rho_axis=rho_axis, radius_norm=radius_norm)
+        return visual.reshape(coordinates.shape)
     angle = torch.atan2(coordinates[..., 1], coordinates[..., 0])
     boundary = _footprint_radius(angle, fov_type, aspect, max_val)[..., None]
-    if radius_norm == math.inf:
-        native_fraction = torch.amax(
-            coordinates.abs() / coordinates.new_tensor((aspect, 1.0)),
-            dim=-1, keepdim=True) / max_val
-    else:
-        native_fraction = radius / boundary
+    native_fraction = torch.amax(
+        coordinates.abs() / coordinates.new_tensor((aspect, 1.0)),
+        dim=-1, keepdim=True) / max_val
     log_boundary = torch.log1p(boundary * (fov / 2) / cmf_a)
     visual_fraction = cmf_a * torch.expm1(native_fraction * log_boundary) / (boundary * fov / 2)
     scale = torch.where(
@@ -76,15 +78,19 @@ def _rectangular_native_to_visual(coordinates, fov, cmf_a, fov_type,
 
 def _rectangular_visual_to_native(coordinates, fov, cmf_a, fov_type,
                                   aspect, max_val, radius_norm):
-    radius = torch.linalg.vector_norm(coordinates, dim=-1, keepdim=True)
+    if radius_norm == 2.0:
+        radius = _native_radius(coordinates, radius_norm)
+        normalizer, axis_scale = _warp_law(fov, cmf_a, radius_norm, fov_type, max_val)
+        native_radius = normalizer * torch.log1p(radius * (fov / 2.0) / cmf_a) / axis_scale
+        scale = torch.where(
+            radius > 0, native_radius / radius.clamp_min(torch.finfo(radius.dtype).tiny),
+            torch.full_like(radius, normalizer * (fov / 2.0) / cmf_a / axis_scale))
+        return coordinates * scale
     angle = torch.atan2(coordinates[..., 1], coordinates[..., 0])
     boundary = _footprint_radius(angle, fov_type, aspect, max_val)[..., None]
-    if radius_norm == math.inf:
-        visual_fraction = torch.amax(
-            coordinates.abs() / coordinates.new_tensor((aspect, 1.0)),
-            dim=-1, keepdim=True) / max_val
-    else:
-        visual_fraction = radius / boundary
+    visual_fraction = torch.amax(
+        coordinates.abs() / coordinates.new_tensor((aspect, 1.0)),
+        dim=-1, keepdim=True) / max_val
     log_boundary = torch.log1p(boundary * (fov / 2) / cmf_a)
     native_fraction = torch.log1p(
         visual_fraction * boundary * (fov / 2) / cmf_a) / log_boundary
@@ -92,6 +98,19 @@ def _rectangular_visual_to_native(coordinates, fov, cmf_a, fov_type,
         visual_fraction > 0, native_fraction / visual_fraction.clamp_min(1e-30),
         boundary * (fov / 2) / (cmf_a * log_boundary))
     return coordinates * scale
+
+
+def _rectangular_native_half_extents(
+        fov: float, cmf_a: float, aspect: float, max_val: float,
+        fov_type: str, radius_norm: float) -> tuple[float, float]:
+    """Cover the requested visual aspect with the same radial law on both axes."""
+    if radius_norm == math.inf:
+        return aspect * max_val, max_val
+    normalizer, axis_scale = _warp_law(fov, cmf_a, radius_norm, fov_type, max_val)
+    visual_short = cmf_a * np.expm1(max_val * axis_scale / normalizer) / (fov / 2.0)
+    native_long = normalizer * np.log1p(
+        aspect * visual_short * (fov / 2.0) / cmf_a) / axis_scale
+    return float(native_long), max_val
 
 
 def _validate_fov_type(fov_type, style=None):
@@ -276,6 +295,12 @@ class SamplingCoords():
             Cartesian styles. ``2.0`` gives circular iso-eccentricity shells;
             ``inf`` gives square shells, which pair with ``fov_type='square'``
             to retain every cell.
+
+    Attributes:
+        native_half_extents (tuple[float, float]): Native grid half-width and
+            half-height. A rectangular L2 grid uses a narrower native width
+            so both visual axes reach their requested field boundary with the
+            same radial CMF.
     """
     def __init__(self, fov, cmf_a, res, device='cpu', style='isotropic',
                  dtype=torch.float,
@@ -311,6 +336,13 @@ class SamplingCoords():
         _validate_fov_type(fov_type, style=style)
         self.fov_type = fov_type
         self.radius_norm = radius_norm
+        self.native_half_extents = (
+            _rectangular_native_half_extents(
+                fov, cmf_a, self.aspect, max_val, fov_type, radius_norm)
+            if style in WARPED_CARTESIAN_STYLES
+            and not isinstance(res, (int, np.integer))
+            else (max_val, max_val)
+        )
 
         if self.grid_shape == (1, 1):
             self.cartesian = torch.zeros(1, 2, device=device, dtype=dtype)
@@ -514,14 +546,15 @@ class SamplingCoords():
         if self.style in WARPED_CARTESIAN_STYLES:
             if not isinstance(self.resolution, (int, np.integer)):
                 height, width = self.grid_shape
-                step_x = 2 * self.max_val * self.aspect / width
-                step_y = 2 * self.max_val / height
+                native_x, native_y = self.native_half_extents
+                step_x = 2 * native_x / width
+                step_y = 2 * native_y / height
                 count_x = max(1, int(np.ceil(float(padding_distance) / step_x)))
                 count_y = max(1, int(np.ceil(float(padding_distance) / step_y)))
                 x_index = torch.arange(-count_x, width + count_x, device=device)
                 y_index = torch.arange(-count_y, height + count_y, device=device)
-                x = (x_index.to(dtype) + 0.5) * step_x - self.max_val * self.aspect
-                y = (y_index.to(dtype) + 0.5) * step_y - self.max_val
+                x = (x_index.to(dtype) + 0.5) * step_x - native_x
+                y = (y_index.to(dtype) + 0.5) * step_y - native_y
                 xx, yy = torch.meshgrid(x, y, indexing='ij')
                 plotting = torch.stack((xx, yy), -1)
                 inner = ((x_index[:, None] >= 0) & (x_index[:, None] < width)
@@ -1045,8 +1078,10 @@ def get_warped_cartesian_sampling_coords(
     if not isinstance(res, (int, np.integer)):
         height, width = _resolution_shape(res)
         aspect = width / height
-        x = (torch.arange(width, device=device) + 0.5) * (2 * max_val * aspect / width) - max_val * aspect
-        y = (torch.arange(height, device=device) + 0.5) * (2 * max_val / height) - max_val
+        native_x, native_y = _rectangular_native_half_extents(
+            fov, cmf_a, aspect, max_val, fov_type, radius_norm)
+        x = (torch.arange(width, device=device) + 0.5) * (2 * native_x / width) - native_x
+        y = (torch.arange(height, device=device) + 0.5) * (2 * native_y / height) - native_y
         xx, yy = torch.meshgrid(x, y, indexing='ij')
         plotting_coords = torch.stack((xx, yy), -1).reshape(-1, 2)
         coords = _rectangular_native_to_visual(
