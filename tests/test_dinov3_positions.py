@@ -11,6 +11,7 @@ from transformers import DINOv3ViTConfig, DINOv3ViTModel
 from transformers.models.dinov3_vit.modeling_dinov3_vit import (
     DINOv3ViTRopePositionEmbedding,
 )
+from fovi.sensing.coords import SamplingCoords
 
 
 @pytest.mark.parametrize(
@@ -103,3 +104,33 @@ def test_builder_selects_positions_from_sensor_layout(
             rtol=0,
         )
         assert model.rope_embeddings.coords.shape[-1] == 2
+
+
+@pytest.mark.parametrize(
+    "style,resolution", [("uniform_as_grid", 111), ("warped_cartesian_as_grid", 200)]
+)
+def test_rectangular_dense_rope_matches_patch_grid(
+    style: str, resolution: int
+) -> None:
+    coords = SamplingCoords((60.0, 80.0), 1.0, resolution, style=style)
+    height, width = coords.grid_shape
+    model = DINOv3ViTModel(
+        DINOv3ViTConfig(
+            image_size=max(height, width),
+            patch_size=16,
+            hidden_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            intermediate_size=64,
+            num_register_tokens=0,
+        )
+    ).eval()
+    dinov3.configure_dinov3_positions(
+        model, sensor_coords=coords, patch_size=16,
+        position_coordinate_space="cartesian",
+    )
+    assert isinstance(model.rope_embeddings, FoviDinoV3RoPE)
+    assert model.rope_embeddings.coords.shape[0] == (height // 16) * (width // 16)
+    with torch.no_grad():
+        output = model(torch.randn(1, 3, height, width))
+    assert output.last_hidden_state.shape[1] == (height // 16) * (width // 16) + 1

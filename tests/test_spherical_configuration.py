@@ -11,7 +11,12 @@ from fovi.models import FoviNet
 from fovi.models.architectures import rescale_fov
 from fovi.sensing.calibration import calibrated_cmf_a
 from fovi.sensing.coords import SamplingCoords, find_desired_res, isotropic_foveal_ring
-from fovi.sensing.projection import CameraModel
+from fovi.sensing.projection import (
+    CameraModel,
+    angular_directions,
+    field_of_view_pair,
+    gaze_rotation,
+)
 from fovi.sensing.retina import RetinalTransform
 
 
@@ -58,13 +63,11 @@ def test_crop_size_resolves_angular_extent(
         ),
     )
     cfg = rescale_fov(configuration(camera, side, fraction))
-    horizontal = (w >= h) if side == "long" else (w < h)
-    half_angle = math.radians(30 if horizontal else 20)
-    assert cfg.saccades.fov == pytest.approx(
-        math.degrees(2 * math.atan(fraction * math.tan(half_angle)))
+    assert tuple(cfg.saccades.fov) == pytest.approx(
+        field_of_view_pair(camera, fraction)
     )
     assert cfg.saccades.cmf_a == 0.5
-    assert rescale_fov(cfg).saccades.fov == cfg.saccades.fov
+    assert tuple(rescale_fov(cfg).saccades.fov) == tuple(cfg.saccades.fov)
 
 
 @pytest.mark.parametrize(
@@ -82,6 +85,10 @@ def test_auto_cmf_matches_projected_central_spacing(
 ) -> None:
     camera = CameraModel(model, (80, 120), (75, 79, 57.5, 41.5), distortion)
     cfg = configuration(camera, fraction=0.5)
+    # This case checks the legacy scalar ring-count calibrator under distortion.
+    # A two-axis field uses the pixel budget and can have a discrete spacing gap.
+    cfg.saccades.rescale_fov = 0
+    cfg.saccades.fov = camera.field_of_view("long", 0.5)
     cfg.saccades.cmf_a = "auto"
     cfg.saccades.auto_match_cart_resources = match_resources
     cfg = rescale_fov(cfg)
@@ -105,6 +112,29 @@ def test_auto_cmf_matches_projected_central_spacing(
     a = retina.sampler.cmf_a
     retina(torch.ones(3, 3, 80, 120), torch.tensor([[0.4, 0.6]]).expand(3, -1))
     assert retina.sampler.cmf_a == a
+
+
+def test_two_axis_auto_cmf_matches_the_actual_budgeted_first_ring() -> None:
+    camera = CameraModel("pinhole", (80, 120), (75, 79, 57.5, 41.5))
+    cfg = configuration(camera, fraction=0.5)
+    cfg.saccades.cmf_a = "auto"
+    cfg = rescale_fov(cfg)
+    coords = SamplingCoords(
+        cfg.saccades.fov,
+        cfg.saccades.cmf_a,
+        16,
+        field_geometry="spherical",
+        style="isotropic",
+    )
+    radii = coords.polar[:, 0]
+    ring = coords.cartesian[torch.isclose(radii, torch.unique(radii).sort().values[1])]
+    center = torch.tensor([[(120 - 1) / 2, (80 - 1) / 2]], dtype=torch.float64)
+    target, target_valid = camera.unproject(center)
+    assert target_valid.all()
+    rays = angular_directions(ring.double(), cfg.saccades.fov[0])
+    pixels, valid = camera.project(rays @ gaze_rotation(target)[0].T)
+    assert valid.all()
+    assert float((pixels - center).norm(dim=-1).min()) == pytest.approx(1.0, abs=0.05)
 
 
 def test_spherical_identity_transform_fails_before_architecture() -> None:
@@ -131,8 +161,8 @@ def test_rectangular_pixel_crop_selects_reference_axis(side: str) -> None:
     camera = CameraModel("fisheye", (80, 120), (75, 75, 59.5, 39.5))
     cfg = configuration(camera, side)
     cfg.saccades.fixation_size = [40, 90]
-    expected = math.degrees((90 if side == "long" else 40) / 75)
-    assert rescale_fov(cfg).saccades.fov == pytest.approx(expected)
+    expected = (math.degrees(40 / 75), math.degrees(90 / 75))
+    assert tuple(rescale_fov(cfg).saccades.fov) == pytest.approx(expected)
 
 
 def test_variable_spherical_crop_requires_explicit_fixed_extent() -> None:

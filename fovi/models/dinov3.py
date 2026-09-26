@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import nn
-import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel, AutoConfig
 from transformers.models.dinov3_vit.modeling_dinov3_vit import DINOv3ViTRopePositionEmbedding
-import os
-from omegaconf import open_dict
+from omegaconf import ListConfig, open_dict
 
 from ..sensing.coords import SamplingCoords
 from ..utils.lora import apply_lora
@@ -44,14 +44,19 @@ def configure_dinov3_positions(
         space = getattr(model.config, 'position_coordinate_space', 'cortical')
     if space not in ('cortical', 'cartesian'):
         raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")
-    if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0 or sensor_coords.resolution % patch_size:
+    if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
+        raise ValueError("patch_size must be a positive integer")
+    paired_fov = isinstance(sensor_coords.fov, (tuple, list, ListConfig))
+    if not paired_fov and any(side % patch_size for side in sensor_coords.grid_shape):
         raise ValueError("Sensor resolution must be divisible by positive patch_size")
     patch_embedding = model.embeddings.patch_embeddings
     expected_shape = (patch_size, patch_size)
     if patch_embedding.kernel_size != expected_shape or patch_embedding.stride != expected_shape:
         raise ValueError("patch_size must match the dense patch convolution kernel and stride")
     model.config.patch_size = patch_size
-    model.config.image_size = sensor_coords.resolution
+    # Upstream DINOv3 stores a scalar image_size but computes RoPE from each
+    # input's actual height and width at forward time.
+    model.config.image_size = max(sensor_coords.grid_shape)
     model.config.position_coordinate_space = space
     model.config.fovi_sensor = {
         'fov': sensor_coords.fov, 'cmf_a': sensor_coords.cmf_a,
@@ -66,9 +71,37 @@ def configure_dinov3_positions(
     if space == 'cortical':
         model.rope_embeddings = native_rope
     elif space == 'cartesian':
-        patches = sensor_coords.clone(
-            resolution=sensor_coords.resolution // patch_size, device=device)
-        positions = patches.as_grid(patches.cartesian_rowcol, sample_dim=0).reshape(-1, 2)
+        square_pair = (paired_fov and sensor_coords.fov[0] == sensor_coords.fov[1]
+                       and sensor_coords.grid_shape[0] == sensor_coords.grid_shape[1]
+                       and sensor_coords.grid_shape[0] % patch_size == 0)
+        if paired_fov and not square_pair:
+            height, width = sensor_coords.grid_shape
+            grid = sensor_coords.as_grid(sensor_coords.cartesian_rowcol, sample_dim=0)
+            pad_height = (-height) % patch_size
+            pad_width = (-width) % patch_size
+            top, left = pad_height // 2, pad_width // 2
+            padded = torch.nn.functional.pad(
+                grid.permute(2, 0, 1),
+                (left, pad_width - left, top, pad_height - top),
+            ).permute(1, 2, 0)
+            valid = torch.nn.functional.pad(
+                torch.ones((height, width), device=grid.device, dtype=grid.dtype),
+                (left, pad_width - left, top, pad_height - top),
+            )
+            patch_rows = (height + pad_height) // patch_size
+            patch_cols = (width + pad_width) // patch_size
+            patch_sum = padded.reshape(
+                patch_rows, patch_size, patch_cols, patch_size, 2
+            ).sum(dim=(1, 3))
+            counts = valid.reshape(
+                patch_rows, patch_size, patch_cols, patch_size
+            ).sum(dim=(1, 3))
+            positions = (patch_sum / counts[..., None]).reshape(-1, 2)
+        else:
+            fov = sensor_coords.fov[0] if square_pair else sensor_coords.fov
+            patches = sensor_coords.clone(
+                fov=fov, resolution=sensor_coords.resolution // patch_size, device=device)
+            positions = patches.as_grid(patches.cartesian_rowcol, sample_dim=0).reshape(-1, 2)
         rope = FoviDinoV3RoPE(
             model.config.rope_theta,
             model.config.hidden_size // model.config.num_attention_heads,
@@ -260,8 +293,6 @@ def build_fovi_dinov3(cfg, device='cuda'):
          # convenience access to total number of outputs units
         model.total_embed_dim = model.embeddings.patch_embeddings.out_channels * len(model.embeddings.patch_embeddings.out_coords)
     else:
-        model.total_embed_dim = model.embeddings.patch_embeddings.out_channels * ((cfg.saccades.resize_size//cfg.model.vit.patch_size)**2)
-
         if not cfg.pretrained_model.use_patch_weights:
             # reinit patch weights
             torch.nn.init.kaiming_normal_(model.embeddings.patch_embeddings.weight)
@@ -279,6 +310,10 @@ def build_fovi_dinov3(cfg, device='cuda'):
             fov_type=cfg.saccades.get('fov_type', 'circular'),
             field_geometry=cfg.saccades.field_geometry,
             radius_norm=cfg.saccades.get('radius_norm', 2.0))
+        patch_count = math.prod(
+            side // cfg.model.vit.patch_size for side in sensor_coords.grid_shape
+        )
+        model.total_embed_dim = model.embeddings.patch_embeddings.out_channels * patch_count
         configure_dinov3_positions(
             model, sensor_coords=sensor_coords, patch_size=cfg.model.vit.patch_size,
             position_coordinate_space=position_space)

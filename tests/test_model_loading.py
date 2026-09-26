@@ -222,7 +222,7 @@ def test_spherical_model_shares_calibrated_crop_geometry(
 
     from fovi.arch.knn import KNNConvLayer
     from fovi.models import FoviNet
-    from fovi.sensing.projection import CameraModel
+    from fovi.sensing.projection import CameraModel, field_of_view_pair
 
     camera = CameraModel("fisheye", (480, 640), (300, 300, 319.5, 239.5))
     cfg = small_fovi_config
@@ -236,8 +236,8 @@ def test_spherical_model_shares_calibrated_crop_geometry(
         cfg.saccades.fixation_size_max_frac = 1
         cfg.saccades.cmf_a = "auto"
     model = FoviNet(cfg, device="cpu").eval()
-    assert model.retinal_transform.fov == pytest.approx(
-        camera.field_of_view("long", 0.5)
+    assert tuple(model.retinal_transform.fov) == pytest.approx(
+        field_of_view_pair(camera, 0.5)
     )
     assert model.retinal_transform.cmf_a == cfg.saccades.cmf_a
     assert model.retinal_transform.camera_model == camera
@@ -245,7 +245,7 @@ def test_spherical_model_shares_calibrated_crop_geometry(
     assert convolutions
     for layer in convolutions:
         assert layer.in_coords.field_geometry == "spherical"
-        assert layer.in_coords.fov == pytest.approx(model.retinal_transform.fov)
+        assert tuple(layer.in_coords.fov) == pytest.approx(model.retinal_transform.fov)
         assert layer.in_coords.cmf_a == model.retinal_transform.cmf_a
 
 

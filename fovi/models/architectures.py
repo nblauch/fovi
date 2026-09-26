@@ -562,7 +562,7 @@ def rescale_fov(cfg):
     """
     if cfg.saccades.field_geometry == 'spherical':
         from ..sensing.calibration import calibrated_cmf_a
-        from ..sensing.projection import CameraModel
+        from ..sensing.projection import CameraModel, field_of_view_pair
 
         if getattr(cfg.saccades, 'camera_model', None) is None:
             raise ValueError("Spherical geometry requires camera_model calibration")
@@ -589,10 +589,20 @@ def rescale_fov(cfg):
                     f"fixation_size={cfg.saccades.fixation_size} with crop area "
                     f"fraction={low} must give a positive crop no larger than "
                     f"camera image {dimension}={w if horizontal else h}")
-            cfg.saccades.fov = camera.field_of_view(side, fraction)
+            if hasattr(cfg.saccades.fixation_size, '__len__'):
+                crop_height, crop_width = cfg.saccades.fixation_size
+                vertical_side = 'short' if h <= w else 'long'
+                horizontal_side = 'long' if w >= h else 'short'
+                crop_scale = np.sqrt(low)
+                cfg.saccades.fov = (
+                    camera.field_of_view(vertical_side, crop_height * crop_scale / h),
+                    camera.field_of_view(horizontal_side, crop_width * crop_scale / w),
+                )
+            else:
+                cfg.saccades.fov = field_of_view_pair(camera, fraction)
         if cfg.saccades.cmf_a == 'auto' or cfg.saccades.cmf_a == -1:
             cfg.saccades.cmf_a = calibrated_cmf_a(
-                camera, float(cfg.saccades.fov), int(cfg.saccades.resize_size),
+                camera, cfg.saccades.fov, int(cfg.saccades.resize_size),
                 auto_match_cart_resources=bool(cfg.saccades.auto_match_cart_resources),
                 style=cfg.saccades.mode,
                 fov_type=getattr(cfg.saccades, 'fov_type', 'circular'),
