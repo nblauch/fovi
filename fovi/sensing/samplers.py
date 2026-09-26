@@ -166,7 +166,7 @@ class GridSampler(BaseGridSampler):
         Args:
             fov (float): Field of view diameter in degrees.
             cmf_a (float): A parameter from the CMF: M(r)=1/(r+a). Smaller = stronger foveation.
-            resolution (int or tuple[int, int]): Scalar resolution or (height, width).
+            resolution (int): Square root of the target output pixel count.
             device (str, optional): Device to run on. Defaults to 'cuda'.
             dtype (torch.dtype, optional): Data type. Defaults to torch.float.
             mode (str, optional): Sampling mode ('nearest' or 'bilinear'). Defaults to 'nearest'.
@@ -231,7 +231,7 @@ class GridSampler(BaseGridSampler):
         if field_geometry == 'spherical' and style in WARPED_CARTESIAN_STYLES:
             # Masked corners belong to an unbounded chart, not physical camera rays.
             angular_coords = torch.where(self.coords.valid_mask[:, None], angular_coords, 0)
-        self.register_buffer('canonical_directions', angular_directions(angular_coords, fov), persistent=False)
+        self.register_buffer('canonical_directions', angular_directions(angular_coords, self.coords.reference_fov), persistent=False)
         self._native_calibrated = None
         self.register_buffer(
             'valid_mask', self.coords.valid_mask, persistent=False)
@@ -690,11 +690,7 @@ class KNNGridSampler(BaseGridSampler):
         self.output_dtype = output_dtype
         self.res_mult = float(res_mult)
         self.cmf_a_mult = float(cmf_a_mult)
-        if isinstance(resolution, (tuple, list)):
-            self.highres_resolution = tuple(
-                max(1, int(round(self.res_mult * side))) for side in resolution)
-        else:
-            self.highres_resolution = int(round(self.res_mult * int(resolution)))
+        self.highres_resolution = round(self.res_mult * resolution)
         self.highres_coords = SamplingCoords(
             fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
             device=device, style=style, dtype=dtype,

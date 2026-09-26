@@ -327,20 +327,15 @@ def angular_directions(cartesian: Tensor, fov_deg: float) -> Tensor:
     return torch.cat((xy * scale[..., None], torch.cos(radius * half)[..., None]), -1)
 
 
-def vertical_field_of_view(
-    reference_fov_deg: float, reference_side: str, resolution: int | tuple[int, int]
-) -> float:
-    """Express a selected-axis FoV on the vertical visual-chart axis."""
-    if isinstance(resolution, int):
-        return reference_fov_deg
-    if len(resolution) != 2 or any(not isinstance(side, int) or side <= 0 for side in resolution):
-        raise ValueError("resolution must be a positive (height, width) pair")
-    aspect = resolution[1] / resolution[0]
-    if reference_side == "long":
-        return reference_fov_deg / max(aspect, 1.0)
-    if reference_side == "short":
-        return reference_fov_deg / min(aspect, 1.0)
-    raise ValueError("reference_side must be 'short' or 'long'")
+def field_of_view_pair(camera: CameraModel, fraction: float = 1.0) -> tuple[float, float]:
+    """Measure vertical and horizontal spans of the same centered image fraction."""
+    height, width = camera.image_size
+    vertical_side = "short" if height <= width else "long"
+    horizontal_side = "long" if width >= height else "short"
+    return (
+        camera.field_of_view(vertical_side, fraction),
+        camera.field_of_view(horizontal_side, fraction),
+    )
 
 
 def gaze_rotation(directions: Tensor, convention: str = "camera_xyz") -> Tensor:

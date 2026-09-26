@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 import torch
 from scipy.optimize import minimize_scalar
@@ -17,8 +18,8 @@ from .projection import CameraModel, angular_directions, gaze_rotation
 
 def calibrated_cmf_a(
     camera: CameraModel,
-    fov: float,
-    resolution: int | tuple[int, int],
+    fov: float | Sequence[float],
+    resolution: int,
     *,
     auto_match_cart_resources: bool,
     style: str,
@@ -36,7 +37,7 @@ def calibrated_cmf_a(
     Args:
         camera: Calibration of the images that will be sampled.
         fov: Full angular diameter in degrees.
-        resolution: Ring count, or Cartesian (height, width) budget.
+        resolution: Ring count or square-root Cartesian pixel budget.
         auto_match_cart_resources: Match the squared resolution as a node budget.
         style: Sampling layout; automatic calibration supports ``isotropic``.
         fov_type: ``circular`` or ``square`` retinal boundary.
@@ -52,8 +53,18 @@ def calibrated_cmf_a(
         raise ValueError(
             "Calibrated cmf_a='auto' requires isotropic sampling; provide an explicit cmf_a for other layouts"
         )
-    sides = (resolution,) if isinstance(resolution, int) else resolution
-    if not math.isfinite(fov) or not 0 < fov <= 180 or any(side < 2 for side in sides):
+    if isinstance(fov, Sequence):
+        if len(fov) != 2:
+            raise ValueError("Calibrated FoV must have vertical and horizontal axes")
+        reference_fov = float(fov[0])
+        fov_axes = tuple(float(value) for value in fov)
+    else:
+        reference_fov = float(fov)
+        fov_axes = (reference_fov, reference_fov)
+    if (
+        not isinstance(resolution, int) or resolution < 2
+        or any(not math.isfinite(value) or not 0 < value <= 180 for value in fov_axes)
+    ):
         raise ValueError(
             "Calibrated cmf_a='auto' requires FoV in (0, 180] and resolution >= 2"
         )
@@ -67,8 +78,25 @@ def calibrated_cmf_a(
     rotation = gaze_rotation(target, gaze_convention)[0]
 
     def spacing(log_fraction: float) -> float:
-        a = fov * math.exp(log_fraction)
-        if isinstance(resolution, int):
+        a = reference_fov * math.exp(log_fraction)
+        if isinstance(fov, Sequence):
+            rings = resolution
+            if auto_match_cart_resources:
+                rings, _ = find_desired_res(
+                    fov, a, resolution**2, style="isotropic",
+                    force_less_than=True, quiet=True, fov_type=fov_type,
+                    field_geometry="spherical",
+                )
+            if rings < 2:
+                return math.inf
+            cartesian, polar, _ = get_isotropic_sampling_coords(
+                fov, a, rings, fov_type=fov_type, field_geometry="spherical"
+            )
+            radius = polar[:, 0]
+            positive = radius[radius > 1e-12]
+            first_radius = positive.min()
+            ring = cartesian[torch.isclose(radius, first_radius, rtol=1e-5)].double()
+        else:
             rings = resolution
             if auto_match_cart_resources:
                 rings, _ = find_desired_res(
@@ -85,15 +113,7 @@ def calibrated_cmf_a(
             if rings < 2:
                 return math.inf
             ring = isotropic_foveal_ring(fov, a, rings, fov_type, "spherical").double()
-        else:
-            cartesian, polar, _ = get_isotropic_sampling_coords(
-                fov, a, resolution, fov_type=fov_type, field_geometry="spherical"
-            )
-            radius = polar[:, 0]
-            positive = radius[radius > 1e-12]
-            first_radius = positive.min()
-            ring = cartesian[torch.isclose(radius, first_radius, rtol=1e-5)].double()
-        rays = angular_directions(ring, fov) @ rotation.T
+        rays = angular_directions(ring, reference_fov) @ rotation.T
         pixels, ring_valid = camera.project(rays)
         if not bool(ring_valid.all()):
             return math.inf
@@ -126,4 +146,4 @@ def calibrated_cmf_a(
             f"with this FoV/resolution (best spacing {distance:g} pixels). "
             "Choose an explicit cmf_a or adjust the sampling resolution."
         )
-    return fov * math.exp(best_log_a)
+    return reference_fov * math.exp(best_log_a)

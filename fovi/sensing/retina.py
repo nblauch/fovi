@@ -58,7 +58,7 @@ class RetinalTransform(nn.Module):
         Initialize the RetinalTransform module.
         
         Args:
-            resolution (int or tuple[int, int]): Scalar target or (height, width).
+            resolution (int): Square root of the target output pixel count.
             start_res (int, optional): Starting resolution. Defaults to 256.
             fov (float, optional): Field of view diameter in degrees. Defaults to 16.
             cmf_a (float, optional): Cortical magnification factor parameter. Defaults to 0.5.
@@ -99,7 +99,7 @@ class RetinalTransform(nn.Module):
         self.device = device
         self.dtype = dtype
 
-        if auto_match_cart_resources != 0 and isinstance(resolution, int):
+        if auto_match_cart_resources != 0 and isinstance(resolution, int) and style == 'isotropic':
             num_coords = resolution**2
             if 'fixn' in style:
                 # if fixn, we are going to force the resolution later
