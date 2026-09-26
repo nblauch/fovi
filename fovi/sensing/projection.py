@@ -300,7 +300,8 @@ class CameraModel:
             [extent if horizontal else 0, 0 if horizontal else extent],
             dtype=torch.float64,
         )
-        rays, _ = self.unproject(torch.stack((center - offset, center + offset)))
+        window_pixels = torch.stack((center - offset, center, center + offset))
+        rays, _ = self.unproject(window_pixels)
         # Boundary endpoints are intentionally allowed; validate inversion separately.
         recovered, _ = self.project(rays)
         angular_valid = rays[:, 2] >= math.cos(math.radians(self.max_angle_deg)) - 1e-12
@@ -309,7 +310,7 @@ class CameraModel:
             or not torch.isfinite(rays).all()
             or not torch.allclose(
                 recovered,
-                torch.stack((center - offset, center + offset)),
+                window_pixels,
                 atol=1e-3,
                 rtol=0,
             )
@@ -317,14 +318,12 @@ class CameraModel:
             raise ValueError(
                 "Retinal window extends outside the invertible calibration domain"
             )
-        span = torch.acos((rays[0] * rays[1]).sum().clamp(-1, 1))
-        if self.model == "fisheye":
-            angles = torch.atan2(
-                torch.linalg.vector_norm(rays[:, :2], dim=1), rays[:, 2]
-            )
-            axis = 0 if horizontal else 1
-            if rays[0, axis] * rays[1, axis] < 0 and angles.sum() > math.pi:
-                span = angles.sum()
+        # Measure each half about the window center so spans over 180 degrees
+        # remain continuous even when the optical axis misses this scanline.
+        span = sum(
+            torch.acos((rays[index] * rays[1]).sum().clamp(-1, 1))
+            for index in (0, 2)
+        )
         return math.degrees(float(span))
 
 

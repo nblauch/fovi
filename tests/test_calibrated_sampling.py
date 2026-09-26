@@ -82,6 +82,18 @@ def test_fisheye_field_of_view_can_span_more_than_half_a_sphere() -> None:
     assert camera.field_of_view("short") == pytest.approx(196.4, abs=0.2)
 
 
+def test_fisheye_field_of_view_is_continuous_with_offset_principal_point() -> None:
+    spans = [
+        CameraModel(
+            "fisheye", (240, 320), (focal_length, focal_length, 159.5, 60.0),
+            max_angle_deg=179,
+        ).field_of_view("long")
+        for focal_length in (108.68, 108.67)
+    ]
+    assert spans[0] == pytest.approx(159, abs=2)
+    assert spans[1] == pytest.approx(spans[0], abs=0.1)
+
+
 def test_fisheye_sampler_retains_rearward_fixation() -> None:
     camera = CameraModel(
         "fisheye", (240, 320), (110, 110, 159.5, 119.5), max_angle_deg=110
