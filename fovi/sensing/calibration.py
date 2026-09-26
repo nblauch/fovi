@@ -7,14 +7,18 @@ import math
 import torch
 from scipy.optimize import minimize_scalar
 
-from .coords import find_desired_res, isotropic_foveal_ring
+from .coords import (
+    find_desired_res,
+    get_isotropic_sampling_coords,
+    isotropic_foveal_ring,
+)
 from .projection import CameraModel, angular_directions, gaze_rotation
 
 
 def calibrated_cmf_a(
     camera: CameraModel,
     fov: float,
-    resolution: int,
+    resolution: int | tuple[int, int],
     *,
     auto_match_cart_resources: bool,
     style: str,
@@ -32,7 +36,7 @@ def calibrated_cmf_a(
     Args:
         camera: Calibration of the images that will be sampled.
         fov: Full angular diameter in degrees.
-        resolution: Ring count, or Cartesian side length when resource matching.
+        resolution: Ring count, or Cartesian (height, width) budget.
         auto_match_cart_resources: Match the squared resolution as a node budget.
         style: Sampling layout; automatic calibration supports ``isotropic``.
         fov_type: ``circular`` or ``square`` retinal boundary.
@@ -48,7 +52,8 @@ def calibrated_cmf_a(
         raise ValueError(
             "Calibrated cmf_a='auto' requires isotropic sampling; provide an explicit cmf_a for other layouts"
         )
-    if not math.isfinite(fov) or not 0 < fov <= 180 or resolution < 2:
+    sides = (resolution,) if isinstance(resolution, int) else resolution
+    if not math.isfinite(fov) or not 0 < fov <= 180 or any(side < 2 for side in sides):
         raise ValueError(
             "Calibrated cmf_a='auto' requires FoV in (0, 180] and resolution >= 2"
         )
@@ -63,22 +68,31 @@ def calibrated_cmf_a(
 
     def spacing(log_fraction: float) -> float:
         a = fov * math.exp(log_fraction)
-        rings = resolution
-        if auto_match_cart_resources:
-            rings, _ = find_desired_res(
-                fov,
-                a,
-                resolution**2,
-                style="isotropic",
-                bounds=(1, 1000),
-                force_less_than=True,
-                quiet=True,
-                fov_type=fov_type,
-                field_geometry="spherical",
+        if isinstance(resolution, int):
+            rings = resolution
+            if auto_match_cart_resources:
+                rings, _ = find_desired_res(
+                    fov,
+                    a,
+                    resolution**2,
+                    style="isotropic",
+                    bounds=(1, 1000),
+                    force_less_than=True,
+                    quiet=True,
+                    fov_type=fov_type,
+                    field_geometry="spherical",
+                )
+            if rings < 2:
+                return math.inf
+            ring = isotropic_foveal_ring(fov, a, rings, fov_type, "spherical").double()
+        else:
+            cartesian, polar, _ = get_isotropic_sampling_coords(
+                fov, a, resolution, fov_type=fov_type, field_geometry="spherical"
             )
-        if rings < 2:
-            return math.inf
-        ring = isotropic_foveal_ring(fov, a, rings, fov_type, "spherical").double()
+            radius = polar[:, 0]
+            positive = radius[radius > 1e-12]
+            first_radius = positive.min()
+            ring = cartesian[torch.isclose(radius, first_radius, rtol=1e-5)].double()
         rays = angular_directions(ring, fov) @ rotation.T
         pixels, ring_valid = camera.project(rays)
         if not bool(ring_valid.all()):

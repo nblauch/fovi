@@ -327,6 +327,22 @@ def angular_directions(cartesian: Tensor, fov_deg: float) -> Tensor:
     return torch.cat((xy * scale[..., None], torch.cos(radius * half)[..., None]), -1)
 
 
+def vertical_field_of_view(
+    reference_fov_deg: float, reference_side: str, resolution: int | tuple[int, int]
+) -> float:
+    """Express a selected-axis FoV on the vertical visual-chart axis."""
+    if isinstance(resolution, int):
+        return reference_fov_deg
+    if len(resolution) != 2 or any(not isinstance(side, int) or side <= 0 for side in resolution):
+        raise ValueError("resolution must be a positive (height, width) pair")
+    aspect = resolution[1] / resolution[0]
+    if reference_side == "long":
+        return reference_fov_deg / max(aspect, 1.0)
+    if reference_side == "short":
+        return reference_fov_deg / min(aspect, 1.0)
+    raise ValueError("reference_side must be 'short' or 'long'")
+
+
 def gaze_rotation(directions: Tensor, convention: str = "camera_xyz") -> Tensor:
     """Aim +Z at (B, 3) directions using the declared zero-torsion convention.
 

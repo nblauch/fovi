@@ -58,7 +58,7 @@ class RetinalTransform(nn.Module):
         Initialize the RetinalTransform module.
         
         Args:
-            resolution (int): Target resolution for the retinal transform.
+            resolution (int or tuple[int, int]): Scalar target or (height, width).
             start_res (int, optional): Starting resolution. Defaults to 256.
             fov (float, optional): Field of view diameter in degrees. Defaults to 16.
             cmf_a (float, optional): Cortical magnification factor parameter. Defaults to 0.5.
@@ -94,14 +94,12 @@ class RetinalTransform(nn.Module):
             raise ValueError("Spherical geometry requires grid_nn or grid_bilinear sampling")
         if field_geometry != 'spherical' and camera_model is not None:
             raise ValueError("Calibrated camera sampling requires spherical field_geometry")
-        full_fov = self.fov
         self.fixation_size = start_res if fixation_size is None else fixation_size # this is the maximum fixation size
         self.start_res = start_res
         self.device = device
         self.dtype = dtype
 
-        if auto_match_cart_resources != 0:
-            in_resolution = resolution
+        if auto_match_cart_resources != 0 and isinstance(resolution, int):
             num_coords = resolution**2
             if 'fixn' in style:
                 # if fixn, we are going to force the resolution later

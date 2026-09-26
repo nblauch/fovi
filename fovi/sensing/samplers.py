@@ -166,7 +166,7 @@ class GridSampler(BaseGridSampler):
         Args:
             fov (float): Field of view diameter in degrees.
             cmf_a (float): A parameter from the CMF: M(r)=1/(r+a). Smaller = stronger foveation.
-            resolution (int): Resolution parameter.
+            resolution (int or tuple[int, int]): Scalar resolution or (height, width).
             device (str, optional): Device to run on. Defaults to 'cuda'.
             dtype (torch.dtype, optional): Data type. Defaults to torch.float.
             mode (str, optional): Sampling mode ('nearest' or 'bilinear'). Defaults to 'nearest'.
@@ -221,7 +221,10 @@ class GridSampler(BaseGridSampler):
         self.fov_type = self.coords.fov_type
         self.radius_norm = self.coords.radius_norm
 
-        self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
+        planar_coords = self.coords.cartesian
+        if field_geometry != 'spherical' and self.coords.aspect != 1:
+            planar_coords = planar_coords / planar_coords.new_tensor((self.coords.aspect, 1.0))
+        self.sampling_grid = self._prep_grid_for_grid_sample(planar_coords)
         self.out_sampling_grid = self.sampling_grid
         self.polar_radius = self.coords.polar[:, 0]
         angular_coords = self.coords.cartesian.float()
@@ -687,7 +690,11 @@ class KNNGridSampler(BaseGridSampler):
         self.output_dtype = output_dtype
         self.res_mult = float(res_mult)
         self.cmf_a_mult = float(cmf_a_mult)
-        self.highres_resolution = int(round(self.res_mult * int(resolution)))
+        if isinstance(resolution, (tuple, list)):
+            self.highres_resolution = tuple(
+                max(1, int(round(self.res_mult * side))) for side in resolution)
+        else:
+            self.highres_resolution = int(round(self.res_mult * int(resolution)))
         self.highres_coords = SamplingCoords(
             fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
             device=device, style=style, dtype=dtype,
@@ -717,8 +724,13 @@ class KNNGridSampler(BaseGridSampler):
         self.backend = backend
         self._last_backend = None
 
-        self.sampling_grid = self._prep_grid_for_grid_sample(self.highres_coords.cartesian)
-        self.out_sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
+        highres_cartesian = self.highres_coords.cartesian
+        lowres_cartesian = self.coords.cartesian
+        if field_geometry != 'spherical':
+            highres_cartesian = highres_cartesian / highres_cartesian.new_tensor((self.highres_coords.aspect, 1.0))
+            lowres_cartesian = lowres_cartesian / lowres_cartesian.new_tensor((self.coords.aspect, 1.0))
+        self.sampling_grid = self._prep_grid_for_grid_sample(highres_cartesian)
+        self.out_sampling_grid = self._prep_grid_for_grid_sample(lowres_cartesian)
 
         self.polar_radius = self.coords.polar[:,0]
         self.register_buffer(
