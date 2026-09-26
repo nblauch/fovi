@@ -57,6 +57,15 @@ def test_tuple_resolution_is_rejected() -> None:
         SamplingCoords((96.697, 155.184), 3.5, (100, 160), style="warped_cartesian")
 
 
+@pytest.mark.parametrize("fov", [(60.0, 60.0), (80.0, 60.0)])
+def test_two_axis_isotropic_padding_uses_generated_ring_radii(
+    fov: tuple[float, float],
+) -> None:
+    coords = SamplingCoords(fov, 1.0, 32, style="isotropic")
+    assert torch.unique(coords.polar[:, 0]).numel() == 32
+    assert coords.pad_cartesian().shape[0] < 100_000
+
+
 def test_asymmetric_wang_field_is_rejected() -> None:
     with pytest.raises(ValueError, match="Asymmetric FoV"):
         SamplingCoords(

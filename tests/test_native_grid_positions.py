@@ -62,14 +62,15 @@ def test_cartesian_positions_follow_upright_warp() -> None:
 @pytest.mark.parametrize("space", ["cortical", "cartesian"])
 def test_rectangular_dense_positions_follow_image_shape(space: str) -> None:
     model = make_model()
-    coords = SamplingCoords(16, 0.5, (24, 40), style="warped_cartesian_as_grid")
+    coords = SamplingCoords((24, 40), None, 31, style="uniform_as_grid")
+    assert coords.grid_shape == (24, 40)
     configure_dinov3_positions(
         model, sensor_coords=coords, patch_size=8, position_coordinate_space=space
     )
     with torch.no_grad():
         output = model(torch.randn(1, 3, 24, 40)).last_hidden_state
     assert output.shape[1] == 1 + 3 * 5
-    assert model.config.fovi_sensor["resolution"] == (24, 40)
+    assert model.config.fovi_sensor["resolution"] == 31
 
 
 @pytest.mark.parametrize(

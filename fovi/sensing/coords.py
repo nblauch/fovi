@@ -1340,12 +1340,13 @@ def _rectangular_isotropic_sampling_coords(
     outer_radius = max_val * (np.hypot(aspect, 1) if fov_type == 'square' else max(aspect, 1))
 
     def generate(rings):
-        cartesian, _, _ = get_isotropic_sampling_coords(
+        cartesian, polar, _ = get_isotropic_sampling_coords(
             fov * outer_radius, cmf_a, rings, device=device,
             fov_type='circular', field_geometry=field_geometry)
         cartesian = cartesian * outer_radius
+        polar = polar * polar.new_tensor((outer_radius, 1.0))
         valid = _fov_valid_mask(cartesian, fov_type, max_val, aspect)
-        return cartesian[valid], cartesian[~valid]
+        return cartesian[valid], polar[valid], cartesian[~valid]
 
     target = (res * res if target_points is None else target_points) if fixed_count else None
     if fixed_count:
@@ -1355,7 +1356,7 @@ def _rectangular_isotropic_sampling_coords(
             fov_type=fov_type, field_geometry=field_geometry)
     else:
         rings = res
-    cartesian, masked = generate(rings)
+    cartesian, polar, masked = generate(rings)
     if fov_type == 'square':
         if fixed_count and target < 4:
             raise ValueError("A rectangular square footprint requires at least four samples")
@@ -1369,15 +1370,18 @@ def _rectangular_isotropic_sampling_coords(
             if len(cartesian) > keep_count:
                 keep = torch.linspace(0, len(cartesian) - 1, keep_count, device=device).round().long()
                 cartesian = cartesian[keep]
+                polar = polar[keep]
         cartesian = torch.cat((cartesian, corners), dim=0)
+        corner_radius = torch.linalg.vector_norm(corners, dim=1)
+        corner_angles = torch.atan2(corners[:, 1], corners[:, 0])
+        polar = torch.cat((polar, torch.stack((corner_radius, corner_angles), dim=1)))
     elif fixed_count:
         if len(cartesian) < target:
             raise RuntimeError("Rectangular isotropic manifold has too few samples")
         if len(cartesian) > target:
             keep = torch.linspace(0, len(cartesian) - 1, target, device=device).round().long()
             cartesian = cartesian[keep]
-    polar = torch.stack((torch.linalg.vector_norm(cartesian, dim=1),
-                         torch.atan2(cartesian[:, 1], cartesian[:, 0])), dim=1)
+            polar = polar[keep]
     plotting = _get_sampling_plotting_coords(cartesian, polar, fov, cmf_a, plotting_type)
     return cartesian, polar, plotting, masked
 
