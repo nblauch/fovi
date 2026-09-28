@@ -7,6 +7,7 @@ from torch import nn
 from torch.amp import autocast
 
 from ..arch.knn import KNNBaseLayer
+from ..sensing.coords import is_cmf_sequence, validate_cmf_values
 from ..sensing.policies import FIXATION_POLICY_REGISTRY
 from ..sensing.retina import RetinalTransform
 from ..utils.std_transforms import get_std_transforms
@@ -52,6 +53,13 @@ class FoviNet(nn.Module):
         if cfg.saccades.field_geometry == 'spherical' and cfg.saccades.mode is None:
             raise ValueError("Spherical geometry requires a retinal transform; saccades.mode cannot be null")
 
+        self.cmf_values = None
+        if is_cmf_sequence(cfg.saccades.cmf_a):
+            self.cmf_values = validate_cmf_values(cfg.saccades.cmf_a)
+            if cfg.saccades.mode != 'warped_cartesian_as_grid':
+                raise ValueError('Multi-level cmf_a requires warped_cartesian_as_grid')
+            if cfg.model.vit.get('position_coordinate_space') == 'cartesian':
+                raise ValueError('Multi-level cmf_a requires cortical ViT positions')
         self.network = ARCHITECTURE_REGISTRY.get(cfg.model.arch)(cfg, device=device)
 
         self.cfg = cfg
@@ -191,7 +199,10 @@ class FoviNet(nn.Module):
             x = torch.rand(10, in_channels, *self.fixation_size).to(self.device, self.dtype)
         else:
             x = torch.rand(10, in_channels, self.fixation_size, self.fixation_size).to(self.device, self.dtype)
-        x = self.retinal_transform(x, None)
+        sample_kwargs = {}
+        if self.cmf_values is not None:
+            sample_kwargs['cmf_indices'] = torch.zeros(x.shape[0], dtype=torch.int64, device=x.device)
+        x = self.retinal_transform(x, None, **sample_kwargs)
         if self.control_model:
             # standard CNN, no need to do this
             test_mlps = False
@@ -250,7 +261,19 @@ class FoviNet(nn.Module):
             self.retinal_transform.to(device)
         return self
 
-    def forward_ssl(self, inputs, f1=None, fixation_size=None, area_range=None):
+    def select_cmf_indices(self, inputs: torch.Tensor, cmf_indices: torch.Tensor | None = None) -> torch.Tensor | None:
+        """Choose one level per training image, or use explicit evaluation indices."""
+        if self.cmf_values is None:
+            if cmf_indices is not None:
+                raise ValueError('cmf_indices requires list-valued saccades.cmf_a')
+            return None
+        if cmf_indices is None:
+            if not self.training:
+                raise ValueError('Multi-level evaluation requires explicit cmf_indices')
+            cmf_indices = torch.randint(len(self.cmf_values), (inputs.shape[0],), device=inputs.device)
+        return cmf_indices
+
+    def forward_ssl(self, inputs, f1=None, fixation_size=None, area_range=None, cmf_indices=None):
         """Forward pass for self-supervised learning.
 
         Args:
@@ -263,7 +286,9 @@ class FoviNet(nn.Module):
             tuple: (embeddings, layer_outputs, x_fixs) containing the model outputs.
         """
 
-        fix_outputs = self.ssl_fixator(inputs, f1=f1, fixation_size=fixation_size, area_range=area_range, f1_only=self.control_model)
+        selection = self.select_cmf_indices(inputs, cmf_indices)
+        selection_kwargs = {} if selection is None else {'cmf_indices': selection}
+        fix_outputs = self.ssl_fixator(inputs, **selection_kwargs, f1=f1, fixation_size=fixation_size, area_range=area_range, f1_only=self.control_model)
 
         batch_size = fix_outputs['x_fixs'].shape[0]
         n_fixations = fix_outputs['x_fixs'].shape[1]
@@ -279,7 +304,7 @@ class FoviNet(nn.Module):
 
         return embeddings, layer_outputs, x_fixs
 
-    def forward_supervised(self, inputs, n_fixations=None, fixation_size=None, area_range=None, fixations=None, do_postproc=True, fixated_inputs=False, **kwargs):
+    def forward_supervised(self, inputs, n_fixations=None, fixation_size=None, area_range=None, fixations=None, do_postproc=True, fixated_inputs=False, cmf_indices=None, **kwargs):
         """Forward pass for supervised learning.
 
         Args:
@@ -290,13 +315,19 @@ class FoviNet(nn.Module):
             fixations: Pre-computed fixations (optional).
             do_postproc (bool, optional): Whether to apply post-processing. Defaults to True.
             fixated_inputs (bool, optional): Whether inputs are already fixated. Defaults to False.
+            cmf_indices (torch.Tensor, optional): Int64 per-image level indices
+                on the input device. Training samples uniformly when omitted;
+                multi-level evaluation requires explicit indices. All fixations
+                of an image reuse its selected level.
             **kwargs: Additional keyword arguments.
 
         Returns:
             tuple: (embeddings, layer_outputs, x_fixs) containing the model outputs.
         """
         if not fixated_inputs:
-            outputs = self.sup_fixator(inputs, fixation_size=fixation_size, area_range=area_range, n_fixations=n_fixations, fixations=fixations)
+            selection = self.select_cmf_indices(inputs, cmf_indices)
+            selection_kwargs = {} if selection is None else {'cmf_indices': selection}
+            outputs = self.sup_fixator(inputs, **selection_kwargs, fixation_size=fixation_size, area_range=area_range, n_fixations=n_fixations, fixations=fixations)
             x_fixs = outputs['x_fixs']
             self.last_fixations = outputs['fixations']
         else:

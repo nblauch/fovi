@@ -160,7 +160,7 @@ __device__ Real read_pixel(const Input* image, int x, int y, int h, int w,
 }
 
 extern "C" __global__ void calibrated_sample(
-    const Input* image, const float* rays, const Real* rotation,
+    const Input* image, const float* rays, const long long* cmf_indices, const Real* rotation,
     Output* output, Real* pixels, long long stride_b, long long stride_c,
     long long stride_y, long long stride_x, long long rotation_b,
     long long rotation_row, long long rotation_col,
@@ -170,7 +170,8 @@ extern "C" __global__ void calibrated_sample(
          linear < (long long)batch * points; linear += (long long)blockDim.x * gridDim.x) {
         int n = linear % points, b = linear / points;
         const Real* r = rotation + b * rotation_b;
-        Real x = rays[3 * n], y = rays[3 * n + 1], z = rays[3 * n + 2];
+        const long long ray_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
+        Real x = rays[3 * ray_n], y = rays[3 * ray_n + 1], z = rays[3 * ray_n + 2];
         // Match the accumulation used by batched matrix multiplication.
         Real rx = fma(r[2 * rotation_col], z, fma(r[rotation_col], y, r[0] * x));
         Real ry = fma(r[rotation_row + 2 * rotation_col], z, fma(r[rotation_row + rotation_col], y, r[rotation_row] * x));

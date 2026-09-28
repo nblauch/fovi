@@ -26,6 +26,7 @@ from .resnet import (
     resnet_ssl as _resnet_ssl,
 )
 from ..utils import HiddenPrints, add_to_all
+from ..sensing.coords import is_cmf_sequence, validate_cmf_values
 
 __all__ = []
 
@@ -560,6 +561,8 @@ def rescale_fov(cfg):
     Returns:
         Configuration object with updated FOV and CMF parameters.
     """
+    if is_cmf_sequence(cfg.saccades.cmf_a):
+        cfg.saccades.cmf_a = list(validate_cmf_values(cfg.saccades.cmf_a))
     if cfg.saccades.field_geometry == 'spherical':
         from ..sensing.calibration import calibrated_cmf_a
         from ..sensing.projection import CameraModel
@@ -620,7 +623,10 @@ def rescale_fov(cfg):
         fov = fov*(cfg.saccades.fixation_size/cfg.training.resolution)
     print(f'adjusting FOV for fixation: {fov} (full: {full_fov})')
     cfg.saccades.fov = float(fov)
-    cfg.saccades.cmf_a = float(cmf_a) if cmf_a is not None else cmf_a
+    if is_cmf_sequence(cmf_a):
+        cfg.saccades.cmf_a = list(cmf_a)
+    else:
+        cfg.saccades.cmf_a = float(cmf_a) if cmf_a is not None else cmf_a
     return cfg
 
 

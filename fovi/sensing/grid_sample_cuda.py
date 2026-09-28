@@ -30,6 +30,7 @@ _SOURCE = r"""
 extern "C" __global__ void fovi_uint8_nearest(
     const unsigned char* __restrict__ image,
     const float* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const float* __restrict__ fix_loc,
     const float* __restrict__ fix_size,
     unsigned char* __restrict__ output,
@@ -43,15 +44,16 @@ extern "C" __global__ void fovi_uint8_nearest(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
         const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
         const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
         const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
         const float pixel_x = __fadd_rn(
-            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+            __fmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const float pixel_y = __fadd_rn(
-            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __fmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const int x = __float2int_rn(pixel_x - 0.5f);
         const int y = __float2int_rn(pixel_y - 0.5f);
         unsigned char value = 0;
@@ -68,6 +70,7 @@ extern "C" __global__ void fovi_uint8_nearest(
 extern "C" __global__ void fovi_float32_nearest(
     const float* __restrict__ image,
     const float* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const float* __restrict__ fix_loc,
     const float* __restrict__ fix_size,
     float* __restrict__ output,
@@ -81,15 +84,16 @@ extern "C" __global__ void fovi_float32_nearest(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
         const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
         const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
         const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
         const float pixel_x = __fadd_rn(
-            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+            __fmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const float pixel_y = __fadd_rn(
-            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __fmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const int x = __float2int_rn(pixel_x - 0.5f);
         const int y = __float2int_rn(pixel_y - 0.5f);
         float value = 0.0f;
@@ -106,6 +110,7 @@ extern "C" __global__ void fovi_float32_nearest(
 extern "C" __global__ void fovi_float16_nearest(
     const unsigned short* __restrict__ image,
     const float* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const float* __restrict__ fix_loc,
     const float* __restrict__ fix_size,
     unsigned short* __restrict__ output,
@@ -119,15 +124,16 @@ extern "C" __global__ void fovi_float16_nearest(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
         const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
         const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
         const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
         const float pixel_x = __fadd_rn(
-            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+            __fmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const float pixel_y = __fadd_rn(
-            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __fmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const int x = __float2int_rn(pixel_x - 0.5f);
         const int y = __float2int_rn(pixel_y - 0.5f);
         unsigned short value = 0;
@@ -144,6 +150,7 @@ extern "C" __global__ void fovi_float16_nearest(
 extern "C" __global__ void fovi_float64_nearest(
     const double* __restrict__ image,
     const double* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const double* __restrict__ fix_loc,
     const double* __restrict__ fix_size,
     double* __restrict__ output,
@@ -157,15 +164,16 @@ extern "C" __global__ void fovi_float64_nearest(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const double scale_x = __dmul_rn(fix_size[2 * b + 1], 0.5);
         const double scale_y = __dmul_rn(fix_size[2 * b], 0.5);
         const double center_x = __dmul_rn(fix_loc[2 * b + 1], (double)width);
         const double center_y = __dmul_rn(fix_loc[2 * b], (double)height);
         const double pixel_x = __dadd_rn(
-            __dmul_rn(base_grid[2 * n], scale_x), center_x);
+            __dmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const double pixel_y = __dadd_rn(
-            __dmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __dmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const int x = __double2int_rn(pixel_x - 0.5);
         const int y = __double2int_rn(pixel_y - 0.5);
         double value = 0.0;
@@ -194,6 +202,7 @@ __device__ __forceinline__ float load_uint8_or_zero(
 extern "C" __global__ void fovi_uint8_bilinear(
     const unsigned char* __restrict__ image,
     const float* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const float* __restrict__ fix_loc,
     const float* __restrict__ fix_size,
     float* __restrict__ output,
@@ -207,15 +216,16 @@ extern "C" __global__ void fovi_uint8_bilinear(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
         const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
         const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
         const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
         const float pixel_x = __fadd_rn(
-            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+            __fmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const float pixel_y = __fadd_rn(
-            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __fmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const float source_x = pixel_x - 0.5f;
         const float source_y = pixel_y - 0.5f;
         const int x0 = __float2int_rd(source_x);
@@ -254,6 +264,7 @@ __device__ __forceinline__ float load_float16_or_zero(
 extern "C" __global__ void fovi_float16_bilinear(
     const __half* __restrict__ image,
     const float* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const float* __restrict__ fix_loc,
     const float* __restrict__ fix_size,
     __half* __restrict__ output,
@@ -267,15 +278,16 @@ extern "C" __global__ void fovi_float16_bilinear(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
         const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
         const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
         const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
         const float pixel_x = __fadd_rn(
-            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+            __fmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const float pixel_y = __fadd_rn(
-            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __fmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const float source_x = pixel_x - 0.5f;
         const float source_y = pixel_y - 0.5f;
         const int x0 = __float2int_rd(source_x);
@@ -315,6 +327,7 @@ __device__ __forceinline__ float load_float32_or_zero(
 extern "C" __global__ void fovi_float32_bilinear(
     const float* __restrict__ image,
     const float* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const float* __restrict__ fix_loc,
     const float* __restrict__ fix_size,
     float* __restrict__ output,
@@ -328,15 +341,16 @@ extern "C" __global__ void fovi_float32_bilinear(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const float scale_x = __fmul_rn(fix_size[2 * b + 1], 0.5f);
         const float scale_y = __fmul_rn(fix_size[2 * b], 0.5f);
         const float center_x = __fmul_rn(fix_loc[2 * b + 1], (float)width);
         const float center_y = __fmul_rn(fix_loc[2 * b], (float)height);
         const float pixel_x = __fadd_rn(
-            __fmul_rn(base_grid[2 * n], scale_x), center_x);
+            __fmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const float pixel_y = __fadd_rn(
-            __fmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __fmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const float source_x = pixel_x - 0.5f;
         const float source_y = pixel_y - 0.5f;
         const int x0 = __float2int_rd(source_x);
@@ -375,6 +389,7 @@ __device__ __forceinline__ double load_float64_or_zero(
 extern "C" __global__ void fovi_float64_bilinear(
     const double* __restrict__ image,
     const double* __restrict__ base_grid,
+    const long long* __restrict__ cmf_indices,
     const double* __restrict__ fix_loc,
     const double* __restrict__ fix_size,
     double* __restrict__ output,
@@ -388,15 +403,16 @@ extern "C" __global__ void fovi_float64_bilinear(
         const int n = linear % points;
         const int c = (linear / points) % channels;
         const int b = linear / ((long long)points * channels);
+        const long long grid_n = n + (cmf_indices ? cmf_indices[b] * points : 0);
 
         const double scale_x = __dmul_rn(fix_size[2 * b + 1], 0.5);
         const double scale_y = __dmul_rn(fix_size[2 * b], 0.5);
         const double center_x = __dmul_rn(fix_loc[2 * b + 1], (double)width);
         const double center_y = __dmul_rn(fix_loc[2 * b], (double)height);
         const double pixel_x = __dadd_rn(
-            __dmul_rn(base_grid[2 * n], scale_x), center_x);
+            __dmul_rn(base_grid[2 * grid_n], scale_x), center_x);
         const double pixel_y = __dadd_rn(
-            __dmul_rn(base_grid[2 * n + 1], scale_y), center_y);
+            __dmul_rn(base_grid[2 * grid_n + 1], scale_y), center_y);
         const double source_x = pixel_x - 0.5;
         const double source_y = pixel_y - 0.5;
         const int x0 = __double2int_rd(source_x);
@@ -469,8 +485,15 @@ def _ptr(tensor):
     return np.uint64(tensor.data_ptr())
 
 
-def sample_uint8(image, base_grid, fix_loc, fix_size, mode="nearest"):
-    """Sample ``image`` and return contiguous ``[B, C, N]`` native-scale output."""
+def sample_uint8(
+    image: torch.Tensor, base_grid: torch.Tensor, fix_loc: torch.Tensor,
+    fix_size: torch.Tensor, mode: str = "nearest", cmf_indices: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Return native-scale (B, C, N) samples from a shared or indexed grid bank.
+
+    The public sampler validates contiguous int64 cmf_indices of shape (B,)
+    before dispatching here. base_grid has shape (levels, 1, N, 2).
+    """
     if image.dtype != torch.uint8 or not image.is_cuda:
         raise RuntimeError("native uint8 sampling requires a CUDA torch.uint8 tensor")
     if image.ndim != 4:
@@ -479,7 +502,7 @@ def sample_uint8(image, base_grid, fix_loc, fix_size, mode="nearest"):
         raise ValueError(f"unsupported mode {mode!r}")
 
     device = image.device
-    base_grid = base_grid[0, 0]
+    base_grid = base_grid[:, 0]
     if (base_grid.device != device or base_grid.dtype != torch.float32
             or not base_grid.is_contiguous()):
         base_grid = base_grid.to(device=device, dtype=torch.float32).contiguous()
@@ -490,7 +513,7 @@ def sample_uint8(image, base_grid, fix_loc, fix_size, mode="nearest"):
             or not fix_size.is_contiguous()):
         fix_size = fix_size.to(device=device, dtype=torch.float32).contiguous()
     batch, channels, height, width = image.shape
-    points = base_grid.shape[0]
+    points = base_grid.shape[1]
     dtype = torch.uint8 if mode == "nearest" else torch.float32
     output = torch.empty((batch, channels, points), device=device, dtype=dtype)
 
@@ -498,7 +521,7 @@ def sample_uint8(image, base_grid, fix_loc, fix_size, mode="nearest"):
     threads = 256
     blocks = min((total + threads - 1) // threads, 4096)
     args = (
-        _ptr(image), _ptr(base_grid), _ptr(fix_loc), _ptr(fix_size), _ptr(output),
+        _ptr(image), _ptr(base_grid), np.uint64(0 if cmf_indices is None else cmf_indices.data_ptr()), _ptr(fix_loc), _ptr(fix_size), _ptr(output),
         np.int64(image.stride(0)), np.int64(image.stride(1)),
         np.int64(image.stride(2)), np.int64(image.stride(3)),
         np.int32(batch), np.int32(channels), np.int32(height), np.int32(width),
@@ -515,7 +538,10 @@ def sample_uint8(image, base_grid, fix_loc, fix_size, mode="nearest"):
     return output
 
 
-def sample_float(image, base_grid, fix_loc, fix_size, mode="nearest"):
+def sample_float(
+    image: torch.Tensor, base_grid: torch.Tensor, fix_loc: torch.Tensor,
+    fix_size: torch.Tensor, mode: str = "nearest", cmf_indices: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Sample a CUDA floating image and preserve its storage dtype at output."""
     dtype_config = {
         torch.float16: ("float16", torch.float32),
@@ -532,7 +558,7 @@ def sample_float(image, base_grid, fix_loc, fix_size, mode="nearest"):
 
     device = image.device
     dtype_name, coordinate_dtype = dtype_config[image.dtype]
-    base_grid = base_grid[0, 0]
+    base_grid = base_grid[:, 0]
     if (base_grid.device != device or base_grid.dtype != coordinate_dtype
             or not base_grid.is_contiguous()):
         base_grid = base_grid.to(
@@ -546,7 +572,7 @@ def sample_float(image, base_grid, fix_loc, fix_size, mode="nearest"):
         fix_size = fix_size.to(
             device=device, dtype=coordinate_dtype).contiguous()
     batch, channels, height, width = image.shape
-    points = base_grid.shape[0]
+    points = base_grid.shape[1]
     output = torch.empty(
         (batch, channels, points), device=device, dtype=image.dtype)
 
@@ -554,7 +580,7 @@ def sample_float(image, base_grid, fix_loc, fix_size, mode="nearest"):
     threads = 256
     blocks = min((total + threads - 1) // threads, 4096)
     args = (
-        _ptr(image), _ptr(base_grid), _ptr(fix_loc), _ptr(fix_size), _ptr(output),
+        _ptr(image), _ptr(base_grid), np.uint64(0 if cmf_indices is None else cmf_indices.data_ptr()), _ptr(fix_loc), _ptr(fix_size), _ptr(output),
         np.int64(image.stride(0)), np.int64(image.stride(1)),
         np.int64(image.stride(2)), np.int64(image.stride(3)),
         np.int32(batch), np.int32(channels), np.int32(height), np.int32(width),
