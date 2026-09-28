@@ -355,17 +355,19 @@ class SamplingCoords():
         return grid.contiguous()
 
     def native_to_visual(self, coordinates: torch.Tensor) -> torch.Tensor:
-        """Map (..., 2) native Cartesian warp coordinates to the visual chart.
+        """Map (..., 2) native Cartesian coordinates to the visual chart.
 
         Visual chart radius one is half the configured FoV. For spherical
         geometry this is angular eccentricity, not a pinhole projection.
         The unbounded chart includes masked cells outside the model footprint;
         renderers must handle their own angular padding domain.
         """
-        if self.style not in WARPED_CARTESIAN_STYLES:
-            raise ValueError("Analytic native mapping requires a Cartesian warp sensor")
         if coordinates.shape[-1] != 2:
             raise ValueError("Native coordinates must end in a two-coordinate axis")
+        if self.style in ('uniform', 'uniform_as_grid'):
+            return coordinates
+        if self.style not in WARPED_CARTESIAN_STYLES:
+            raise ValueError("Analytic native mapping requires a Cartesian grid sensor")
         normalizer, rho_axis = _warp_law(
             self.fov, self.cmf_a, self.radius_norm, self.fov_type, self.max_val)
         visual, _ = _inverse_warped_cartesian(
@@ -376,10 +378,12 @@ class SamplingCoords():
 
     def visual_to_native(self, coordinates: torch.Tensor) -> torch.Tensor:
         """Map (..., 2) normalized visual-chart positions to the native grid."""
-        if self.style not in WARPED_CARTESIAN_STYLES:
-            raise ValueError("Analytic native mapping requires a Cartesian warp sensor")
         if coordinates.shape[-1] != 2:
             raise ValueError("Visual coordinates must end in a two-coordinate axis")
+        if self.style in ('uniform', 'uniform_as_grid'):
+            return coordinates
+        if self.style not in WARPED_CARTESIAN_STYLES:
+            raise ValueError("Analytic native mapping requires a Cartesian grid sensor")
         radius = _native_radius(coordinates, self.radius_norm)
         normalizer, axis_scale = _warp_law(
             self.fov, self.cmf_a, self.radius_norm, self.fov_type, self.max_val)
@@ -1149,7 +1153,7 @@ def get_sampling_coords(
         coords = torch.stack(torch.meshgrid(coords, coords), dim=2).reshape(-1, 2).to(device)
         polar_coords = torch.stack([torch.sqrt(coords[:,0]**2 + coords[:,1]**2), torch.arctan2(coords[:,1], coords[:,0])], dim=1)
         plotting_coords = coords.clone()
-        valid_mask = torch.ones(coords.shape[0], device=device, dtype=torch.bool)
+        valid_mask = _fov_valid_mask(coords, fov_type, max_val=max_val)
         masked_coords = coords.new_empty((0, 2))
     elif 'warped_cartesian' in style:
         coords, polar_coords, plotting_coords, valid_mask = (

@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+
 from fovi.sensing.retina import RetinalTransform
 
 
@@ -73,6 +74,7 @@ def test_uniform_grid_preserves_an_asymmetric_image_exactly() -> None:
         fov=16,
         cmf_a=None,
         style="uniform_as_grid",
+        fov_type="square",
         sampler="grid_nn",
         device="cpu",
         auto_match_cart_resources=False,
