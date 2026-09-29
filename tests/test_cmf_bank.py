@@ -106,8 +106,30 @@ def test_bank_validation_and_state() -> None:
     image = torch.zeros(2, 3, 32, 32)
     with pytest.raises(ValueError, match="explicit cmf_indices"):
         sampler(image)
-    with pytest.raises(ValueError, match="out of range"):
+    with pytest.raises(RuntimeError, match="out of range"):
         sampler(image, cmf_indices=torch.tensor([-1, 0]))
+
+
+def test_compiled_bank_on_cpu_matches_eager() -> None:
+    kwargs = {
+        "style": "warped_cartesian_as_grid",
+        "device": "cpu",
+        "field_geometry": "spherical",
+        "camera_model": CameraModel("pinhole", (32, 40), (24, 24, 19.5, 15.5)),
+        "mode": "bilinear",
+    }
+    compiled = GridSampler(16, LEVELS, 8, backend="compiled", **kwargs)
+    eager = GridSampler(16, LEVELS, 8, backend="torch", **kwargs)
+    indices = torch.tensor([6, 0, 3, 1])
+    torch.manual_seed(0)
+    images = torch.rand(4, 3, 32, 40)
+    fixation = torch.rand(4, 2) * 0.4 + 0.3
+    torch.testing.assert_close(
+        compiled(images, fixation, cmf_indices=indices),
+        eager(images, fixation, cmf_indices=indices),
+    )
+    with pytest.raises(RuntimeError, match="out of range"):
+        compiled(images, fixation, cmf_indices=torch.tensor([0, 1, 2, 7]))
 
 
 def test_mixed_sampler_gradients() -> None:

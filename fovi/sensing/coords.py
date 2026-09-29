@@ -1632,10 +1632,8 @@ class SamplingCoordsBank(torch.nn.Module):
                 "cmf_indices must be an int64 tensor of shape (batch,) on the image device"
             )
         valid = ((indices >= 0) & (indices < len(self.cmf_a))).all()
-        if indices.is_cuda:
-            torch._assert_async(valid, "cmf_indices out of range")
-        elif not bool(valid):
-            raise ValueError("cmf_indices out of range")
+        # Traceable under fullgraph compilation; raises eagerly on CPU.
+        torch._assert_async(valid, "cmf_indices out of range")
 
 
 def sampling_as_grid(
