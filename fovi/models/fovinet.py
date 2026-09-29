@@ -273,6 +273,18 @@ class FoviNet(nn.Module):
             cmf_indices = torch.randint(len(self.cmf_values), (inputs.shape[0],), device=inputs.device)
         return cmf_indices
 
+    def fixed_cmf_kwargs(self, cmf_level: int | None, batch_size: int, device: torch.device) -> dict:
+        """Forward kwargs evaluating every image at one level; multi-level models require ``cmf_level``."""
+        if self.cmf_values is None:
+            if cmf_level is not None:
+                raise ValueError('cmf_level requires list-valued saccades.cmf_a')
+            return {}
+        if cmf_level is None:
+            raise ValueError(f'Multi-level models require cmf_level, an index into cmf_a={list(self.cmf_values)}')
+        if not 0 <= cmf_level < len(self.cmf_values):
+            raise ValueError(f'cmf_level {cmf_level} out of range for {len(self.cmf_values)} levels')
+        return {'cmf_indices': torch.full((batch_size,), cmf_level, dtype=torch.int64, device=device)}
+
     def forward_ssl(self, inputs, f1=None, fixation_size=None, area_range=None, cmf_indices=None):
         """Forward pass for self-supervised learning.
 

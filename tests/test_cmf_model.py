@@ -255,3 +255,46 @@ def test_distributed_metrics_reduce_sums_and_counts(tmp_path: Path) -> None:
     assert first["top_1_val_cmf_a-0.1"] == 0.5
     assert first["top_1_val_cmf_a-1"] == 0
     assert first["top_1_val_cmf_a-10"] == 1
+
+
+def test_activation_extraction_requires_explicit_level(
+    local_config: DictConfig, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("FOVI_SAVE_DIR", str(tmp_path))
+    from fovi.training.trainer import Trainer
+
+    cfg = local_config
+    cfg.training.use_amp = False
+    model = FoviNet(cfg, device="cpu")
+    trainer = Trainer.__new__(Trainer)
+    trainer.cfg = cfg
+    trainer.model = trainer.model_ = model
+    trainer.gpu = "cpu"
+    trainer.amp_dtype = torch.float32
+    trainer.n_fixations_val = [1, 2]
+    loader = [(torch.rand(size, 3, 32, 32), torch.arange(size)) for size in (5, 4)]
+    observed = []
+    select = model.select_cmf_indices
+
+    def capture(
+        inputs: torch.Tensor, cmf_indices: torch.Tensor | None = None
+    ) -> torch.Tensor | None:
+        # get_activations calls forward directly, bypassing module hooks.
+        observed.append(cmf_indices.clone())
+        return select(inputs, cmf_indices)
+
+    monkeypatch.setattr(model, "select_cmf_indices", capture)
+    with pytest.raises(ValueError, match="require cmf_level"):
+        trainer.compute_activations(loader, layer_names=["projector"])
+    with pytest.raises(ValueError, match="out of range"):
+        trainer.compute_activations(loader, layer_names=["projector"], cmf_level=7)
+    outputs, _, _ = trainer.compute_activations(
+        loader, layer_names=["projector"], cmf_level=3
+    )
+    assert len(outputs) == 9
+    assert [indices.tolist() for indices in observed] == [[3] * 5, [3] * 4]
+
+    cfg = deepcopy(cfg)
+    cfg.saccades.cmf_a = cfg.saccades.cmf_a[3]
+    with pytest.raises(ValueError, match="requires list-valued"):
+        FoviNet(cfg, device="cpu").fixed_cmf_kwargs(0, 2, torch.device("cpu"))

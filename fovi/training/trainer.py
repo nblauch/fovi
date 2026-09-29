@@ -1035,6 +1035,7 @@ class Trainer:
                             max_batches=None,
                             setting='supervised',
                             do_postproc=False,
+                            cmf_level=None,
                             **kwargs,
                             ):
         """Extract activations from specified layers for a given data loader.
@@ -1054,6 +1055,8 @@ class Trainer:
             setting (str, optional): Forward pass setting ('supervised' or 'ssl').
                 Defaults to 'supervised'.
             do_postproc (bool, optional): Whether to apply post-processing. Defaults to False.
+            cmf_level (int, optional): Index into list-valued ``saccades.cmf_a`` used for
+                every image. Required for multi-level models; must be None otherwise.
             **kwargs: Additional arguments passed to get_activations.
 
         Returns:
@@ -1096,6 +1099,7 @@ class Trainer:
                         area_range=area_range,
                         n_fixations=n_fixations,
                         do_postproc=do_postproc,
+                        **self.model_.fixed_cmf_kwargs(cmf_level, images.shape[0], images.device),
                         **kwargs
                     )
 
