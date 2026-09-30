@@ -32,16 +32,16 @@ def _device():
 
 
 def _make_retinal_transform(device, sampler="grid_nn", with_transforms=True,
-                            color_jitter=1, gray=1, blur=0):
+                            color_jitter=1, gray=1, blur=0, style="isotropic", **kwargs):
     pre = post = None
     if with_transforms:
         _, pre, post = get_std_transforms(
             "pre_warp", 1, color_jitter, gray, blur, str(device), torch.float32,
             pointcloud_mode=True)
     rt = RetinalTransform(
-        resolution=64, start_res=256, fov=16.0, cmf_a=0.5, style="isotropic",
+        resolution=64, start_res=256, fov=16.0, cmf_a=0.5, style=style,
         sampler=sampler, fixation_size=256, device=str(device),
-        pre_transforms=pre, post_transforms=post, auto_match_cart_resources=0)
+        pre_transforms=pre, post_transforms=post, auto_match_cart_resources=0, **kwargs)
     return rt
 
 
@@ -94,6 +94,19 @@ class TestFastPreTransformParity(unittest.TestCase):
             out_ref, out_fast, _, _ = self._run_both(rt, x, fix_loc, fix_size, seed=seed)
             self.assertEqual((out_ref - out_fast).abs().max().item(), 0.0,
                              f"parity failure at seed {seed}")
+
+    def test_train_mode_bit_exact_outside_circular_fov(self):
+        """Points outside a circular FoV are zeroed after the pre-warp transforms in the
+        reference path; the fast path must match rather than keep transformed content."""
+        device = _device()
+        rt = _make_retinal_transform(
+            device, style="warped_cartesian_as_grid", fov_type="circular")
+        rt.train()
+        self.assertTrue(rt._fast_pre_transforms_supported())
+        self.assertFalse(bool(rt.sampler.valid_mask.all()))
+        x, fix_loc, fix_size = _make_inputs(device)
+        out_ref, out_fast, _, _ = self._run_both(rt, x, fix_loc, fix_size)
+        self.assertEqual((out_ref - out_fast).abs().max().item(), 0.0)
 
     def test_out_of_bounds_points_are_zero(self):
         """Reference semantics: grid_sample zero-pads AFTER the pre-warp transforms, so OOB
