@@ -42,7 +42,10 @@ def configure_dinov3_positions(
     space = position_coordinate_space
     if space is None:
         space = getattr(model.config, 'position_coordinate_space', 'cortical')
-    if isinstance(sensor_coords, SamplingCoordsBank) and space != 'cortical':
+    # A checkpoint trained across levels keeps that requirement when reconfigured for one level.
+    saved_cmf_a = getattr(model.config, 'fovi_sensor', {}).get('cmf_a')
+    multi_level = isinstance(sensor_coords, SamplingCoordsBank) or is_cmf_sequence(saved_cmf_a)
+    if multi_level and space != 'cortical':
         raise ValueError('Multi-level cmf_a requires cortical ViT positions; Cartesian positions are unsupported')
     if space not in ('cortical', 'cartesian'):
         raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")

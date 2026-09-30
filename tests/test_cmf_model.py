@@ -9,6 +9,7 @@ from fovi.models import dinov3
 from fovi.models.architectures import rescale_fov
 from fovi.models.fovinet import FoviNet
 from fovi.models.loading import load_config
+from fovi.sensing.coords import SamplingCoords
 from fovi.sensing.policies import MultiRandomSaccadePolicy
 from fovi.training.cmf_metrics import CmfValidationMetrics, validation_cmf_indices
 from omegaconf import DictConfig
@@ -112,6 +113,33 @@ def test_cartesian_rejected_before_loading(
         local_config.saccades.cmf_a = levels
         with pytest.raises(ValueError, match="cortical"):
             dinov3.build_fovi_dinov3(local_config, device="cpu")
+
+
+def test_multi_level_checkpoint_keeps_cortical_positions(
+    local_config: DictConfig,
+) -> None:
+    backbone = FoviNet(local_config, device="cpu").network.backbone
+    sensor = backbone.config.fovi_sensor
+    scalar = SamplingCoords(
+        sensor["fov"], sensor["cmf_a"][3], sensor["resolution"],
+        style=sensor["style"], fov_type=sensor["fov_type"], device="cpu",
+    )
+    patch_size = backbone.config.patch_size
+    for space in ("cartesian", None):
+        if space is None:
+            # A config already switched to Cartesian must not resurrect it.
+            backbone.config.position_coordinate_space = "cartesian"
+        with pytest.raises(ValueError, match="cortical"):
+            dinov3.configure_dinov3_positions(
+                backbone, sensor_coords=scalar, patch_size=patch_size,
+                position_coordinate_space=space,
+            )
+    assert backbone.config.fovi_sensor["cmf_a"] == list(local_config.saccades.cmf_a)
+    dinov3.configure_dinov3_positions(
+        backbone, sensor_coords=scalar, patch_size=patch_size,
+        position_coordinate_space="cortical",
+    )
+    assert backbone.config.fovi_sensor["cmf_a"] == sensor["cmf_a"][3]
 
 
 def test_rescale_preserves_levels(local_config: DictConfig) -> None:
