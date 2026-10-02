@@ -78,10 +78,12 @@ class CalibratedCudaSampler:
         fixation: torch.Tensor,
         rotation: torch.Tensor | None,
         return_pixels: bool = False,
+        cmf_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Sample NCHW images into (B, C, N); optionally return (B, N, 2) source pixels.
 
-        Inputs must be on the same CUDA device. Rays are contiguous float32 (N, 3).
+        Inputs must be on the same CUDA device. Rays are contiguous float32
+        (N, 3), or (levels, N, 3) with contiguous int64 cmf_indices of shape (B,).
         Fixations and rotations use float64 for double images, float32 otherwise.
         This inference kernel has no backward; the public sampler retains autograd.
         """
@@ -113,7 +115,7 @@ class CalibratedCudaSampler:
         batch, channels, height, width = image.shape
         if (height, width) != tuple(self.camera.image_size):
             raise ValueError("Image dimensions do not match calibration")
-        points = rays.shape[0]
+        points = rays.shape[-2]
         output_dtype = (
             torch.float32
             if image.dtype == torch.uint8 and self.mode == "bilinear"
@@ -162,6 +164,7 @@ class CalibratedCudaSampler:
                 (
                     np.uint64(image.data_ptr()),
                     np.uint64(rays.data_ptr()),
+                    np.uint64(0 if cmf_indices is None else cmf_indices.data_ptr()),
                     np.uint64(rotation.data_ptr()),
                     np.uint64(output.data_ptr()),
                     np.uint64(0 if pixels is None else pixels.data_ptr()),

@@ -12,7 +12,7 @@ __all__ = []
 
 @torch.no_grad()
 @add_to_all(__all__)
-def knn_probe(trainer, k=20, temperature=0.07):
+def knn_probe(trainer, k=20, temperature=0.07, cmf_level=None):
         """Perform k-nearest neighbors classification using pretrained backbone features.
 
         Extracts features from both training and validation sets using the trainer's
@@ -54,6 +54,7 @@ def knn_probe(trainer, k=20, temperature=0.07):
             labels = labels.to(trainer.gpu, non_blocking=True)
 
             kwargs = dict(n_fixations=trainer.cfg.saccades.n_fixations_val) if trainer.cfg.saccades.n_fixations_val is not None else {}
+            kwargs.update(trainer.model_.fixed_cmf_kwargs(cmf_level, images.shape[0], images.device))
             features, _, _ = trainer.model(images, setting='supervised',
                                                     do_postproc=False,
                                                     **kwargs,
@@ -78,6 +79,7 @@ def knn_probe(trainer, k=20, temperature=0.07):
             labels = labels.to(trainer.gpu, non_blocking=True)
 
             kwargs = dict(n_fixations=trainer.cfg.saccades.n_fixations_val) if trainer.cfg.saccades.n_fixations_val is not None else {}
+            kwargs.update(trainer.model_.fixed_cmf_kwargs(cmf_level, images.shape[0], images.device))
             features, _, _ = trainer.model(images, setting='supervised',
                                                     do_postproc=False,
                                                     **kwargs,

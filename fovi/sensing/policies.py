@@ -263,7 +263,7 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
         self.nonrandom_first = nonrandom_first
         self.norm_dist_from_center = norm_dist_from_center
     
-    def forward(self, x, n_fixations=None, fixations=None, fixation_size=None, area_range=None):
+    def forward(self, x, n_fixations=None, fixations=None, fixation_size=None, area_range=None, cmf_indices=None):
         """
         Forward pass for the MultiRandomSaccadePolicy.
 
@@ -288,6 +288,7 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
 
         assert fixations is None or len(fixations) == n_fixations    
 
+        selection_kwargs = {} if cmf_indices is None else {'cmf_indices': cmf_indices}
         fixation_sizes = []
         fixations_ = []
         for fix_i in range(n_fixations):
@@ -314,9 +315,9 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
             if getattr(self.retinal_transform, 'field_geometry', 'planar') == 'spherical':
                 # Calibrated retinal extent is angular; sampled crop sizes only
                 # govern this policy's distribution of image fixation locations.
-                x_fix = self.retinal_transform(x, fixation)
+                x_fix = self.retinal_transform(x, fixation, **selection_kwargs)
             else:
-                x_fix = self.retinal_transform(x, fixation, fixation_size=fixation_size)
+                x_fix = self.retinal_transform(x, fixation, fixation_size=fixation_size, **selection_kwargs)
             x_fixs.append(x_fix)
             if ii > 0:
                 fix_deltas.append(fixation - fixations[ii-1])
@@ -358,7 +359,7 @@ class NoSaccadePolicy(BaseSaccadePolicy):
         super().__init__(retinal_transform, 1)
         self.multi_policy = False
 
-    def forward(self, x, f1=None, area_range=None, n_fixations=None, fixation_size=None, fixations=None):
+    def forward(self, x, f1=None, area_range=None, n_fixations=None, fixation_size=None, fixations=None, cmf_indices=None):
         """
         Forward pass for the NoSaccadePolicy.
 
@@ -376,7 +377,8 @@ class NoSaccadePolicy(BaseSaccadePolicy):
                 - fix_deltas (torch.Tensor): The fixation deltas.
         """
         assert f1 is None and area_range is None and (n_fixations is None or n_fixations == 1) and fixation_size is None and fixations is None
-        x_f1 = self.retinal_transform(x, f1)
+        selection_kwargs = {} if cmf_indices is None else {'cmf_indices': cmf_indices}
+        x_f1 = self.retinal_transform(x, f1, **selection_kwargs)
         x_f1 = x_f1.unsqueeze(1)
         return {
             'x_fixs': x_f1,

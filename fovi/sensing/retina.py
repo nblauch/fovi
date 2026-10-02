@@ -6,7 +6,7 @@ import torch.nn as nn
 import torchvision.transforms.functional as TF
 from scipy.optimize import minimize_scalar
 
-from .coords import find_desired_res
+from .coords import find_desired_res, is_cmf_sequence, validate_cmf_values
 from .projection import CameraCalibration, CameraModel
 from .samplers import GaussianKNNGridSampler, KNNGridSampler, GridSampler
 from .validation import validate_gaze_convention
@@ -61,7 +61,8 @@ class RetinalTransform(nn.Module):
             resolution (int): Target resolution for the retinal transform.
             start_res (int, optional): Starting resolution. Defaults to 256.
             fov (float, optional): Field of view diameter in degrees. Defaults to 16.
-            cmf_a (float, optional): Cortical magnification factor parameter. Defaults to 0.5.
+            cmf_a (float or sequence of float): CMF parameter in degrees, or a
+                bank of levels for warped Cartesian grid sampling. Defaults to 0.5.
             style (str, optional): Sampling style. Defaults to 'isotropic'.
             sampler (str, optional): Sampler type. Defaults to 'grid_nn'.
             fixation_size (int, optional): Fixation size in pixels. Defaults to None.
@@ -85,6 +86,10 @@ class RetinalTransform(nn.Module):
         super().__init__()
         validate_gaze_convention(gaze_convention)
         self.sigma = sigma
+        if is_cmf_sequence(cmf_a):
+            cmf_a = validate_cmf_values(cmf_a)
+            if style != 'warped_cartesian_as_grid' or sampler not in ('grid_nn', 'grid_bilinear'):
+                raise ValueError('Multi-level cmf_a requires warped_cartesian_as_grid and grid_nn or grid_bilinear')
         self.cmf_a = cmf_a
         self.fov = fov
         self.fov_type = fov_type
@@ -182,7 +187,7 @@ class RetinalTransform(nn.Module):
         return self.sampler.camera_model if self.field_geometry == 'spherical' else None
 
     @torch.autocast(device_type='cuda', enabled=False)
-    def forward(self, x, fix_loc, fixation_size=None, **kwargs):
+    def forward(self, x, fix_loc, fixation_size=None, cmf_indices=None, **kwargs):
         """
         Forward pass of the retinal transform.
 
@@ -192,6 +197,9 @@ class RetinalTransform(nn.Module):
                 unit-range image and converted after sampling whenever semantics permit.
             fix_loc (torch.Tensor or tuple): Fixation location.
             fixation_size (int, optional): Fixation size. Defaults to None.
+            cmf_indices (torch.Tensor, optional): Int64 level indices of shape
+                (B,) on the image device. Required with list-valued cmf_a;
+                reuse them across fixations of the same image.
             **kwargs: Additional arguments.
 
         Returns:
@@ -202,6 +210,11 @@ class RetinalTransform(nn.Module):
         """
 
         # Spherical retinal extent is angular and fixed by the calibrated window.
+        if is_cmf_sequence(self.cmf_a):
+            self.sampler.coords.validate_indices(cmf_indices, x.shape[0], x.device)
+            cmf_indices = cmf_indices.contiguous()
+        elif cmf_indices is not None:
+            raise ValueError('cmf_indices requires list-valued cmf_a')
         if self.field_geometry == 'spherical':
             if fixation_size is not None:
                 raise ValueError("Spherical sampling uses fov in degrees; pixel fixation_size overrides are unsupported")
@@ -219,7 +232,7 @@ class RetinalTransform(nn.Module):
             # fixation. Bit-exact with the reference path (see _sample_then_pre_transform)
             # and consumes the RNG streams identically.
             self._announce_pre_transform_execution(fast=True)
-            x = self._sample_then_pre_transform(x, fix_loc, fixation_size)
+            x = self._sample_then_pre_transform(x, fix_loc, fixation_size, cmf_indices)
         else:
             if apply_pre:
                 self._announce_pre_transform_execution(fast=False)
@@ -229,10 +242,12 @@ class RetinalTransform(nn.Module):
                     x = self._uint8_to_unit(x)
                 x = self.pre_transforms(x.clone())
             sample_kwargs = kwargs
+            if cmf_indices is not None:
+                sample_kwargs = {**sample_kwargs, 'cmf_indices': cmf_indices}
             if input_is_uint8 and apply_pre:
                 # The image has been converted because pre-warp transforms needed it, but
                 # its sampling coordinates must retain the canonical raw-input definition.
-                sample_kwargs = {**kwargs, 'direct': True}
+                sample_kwargs = {**sample_kwargs, 'direct': True}
             x = self.sampler(
                 x, fix_loc=fix_loc, fixation_size=fixation_size, **sample_kwargs)
             if input_is_uint8 and not apply_pre:
@@ -243,8 +258,8 @@ class RetinalTransform(nn.Module):
         if self.post_transforms is not None and self.training:
             x = self.post_transforms(x.unsqueeze(3)).clone().squeeze(3)
 
-        if self.foveal_color is not None:
-            x = self.foveal_color(x, self.sampler.polar_radius)
+        if self.foveal_color is not None and self.foveal_color.sigma is not None:
+            x = self.foveal_color(x, self.sampler.selected_radius(cmf_indices))
 
         if not self.training and self.no_color_val:
             x = TF.rgb_to_grayscale(x.unsqueeze(3), num_output_channels=3).clone().squeeze(3)
@@ -347,7 +362,7 @@ class RetinalTransform(nn.Module):
             cached = self._padding_mask_src_cache
         return cached[1].expand(x.shape[0], 1, x.shape[-2], x.shape[-1])
 
-    def _sample_then_pre_transform(self, x, fix_loc, fixation_size):
+    def _sample_then_pre_transform(self, x, fix_loc, fixation_size, cmf_indices=None):
         """Equivalent to ``self.sampler(self.pre_transforms(x.clone()), ...)`` for a
         nearest-neighbor GridSampler and pointwise pre_transforms, but ~10x cheaper:
         the image is sampled once, and the transforms run on the (B, C, N) point cloud.
@@ -364,12 +379,12 @@ class RetinalTransform(nn.Module):
         input_is_uint8 = x.dtype == torch.uint8
         if input_is_uint8:
             sampled = self.sampler(
-                x, fix_loc=fix_loc, fixation_size=fixation_size)
+                x, fix_loc=fix_loc, fixation_size=fixation_size, cmf_indices=cmf_indices)
             sampled = self._uint8_to_unit(sampled)
             fix_loc_t, fixation_size_t = self.sampler._prepare_sampling_args(
                 x, fix_loc, fixation_size)
             pixel_x, pixel_y = self.sampler._direct_pixel_coords(
-                x.shape[-2:], fix_loc_t, fixation_size_t)
+                x.shape[-2:], fix_loc_t, fixation_size_t, cmf_indices)
             sample_x = torch.round(pixel_x - 0.5)
             sample_y = torch.round(pixel_y - 0.5)
             mask = (
@@ -377,7 +392,7 @@ class RetinalTransform(nn.Module):
                 & (sample_y >= 0) & (sample_y < x.shape[-2])
             )[:, None, :].to(sampled.dtype)
         else:
-            grid = self.sampler._transform_fix_grid(x.shape[-2:], fix_loc, fixation_size)
+            grid = self.sampler._transform_fix_grid(x.shape[-2:], fix_loc, fixation_size, cmf_indices)
             sampled = torch.nn.functional.grid_sample(
                 x, grid, mode=self.sampler.mode, align_corners=False).squeeze(2)
             mask = torch.nn.functional.grid_sample(
@@ -404,7 +419,11 @@ class RetinalTransform(nn.Module):
             else:  # pragma: no cover - guarded by _fast_pre_transforms_supported
                 raise RuntimeError(f'unsupported pre_transform for fast path: {t}')
 
-        return s4.squeeze(3) * mask
+        result = s4.squeeze(3) * mask
+        valid = self.sampler.selected_mask(cmf_indices)
+        if valid.ndim == 1:
+            valid = valid.unsqueeze(0)
+        return result * valid[:, None].to(result.dtype)
 
     def change_sigma(self, sigma):
         """
@@ -730,6 +749,8 @@ class GaussianColorDecay(nn.Module):
         
         # Apply Gaussian decay to color channels
         decay = torch.exp(-radius / self.sigma)
+        if decay.ndim == 1:
+            decay = decay.unsqueeze(0)
         decay = decay.unsqueeze(1)  # Add channel dimension
         
         # Apply decay to all channels except luminance

@@ -179,6 +179,60 @@ open docs/_build/html/index.html
 python -m http.server 8000 --directory docs/_build/html
 ```
 
+## Training across foveation levels
+
+`config/dinov3_warped_grid_multi_cmf.yaml` extends the cortical-grid DINOv3 recipe
+with `saccades.cmf_a: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]`.
+These are absolute CMF parameters in degrees, using the existing `cmf_a`
+interpretation, not fractions of the FoV. Override the list in your training
+configuration to choose other levels.
+
+Training samples a level uniformly for each image on each visit and reuses it
+across all that image's fixations. The encoder receives the same grid shape at
+every level. Lists require `warped_cartesian_as_grid`, square or circular FoV,
+and `grid_nn` or `grid_bilinear` sampling. Both planar and calibrated spherical
+geometry are supported. DINOv3 positions must be `cortical`; Cartesian ViT
+positions with a list are rejected, including lists containing a single value.
+
+Validation partitions the existing image traversal across levels, retaining each
+image's assignment across fixations and repeats. It runs the same number of
+image views as scalar validation. Existing metrics cover the whole partitioned
+dataset; additional metrics use suffixes such as `_cmf_a-0.001`, with image counts
+under `samples_val_cmf_a-0.001`. Each level is evaluated on its assigned subset,
+so these are not full-dataset evaluations at every level. Empty groups report
+their count without an undefined accuracy or loss.
+
+For explicit evaluation, pass an `int64` tensor `cmf_indices` containing one
+configured-list index per image, on the image device:
+
+```python
+indices = torch.tensor([0, 3, 6], device=images.device)
+model.eval()
+embeddings, layer_outputs, retinal_views = model(images, cmf_indices=indices)
+```
+
+Standalone `RetinalTransform` and `GridSampler` calls with list-valued `cmf_a`
+always require `cmf_indices`. `SamplingCoords` continues to describe one level;
+`SamplingCoordsBank` composes scalar geometries and keeps their sampling tensors
+in nonpersistent buffers. Use `bank.for_level(index)` for scalar geometry
+inspection. Sampling tables are rebuilt from saved configuration on load.
+
+The checkpoint retains the full level list and shares the same encoder weights
+across levels. Fovi-dex can load it with a selected scalar renderer geometry and
+cortical positions; its runtime renderer switching is unchanged. Preserve the
+trained sensor resolution, patch size, and grid convention. Fovi-dex configuration
+may express CMF as a fraction of FoV: use its existing conversion when selecting
+the matching absolute level.
+
+A bounded benchmark compares scalar per-batch sampling with per-image selection,
+including sampling, DINOv3-S LoRA forward/backward, and an optimizer step. It uses
+synthetic inputs and local random model weights without downloading data:
+
+```bash
+python benchmarks/benchmark_cmf_sampling.py --geometry planar
+python benchmarks/benchmark_cmf_sampling.py --geometry spherical
+```
+
 ## ⚡ Benchmarking: optimized vs baseline
 
 FOVI's **KNN convolution and KNN pooling** ship with optimized CUDA kernels (selected

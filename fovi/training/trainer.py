@@ -12,6 +12,9 @@ torch.autograd.profiler.profile(False)
 import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torchmetrics
+
+from .cmf_metrics import CmfValidationMetrics, validation_cmf_indices
+from ..sensing.coords import is_cmf_sequence, validate_cmf_values
 import socket
 import random
 import torch.nn.functional as F
@@ -889,6 +892,9 @@ class Trainer:
 
         # Use max n_fixations for single forward pass
         max_n_fix = max(self.n_fixations_val)
+        cmf_metrics = None
+        if is_cmf_sequence(cfg.saccades.cmf_a):
+            cmf_metrics = CmfValidationMetrics(validate_cmf_values(cfg.saccades.cmf_a), self.sup_loss, self.device)
 
         preds = []
         all_targets = []
@@ -897,14 +903,26 @@ class Trainer:
         with torch.no_grad():
             with autocast('cuda', dtype=self.amp_dtype, enabled=bool(cfg.training.use_amp)):
                 for _ in range(repeats):
+                    image_offset = 0
                     for images, target in tqdm(self.val_loader):
                         images = images.to(self.gpu)
                         all_targets.append(target.detach().cpu().float().numpy())
 
+                        cmf_kwargs = {}
+                        if cmf_metrics is not None:
+                            indices = validation_cmf_indices(
+                                images.shape[0], image_offset, len(cmf_metrics.values), images.device,
+                                self.rank if cfg.training.distributed else 0,
+                                self.world_size if cfg.training.distributed else 1,
+                            )
+                            image_offset += images.shape[0]
+                            cmf_metrics.count(indices)
+                            cmf_kwargs['cmf_indices'] = indices
+
                         # Forward pass with max fixations, do_postproc=False to get raw (b, f, d) tensors
                         embeddings, list_representation, _ = self.model(images, setting='supervised',
                                                                         do_postproc=False,
-                                                                        n_fixations=max_n_fix)
+                                                                        n_fixations=max_n_fix, **cmf_kwargs)
 
                         if not cfg.training.no_probes:
                             # Evaluate probes at max fixations for backward compatibility (existing meters)
@@ -916,9 +934,13 @@ class Trainer:
                                 current_loss = self.sup_loss(list_outputs[l], target)
                                 loss_classif += current_loss
                                 self.val_meters['loss_classif_val_layer'+str(l)](current_loss.detach())
+                                if cmf_metrics is not None:
+                                    cmf_metrics.update_loss('loss_classif_val_layer'+str(l), list_outputs[l], target, indices)
                                 meters = ['multilabel_acc_val_layer'+str(l)] if 'multilabel' in self.loss_name else ['top_1_val_layer'+str(l), 'top_5_val_layer'+str(l)]
                                 for k in meters:
                                     self.val_meters[k](list_outputs[l].detach(), target)
+                                    if cmf_metrics is not None:
+                                        cmf_metrics.update_accuracy(k, list_outputs[l], target, indices)
                                 if f'layer{l}' not in probe_preds:
                                     probe_preds[f'layer{l}'] = []
                                 probe_preds[f'layer{l}'].append(list_outputs[l].detach().cpu().float().numpy())
@@ -932,9 +954,13 @@ class Trainer:
                                 for l in range(len(list_outputs_nfix)):
                                     if self.last_layer_probes_only and l != len(list_outputs_nfix)-1:
                                         continue
+                                    if cmf_metrics is not None:
+                                        cmf_metrics.update_loss(f'loss_classif_val_nfix-{n_fix}_layer{l}', list_outputs_nfix[l], target, indices)
                                     meters = [f'multilabel_acc_val_nfix-{n_fix}_layer{l}'] if 'multilabel' in self.loss_name else [f'top_1_val_nfix-{n_fix}_layer{l}', f'top_5_val_nfix-{n_fix}_layer{l}']
                                     for k in meters:
                                         self.val_meters[k](list_outputs_nfix[l].detach(), target)
+                                        if cmf_metrics is not None:
+                                            cmf_metrics.update_accuracy(k, list_outputs_nfix[l], target, indices)
 
                         if self.supervised_loss:
                             # Apply head to get final predictions at max fixations
@@ -943,21 +969,31 @@ class Trainer:
 
                             current_loss = self.sup_loss(head_output, target)
                             self.val_meters['loss_classif_val'](current_loss.detach())
+                            if cmf_metrics is not None:
+                                cmf_metrics.update_loss('loss_classif_val', head_output, target, indices)
                             meters = ['multilabel_acc_val'] if 'multilabel' in self.loss_name else ['top_1_val', 'top_5_val']
                             for k in meters:
                                 self.val_meters[k](head_output.detach(), target)
+                                if cmf_metrics is not None:
+                                    cmf_metrics.update_accuracy(k, head_output, target, indices)
 
                             # Evaluate at each n_fix value for supervised head
                             for n_fix in self.n_fixations_val:
                                 # Slice embeddings to first n_fix fixations
                                 embeddings_sliced = embeddings[:, :n_fix, :]
                                 head_output_nfix = self.model_head(embeddings_sliced)
+                                if cmf_metrics is not None:
+                                    cmf_metrics.update_loss(f'loss_classif_val_nfix-{n_fix}', head_output_nfix, target, indices)
 
                                 meters = [f'multilabel_acc_val_nfix-{n_fix}'] if 'multilabel' in self.loss_name else [f'top_1_val_nfix-{n_fix}', f'top_5_val_nfix-{n_fix}']
                                 for k in meters:
                                     self.val_meters[k](head_output_nfix.detach(), target)
+                                    if cmf_metrics is not None:
+                                        cmf_metrics.update_accuracy(k, head_output_nfix, target, indices)
 
         stats = {k: m.compute().item() for k, m in self.val_meters.items()}
+        if cmf_metrics is not None:
+            stats.update(cmf_metrics.compute())
         [meter.reset() for meter in self.val_meters.values()]
 
         if self.supervised_loss:
@@ -999,6 +1035,7 @@ class Trainer:
                             max_batches=None,
                             setting='supervised',
                             do_postproc=False,
+                            cmf_level=None,
                             **kwargs,
                             ):
         """Extract activations from specified layers for a given data loader.
@@ -1018,6 +1055,8 @@ class Trainer:
             setting (str, optional): Forward pass setting ('supervised' or 'ssl').
                 Defaults to 'supervised'.
             do_postproc (bool, optional): Whether to apply post-processing. Defaults to False.
+            cmf_level (int, optional): Index into list-valued ``saccades.cmf_a`` used for
+                every image. Required for multi-level models; must be None otherwise.
             **kwargs: Additional arguments passed to get_activations.
 
         Returns:
@@ -1060,6 +1099,7 @@ class Trainer:
                         area_range=area_range,
                         n_fixations=n_fixations,
                         do_postproc=do_postproc,
+                        **self.model_.fixed_cmf_kwargs(cmf_level, images.shape[0], images.device),
                         **kwargs
                     )
 

@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import math
+from collections.abc import Callable, Sequence
+from numbers import Real
 
 import numpy as np
 import torch
@@ -21,6 +25,27 @@ WARPED_CARTESIAN_STYLES = (
 #: Norms available for measuring native-plane radius in the Cartesian warp.
 #: ``2.0`` gives circular iso-eccentricity shells, ``inf`` gives square ones.
 RADIUS_NORMS = (2.0, math.inf)
+
+
+def is_cmf_sequence(cmf_a: float | Sequence[float]) -> bool:
+    """Recognize Python and OmegaConf lists without treating sentinels as lists."""
+    return isinstance(cmf_a, Sequence) and not isinstance(cmf_a, (str, bytes))
+
+
+def validate_cmf_values(cmf_a: Sequence[float]) -> tuple[float, ...]:
+    """Validate an explicit bank of finite, positive CMF parameters in degrees."""
+    if not cmf_a or any(
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+        or not math.isfinite(value)
+        or value <= 0
+        for value in cmf_a
+    ):
+        raise ValueError("cmf_a must be a nonempty sequence of finite positive numbers")
+    values = tuple(float(value) for value in cmf_a)
+    if len(set(values)) != len(values):
+        raise ValueError("cmf_a levels must be distinct")
+    return values
 
 
 def _validate_fov_type(fov_type, style=None):
@@ -342,17 +367,7 @@ class SamplingCoords():
         Returns:
             Tensor with the sample axis replaced by height and width.
         """
-        if not self.style.endswith('_as_grid'):
-            raise ValueError(f"Grid layout requires an _as_grid style, got {self.style!r}")
-        sample_dim %= values.ndim
-        if values.shape[sample_dim] != self.resolution ** 2:
-            raise ValueError("Sample axis does not match the sensor grid resolution")
-        shape = (*values.shape[:sample_dim], self.resolution, self.resolution,
-                 *values.shape[sample_dim + 1:])
-        grid = values.reshape(shape)
-        if self.style in ('uniform_as_grid', 'warped_cartesian_as_grid'):
-            grid = grid.transpose(sample_dim, sample_dim + 1).flip(sample_dim)
-        return grid.contiguous()
+        return sampling_as_grid(values, self.style, self.resolution, sample_dim)
 
     def native_to_visual(self, coordinates: torch.Tensor) -> torch.Tensor:
         """Map (..., 2) native Cartesian warp coordinates to the visual chart.
@@ -1486,3 +1501,157 @@ def cart_to_complex_log(cartesian, fov, cmf_a, postproc=True):
         plotting_coords[hemi_inds == 0,0] = plotting_coords[hemi_inds == 0,0] - sub
 
     return plotting_coords
+
+
+@add_to_all(__all__)
+class SamplingCoordsBank(torch.nn.Module):
+    """Fixed-layout retinal geometries indexed by CMF level.
+
+    Cartesian coordinates have shape (levels, samples, 2); polar radii and
+    validity masks have shape (levels, samples). Geometry is reconstructed
+    from configuration rather than serialized as model weights.
+    """
+
+    def __init__(
+        self,
+        fov: float,
+        cmf_a: Sequence[float],
+        res: int,
+        device: str | torch.device = "cpu",
+        dtype: torch.dtype = torch.float32,
+        style: str = "warped_cartesian_as_grid",
+        fov_type: str = "circular",
+        field_geometry: str = "planar",
+        radius_norm: float = 2.0,
+        isotropic_plotting_type: str = "v1like",
+    ) -> None:
+        super().__init__()
+        self.cmf_a = validate_cmf_values(cmf_a)
+        if style != "warped_cartesian_as_grid" or fov_type not in (
+            "square",
+            "circular",
+        ):
+            raise ValueError(
+                "CMF banks require warped_cartesian_as_grid with square or circular FoV"
+            )
+        if field_geometry not in ("planar", "spherical"):
+            raise ValueError("CMF banks require planar or spherical geometry")
+        self.fov = fov
+        self.resolution = res
+        self.style = style
+        self.fov_type = fov_type
+        self.field_geometry = field_geometry
+        self.radius_norm = radius_norm
+        self.isotropic_plotting_type = isotropic_plotting_type
+        levels = [self._build_level(value, device, dtype) for value in self.cmf_a]
+        for level in levels:
+            if len(level) != res**2 or not torch.equal(
+                level.cortical, levels[0].cortical
+            ):
+                raise ValueError(
+                    "CMF levels must share resolution and native grid ordering"
+                )
+        self.register_buffer(
+            "cartesian",
+            torch.stack([level.cartesian for level in levels]),
+            persistent=False,
+        )
+        self.register_buffer(
+            "polar_radius",
+            torch.stack([level.polar[:, 0] for level in levels]),
+            persistent=False,
+        )
+        self.register_buffer(
+            "valid_mask",
+            torch.stack([level.valid_mask for level in levels]),
+            persistent=False,
+        )
+        self.register_buffer(
+            "scatter_sizes",
+            torch.stack([level.get_scatter_sizes() for level in levels]),
+            persistent=False,
+        )
+
+    def _build_level(
+        self, value: float, device: str | torch.device, dtype: torch.dtype
+    ) -> SamplingCoords:
+        return SamplingCoords(
+            self.fov,
+            value,
+            self.resolution,
+            device=device,
+            dtype=dtype,
+            style=self.style,
+            fov_type=self.fov_type,
+            field_geometry=self.field_geometry,
+            radius_norm=self.radius_norm,
+            isotropic_plotting_type=self.isotropic_plotting_type,
+        )
+
+    def for_level(self, index: int) -> SamplingCoords:
+        """Construct scalar geometry for inspection, outside the sampling hot path."""
+        if not 0 <= index < len(self.cmf_a):
+            raise IndexError("CMF level index out of range")
+        return self._build_level(
+            self.cmf_a[index], self.cartesian.device, self.cartesian.dtype
+        )
+
+    def _apply(
+        self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True
+    ) -> SamplingCoordsBank:
+        # Model dtype conversion must not quantize sampling geometry.
+        geometry = dict(self.named_buffers(recurse=False))
+        super()._apply(fn, recurse=recurse)
+        for name, original in geometry.items():
+            self._buffers[name] = original.to(device=self._buffers[name].device)
+        return self
+
+    def __len__(self) -> int:
+        return self.resolution**2
+
+    def as_grid(self, values: torch.Tensor, sample_dim: int = -1) -> torch.Tensor:
+        """Apply the shared sensor image layout to sampled values."""
+        return sampling_as_grid(values, self.style, self.resolution, sample_dim)
+
+    def get_scatter_sizes(self) -> torch.Tensor:
+        """Return per-level plotting sizes in canonical sample order."""
+        return self.scatter_sizes
+
+    def validate_indices(
+        self, indices: torch.Tensor | None, batch: int, device: torch.device
+    ) -> None:
+        """Validate per-image level selection without a CUDA host synchronization."""
+        if indices is None:
+            raise ValueError("Multi-level sampling requires explicit cmf_indices")
+        if (
+            indices.shape != (batch,)
+            or indices.dtype != torch.int64
+            or indices.device != device
+        ):
+            raise ValueError(
+                "cmf_indices must be an int64 tensor of shape (batch,) on the image device"
+            )
+        valid = ((indices >= 0) & (indices < len(self.cmf_a))).all()
+        # Traceable under fullgraph compilation; raises eagerly on CPU.
+        torch._assert_async(valid, "cmf_indices out of range")
+
+
+def sampling_as_grid(
+    values: torch.Tensor, style: str, resolution: int, sample_dim: int = -1
+) -> torch.Tensor:
+    """Convert canonical vector ordering to an upright sensor image."""
+    if not style.endswith("_as_grid"):
+        raise ValueError(f"Grid layout requires an _as_grid style, got {style!r}")
+    sample_dim %= values.ndim
+    if values.shape[sample_dim] != resolution**2:
+        raise ValueError("Sample axis does not match the sensor grid resolution")
+    shape = (
+        *values.shape[:sample_dim],
+        resolution,
+        resolution,
+        *values.shape[sample_dim + 1 :],
+    )
+    grid = values.reshape(shape)
+    if style in ("uniform_as_grid", "warped_cartesian_as_grid"):
+        grid = grid.transpose(sample_dim, sample_dim + 1).flip(sample_dim)
+    return grid.contiguous()

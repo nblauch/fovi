@@ -8,7 +8,7 @@ from transformers.models.dinov3_vit.modeling_dinov3_vit import DINOv3ViTRopePosi
 import os
 from omegaconf import open_dict
 
-from ..sensing.coords import SamplingCoords
+from ..sensing.coords import SamplingCoords, SamplingCoordsBank, is_cmf_sequence
 from ..utils.lora import apply_lora
 from ..utils import add_to_all
 from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioningPatchEmbedding, FoviDinoV3RoPE, resample_patch_embed_conv
@@ -20,7 +20,7 @@ __all__ = []
 def configure_dinov3_positions(
     model: nn.Module,
     *,
-    sensor_coords: SamplingCoords,
+    sensor_coords: SamplingCoords | SamplingCoordsBank,
     patch_size: int,
     position_coordinate_space: str | None = None,
 ) -> None:
@@ -42,6 +42,11 @@ def configure_dinov3_positions(
     space = position_coordinate_space
     if space is None:
         space = getattr(model.config, 'position_coordinate_space', 'cortical')
+    # A checkpoint trained across levels keeps that requirement when reconfigured for one level.
+    saved_cmf_a = getattr(model.config, 'fovi_sensor', {}).get('cmf_a')
+    multi_level = isinstance(sensor_coords, SamplingCoordsBank) or is_cmf_sequence(saved_cmf_a)
+    if multi_level and space != 'cortical':
+        raise ValueError('Multi-level cmf_a requires cortical ViT positions; Cartesian positions are unsupported')
     if space not in ('cortical', 'cartesian'):
         raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")
     if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0 or sensor_coords.resolution % patch_size:
@@ -54,7 +59,7 @@ def configure_dinov3_positions(
     model.config.image_size = sensor_coords.resolution
     model.config.position_coordinate_space = space
     model.config.fovi_sensor = {
-        'fov': sensor_coords.fov, 'cmf_a': sensor_coords.cmf_a,
+        'fov': sensor_coords.fov, 'cmf_a': list(sensor_coords.cmf_a) if isinstance(sensor_coords, SamplingCoordsBank) else sensor_coords.cmf_a,
         'resolution': sensor_coords.resolution, 'style': sensor_coords.style,
         'fov_type': sensor_coords.fov_type, 'field_geometry': sensor_coords.field_geometry,
         'radius_norm': sensor_coords.radius_norm,
@@ -185,6 +190,11 @@ def build_fovi_dinov3(cfg, device='cuda'):
     if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
         torch.backends.cuda.enable_cudnn_sdp(False)
 
+    if is_cmf_sequence(cfg.saccades.cmf_a):
+        if cfg.saccades.mode != 'warped_cartesian_as_grid':
+            raise ValueError('Multi-level cmf_a requires warped_cartesian_as_grid')
+        if cfg.model.vit.get('position_coordinate_space') == 'cartesian':
+            raise ValueError('Multi-level cmf_a requires cortical ViT positions; Cartesian positions are unsupported')
     load_weights = getattr(cfg.pretrained_model, 'load_weights', True)
     model, processor = load_dinov3(cfg.pretrained_model.path, device=device, pretrained=load_weights)
 
@@ -192,6 +202,8 @@ def build_fovi_dinov3(cfg, device='cuda'):
     if position_space is None:
         default_space = 'cortical' if cfg.saccades.mode.endswith('_as_grid') else 'cartesian'
         position_space = getattr(model.config, 'position_coordinate_space', default_space)
+    if is_cmf_sequence(cfg.saccades.cmf_a) and position_space != 'cortical':
+        raise ValueError('Multi-level cmf_a requires cortical ViT positions; Cartesian positions are unsupported')
     if position_space not in ('cortical', 'cartesian'):
         raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")
     with open_dict(cfg.model.vit):
@@ -273,7 +285,8 @@ def build_fovi_dinov3(cfg, device='cuda'):
             preserve_kernel_norm=getattr(cfg.pretrained_model, 'preserve_patch_norm', False),
         )
 
-        sensor_coords = SamplingCoords(
+        coord_cls = SamplingCoordsBank if is_cmf_sequence(cfg.saccades.cmf_a) else SamplingCoords
+        sensor_coords = coord_cls(
             cfg.saccades.fov, cfg.saccades.cmf_a, cfg.saccades.resize_size,
             device=device, style=cfg.saccades.mode,
             fov_type=cfg.saccades.get('fov_type', 'circular'),

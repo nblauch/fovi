@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from ..arch.knn import KNNPoolingLayer
 from ..utils import add_to_all
-from .coords import WARPED_CARTESIAN_STYLES, SamplingCoords, transform_sampling_grid, xy_to_colrow
+from .coords import WARPED_CARTESIAN_STYLES, SamplingCoords, SamplingCoordsBank, is_cmf_sequence, transform_sampling_grid, xy_to_colrow
 from .projection import (
     CameraCalibration,
     CameraModel,
@@ -55,7 +55,7 @@ class BaseGridSampler(nn.Module):
         validate_output_dtype(output_dtype)
         self.__dict__['output_dtype'] = output_dtype
 
-    def _transform_fix_grid(self, img_shape, fix_loc, fixation_size):
+    def _transform_fix_grid(self, img_shape, fix_loc, fixation_size, cmf_indices=None):
         """
         Transform fixation grid to image coordinates.
         
@@ -67,7 +67,25 @@ class BaseGridSampler(nn.Module):
         Returns:
             torch.Tensor: Transformed grid coordinates.
         """
-        return transform_sampling_grid(self.sampling_grid, fix_loc, fixation_size, img_shape)
+        return transform_sampling_grid(self.selected_grid(cmf_indices), fix_loc, fixation_size, img_shape)
+
+    def selected_grid(self, cmf_indices: torch.Tensor | None = None) -> torch.Tensor:
+        """Return a shared grid or gather per-image grids from a CMF bank."""
+        if cmf_indices is None:
+            return self.sampling_grid
+        return self.sampling_grid.index_select(0, cmf_indices)
+
+    def selected_mask(self, cmf_indices: torch.Tensor | None = None) -> torch.Tensor:
+        """Return the scalar or per-image FoV mask."""
+        if cmf_indices is None:
+            return self.valid_mask
+        return self.valid_mask.index_select(0, cmf_indices)
+
+    def selected_radius(self, cmf_indices: torch.Tensor | None = None) -> torch.Tensor:
+        """Return normalized eccentricity for color decay."""
+        if cmf_indices is None:
+            return self.polar_radius
+        return self.polar_radius.index_select(0, cmf_indices)
 
     def _prep_grid_for_grid_sample(self, cartesian_grid):
         """
@@ -79,6 +97,8 @@ class BaseGridSampler(nn.Module):
         Returns:
             torch.Tensor: (1,1,n,2) coordinates, where each 2-vector coordinate is specified in (-y, x) or (row, col) format for grid_sample (normalized to [-1,1])
         """
+        if cartesian_grid.ndim == 3:
+            return torch.stack((cartesian_grid[..., 0], -cartesian_grid[..., 1]), -1).unsqueeze(1)
         out_grid = xy_to_colrow(cartesian_grid.clone(), do_norm=False, format='-11')
         out_grid = out_grid.unsqueeze(0).unsqueeze(0)
         return out_grid
@@ -114,25 +134,25 @@ class BaseGridSampler(nn.Module):
                 f"fixation_size must have shape ({batch}, 2), got {tuple(fixation_size.shape)}")
         return fix_loc.contiguous(), fixation_size.contiguous()
 
-    def _direct_pixel_coords(self, img_shape, fix_loc, fixation_size):
+    def _direct_pixel_coords(self, img_shape, fix_loc, fixation_size, cmf_indices=None):
         """Compute canonical pixel-boundary coordinates for direct sampling."""
         height, width = img_shape
-        base = self.sampling_grid[0, 0].to(
+        base = self.selected_grid(cmf_indices)[:, 0].to(
             device=fix_loc.device, dtype=fix_loc.dtype)
         pixel_x = (
-            base[None, :, 0] * (fixation_size[:, None, 1] * 0.5)
+            base[:, :, 0] * (fixation_size[:, None, 1] * 0.5)
             + fix_loc[:, None, 1] * width
         )
         pixel_y = (
-            base[None, :, 1] * (fixation_size[:, None, 0] * 0.5)
+            base[:, :, 1] * (fixation_size[:, None, 0] * 0.5)
             + fix_loc[:, None, 0] * height
         )
         return pixel_x, pixel_y
 
-    def _direct_grid(self, img_shape, fix_loc, fixation_size):
+    def _direct_grid(self, img_shape, fix_loc, fixation_size, cmf_indices=None):
         """Return a grid_sample-format grid describing the direct pixel coordinates."""
         height, width = img_shape
-        pixel_x, pixel_y = self._direct_pixel_coords(img_shape, fix_loc, fixation_size)
+        pixel_x, pixel_y = self._direct_pixel_coords(img_shape, fix_loc, fixation_size, cmf_indices)
         return torch.stack(
             (2.0 * pixel_x / width - 1.0, 2.0 * pixel_y / height - 1.0), dim=-1
         ).unsqueeze(1)
@@ -142,8 +162,10 @@ class BaseGridSampler(nn.Module):
         """Apply deterministic FoV padding without changing forward signatures."""
         if all_valid:
             return samples
-        return samples * valid_mask.to(
-            device=samples.device, dtype=samples.dtype)[None, None, :]
+        mask = valid_mask.to(device=samples.device, dtype=samples.dtype)
+        if mask.ndim == 1:
+            mask = mask.unsqueeze(0)
+        return samples * mask[:, None, :]
 
 
 @add_to_all(__all__)
@@ -165,7 +187,8 @@ class GridSampler(BaseGridSampler):
         
         Args:
             fov (float): Field of view diameter in degrees.
-            cmf_a (float): A parameter from the CMF: M(r)=1/(r+a). Smaller = stronger foveation.
+            cmf_a (float or sequence of float): CMF parameter in degrees.
+                A sequence builds a fixed-layout bank for warped Cartesian grids.
             resolution (int): Resolution parameter.
             device (str, optional): Device to run on. Defaults to 'cuda'.
             dtype (torch.dtype, optional): Data type. Defaults to torch.float.
@@ -208,7 +231,8 @@ class GridSampler(BaseGridSampler):
         self.gaze_convention = gaze_convention
         
         if coords is None:
-            self.coords = SamplingCoords(
+            coord_cls = SamplingCoordsBank if is_cmf_sequence(cmf_a) else SamplingCoords
+            self.coords = coord_cls(
                 fov, cmf_a, resolution, device=device, style=style,
                 dtype=torch.float32 if field_geometry == 'spherical' else dtype,
                 isotropic_plotting_type=isotropic_plotting_type,
@@ -221,13 +245,14 @@ class GridSampler(BaseGridSampler):
         self.fov_type = self.coords.fov_type
         self.radius_norm = self.coords.radius_norm
 
-        self.sampling_grid = self._prep_grid_for_grid_sample(self.coords.cartesian)
+        self.register_buffer('sampling_grid', self._prep_grid_for_grid_sample(self.coords.cartesian), persistent=False)
         self.out_sampling_grid = self.sampling_grid
-        self.polar_radius = self.coords.polar[:, 0]
+        radius = self.coords.polar_radius if isinstance(self.coords, SamplingCoordsBank) else self.coords.polar[:, 0]
+        self.register_buffer('polar_radius', radius, persistent=False)
         angular_coords = self.coords.cartesian.float()
         if field_geometry == 'spherical' and style in WARPED_CARTESIAN_STYLES:
             # Masked corners belong to an unbounded chart, not physical camera rays.
-            angular_coords = torch.where(self.coords.valid_mask[:, None], angular_coords, 0)
+            angular_coords = torch.where(self.coords.valid_mask[..., None], angular_coords, 0)
         self.register_buffer('canonical_directions', angular_directions(angular_coords, fov), persistent=False)
         self._native_calibrated = None
         self.register_buffer(
@@ -236,9 +261,14 @@ class GridSampler(BaseGridSampler):
         # branch before any forward can be captured by a CUDA graph.
         self._all_samples_valid = bool(self.valid_mask.all().item())
         if field_geometry == 'spherical':
-            fixation = torch.full((1, 2), 0.5, device=self.canonical_directions.device)
-            _, central_valid = self.calibrated_pixels(fixation)
-            if not bool(central_valid[:, self.valid_mask].all()):
+            indices = None
+            count = 1
+            if isinstance(self.coords, SamplingCoordsBank):
+                count = len(self.coords.cmf_a)
+                indices = torch.arange(count, device=self.canonical_directions.device)
+            fixation = torch.full((count, 2), 0.5, device=self.canonical_directions.device)
+            _, central_valid = self.calibrated_pixels(fixation, cmf_indices=indices)
+            if not bool((central_valid | ~self.valid_mask).all()):
                 warnings.warn(
                     "Retinal FoV extends beyond camera coverage at central gaze; "
                     "out-of-frame samples are zero-padded. Their visibility may "
@@ -290,8 +320,13 @@ class GridSampler(BaseGridSampler):
     def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> GridSampler:
         # Restore from the original rays, not from a rounded half/bfloat16 copy.
         rays = self.canonical_directions
+        grid = self.sampling_grid
+        radius = self.polar_radius
         super()._apply(fn, recurse=recurse)
         self.canonical_directions = rays.to(device=self.canonical_directions.device)
+        self.sampling_grid = grid.to(device=self.sampling_grid.device)
+        self.out_sampling_grid = self.sampling_grid
+        self.polar_radius = radius.to(device=self.polar_radius.device)
         return self
 
     def _requested_backend(self):
@@ -304,11 +339,11 @@ class GridSampler(BaseGridSampler):
             raise ValueError("The compiled backend requires spherical geometry")
         return requested
 
-    def _torch_direct_sample(self, img, fix_loc, fixation_size):
+    def _torch_direct_sample(self, img, fix_loc, fixation_size, cmf_indices=None):
         """Direct moving-grid gather used as the canonical-coordinate oracle."""
         height, width = img.shape[-2:]
         pixel_x, pixel_y = self._direct_pixel_coords(
-            (height, width), fix_loc, fixation_size)
+            (height, width), fix_loc, fixation_size, cmf_indices)
         batch_index = torch.arange(img.shape[0], device=img.device)[:, None]
         image_hwc = img.permute(0, 2, 3, 1)
 
@@ -360,19 +395,19 @@ class GridSampler(BaseGridSampler):
             return torch.float64
         raise TypeError(f"unsupported floating input dtype {image_dtype}")
 
-    def _native_uint8_sample(self, img, fix_loc, fixation_size):
+    def _native_uint8_sample(self, img, fix_loc, fixation_size, cmf_indices=None):
         if self._native_uint8_sample_fn is None:
             from .grid_sample_cuda import sample_uint8
             self._native_uint8_sample_fn = sample_uint8
         return self._native_uint8_sample_fn(
-            img, self.sampling_grid, fix_loc, fixation_size, mode=self.mode)
+            img, self.sampling_grid, fix_loc, fixation_size, mode=self.mode, cmf_indices=cmf_indices)
 
-    def _native_float_sample(self, img, fix_loc, fixation_size):
+    def _native_float_sample(self, img, fix_loc, fixation_size, cmf_indices=None):
         if self._native_float_sample_fn is None:
             from .grid_sample_cuda import sample_float
             self._native_float_sample_fn = sample_float
         return self._native_float_sample_fn(
-            img, self.sampling_grid, fix_loc, fixation_size, mode=self.mode)
+            img, self.sampling_grid, fix_loc, fixation_size, mode=self.mode, cmf_indices=cmf_indices)
 
     def _native_eligible(self, img, fix_loc, fixation_size):
         supported_dtype = img.dtype == torch.uint8 or img.dtype in (
@@ -381,7 +416,7 @@ class GridSampler(BaseGridSampler):
             img.requires_grad or fix_loc.requires_grad
             or fixation_size.requires_grad or self.sampling_grid.requires_grad)
 
-    def _sample_uint8(self, img, fix_loc, fixation_size):
+    def _sample_uint8(self, img, fix_loc, fixation_size, cmf_indices=None):
         requested = self._requested_backend()
         can_native = self._native_eligible(img, fix_loc, fixation_size)
         if requested == 'cuda' and not can_native:
@@ -392,7 +427,7 @@ class GridSampler(BaseGridSampler):
         if requested != 'torch' and can_native and (
                 requested == 'cuda' or error_key not in self._native_errors):
             try:
-                sampled = self._native_uint8_sample(img, fix_loc, fixation_size)
+                sampled = self._native_uint8_sample(img, fix_loc, fixation_size, cmf_indices)
                 self._last_backend = 'cuda'
                 return sampled
             except Exception as exc:
@@ -404,12 +439,12 @@ class GridSampler(BaseGridSampler):
                     f"native uint8 sampler unavailable ({exc}); using Torch gather",
                     RuntimeWarning, stacklevel=2)
         self._last_backend = 'torch_gather'
-        return self._torch_direct_sample(img, fix_loc, fixation_size)
+        return self._torch_direct_sample(img, fix_loc, fixation_size, cmf_indices)
 
-    def _torch_grid_sample(self, img, fix_loc, fixation_size):
+    def _torch_grid_sample(self, img, fix_loc, fixation_size, cmf_indices=None):
         """Sample through grid_sample using the floating opmath coordinate dtype."""
         coordinate_dtype = self._coordinate_dtype(img.dtype)
-        base_grid = self.sampling_grid.to(
+        base_grid = self.selected_grid(cmf_indices).to(
             device=img.device, dtype=coordinate_dtype)
         grid = transform_sampling_grid(
             base_grid, fix_loc, fixation_size, img.shape[-2:])
@@ -421,7 +456,7 @@ class GridSampler(BaseGridSampler):
         self._last_backend = 'torch_grid_sample'
         return sampled, grid
 
-    def _sample_float(self, img, fix_loc, fixation_size):
+    def _sample_float(self, img, fix_loc, fixation_size, cmf_indices=None):
         requested = self._requested_backend()
         can_native = self._native_eligible(img, fix_loc, fixation_size)
         if requested == 'cuda' and not can_native:
@@ -433,7 +468,7 @@ class GridSampler(BaseGridSampler):
                 requested == 'cuda' or error_key not in self._native_errors):
             try:
                 sampled = self._native_float_sample(
-                    img, fix_loc, fixation_size)
+                    img, fix_loc, fixation_size, cmf_indices)
                 self._last_backend = 'cuda'
                 return sampled, None
             except Exception as exc:
@@ -444,7 +479,7 @@ class GridSampler(BaseGridSampler):
                 warnings.warn(
                     f"native floating sampler unavailable ({exc}); using grid_sample",
                     RuntimeWarning, stacklevel=2)
-        return self._torch_grid_sample(img, fix_loc, fixation_size)
+        return self._torch_grid_sample(img, fix_loc, fixation_size, cmf_indices)
 
     @property
     def last_backend(self) -> str | None:
@@ -457,13 +492,15 @@ class GridSampler(BaseGridSampler):
             sampled = sampled.to(output_dtype)
         return sampled
 
-    def calibrated_pixels(self, fix_loc: torch.Tensor, rotation: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+    def calibrated_pixels(self, fix_loc: torch.Tensor, rotation: torch.Tensor | None = None, cmf_indices: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Return gaze-dependent (B, N, 2) pixels and (B, N) validity.
 
         Fixations are normalized (row, column) in the source image. An explicit
         (B, 3, 3) rotation maps retinal camera coordinates into source-camera
         coordinates and bypasses fixation-to-rotation conversion.
         """
+        if isinstance(self.coords, SamplingCoordsBank):
+            self.coords.validate_indices(cmf_indices, fix_loc.shape[0], fix_loc.device)
         camera = self.camera_model
         if self.field_geometry != 'spherical':
             raise ValueError("calibrated_pixels requires spherical field_geometry")
@@ -474,9 +511,12 @@ class GridSampler(BaseGridSampler):
             rotation = gaze_rotation(target, self.gaze_convention)
         else:
             target_valid = torch.ones(rotation.shape[0], dtype=torch.bool, device=rotation.device)
-        directions = self.canonical_directions.to(rotation.dtype) @ rotation.transpose(-1, -2)
+        rays = self.canonical_directions
+        if cmf_indices is not None:
+            rays = rays.index_select(0, cmf_indices)
+        directions = rays.to(rotation.dtype) @ rotation.transpose(-1, -2)
         pixels, valid = camera.project(directions)
-        return pixels, valid & target_valid[..., None] & self.valid_mask
+        return pixels, valid & target_valid[..., None] & self.selected_mask(cmf_indices)
 
     def _sample_calibrated(self, image: torch.Tensor, pixels: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
         """Gather compact samples without converting the full uint8 image."""
@@ -502,13 +542,13 @@ class GridSampler(BaseGridSampler):
                   + gather(x0 + 1, y0 + 1).to(work_dtype) * wx * wy)
         return result.to(image.dtype) if image.is_floating_point() else result
 
-    def calibrated_forward(self, image: torch.Tensor, fixation: torch.Tensor, rotation: torch.Tensor | None) -> tuple[torch.Tensor, torch.Tensor]:
+    def calibrated_forward(self, image: torch.Tensor, fixation: torch.Tensor, rotation: torch.Tensor | None, cmf_indices: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Eager calibrated sampling returning values and source pixels; supports autograd."""
-        pixels, valid = self.calibrated_pixels(fixation, rotation)
+        pixels, valid = self.calibrated_pixels(fixation, rotation, cmf_indices)
         return self._sample_calibrated(image, pixels, valid), pixels
 
     def forward(self, img, fix_loc=None, fixation_size=None, return_coords=False,
-                direct=False, rotation=None):
+                direct=False, rotation=None, cmf_indices=None):
         """
         Forward pass for grid sampling.
         
@@ -519,6 +559,8 @@ class GridSampler(BaseGridSampler):
             return_coords (bool, optional): Whether to return sampling coordinates. Defaults to False.
             direct (bool, optional): Force the explicit Torch direct-index oracle.
                 Defaults to False.
+            cmf_indices (torch.Tensor, optional): Int64 level indices, shape (B,),
+                on the image device. Required when sampling a CMF bank.
             
         Returns:
             torch.Tensor: Sampled image tensor.
@@ -527,6 +569,11 @@ class GridSampler(BaseGridSampler):
             raise TypeError("GridSampler input must be a torch.Tensor")
         if img.ndim != 4:
             raise ValueError(f"GridSampler expects NCHW input, got shape {tuple(img.shape)}")
+        if isinstance(self.coords, SamplingCoordsBank):
+            self.coords.validate_indices(cmf_indices, img.shape[0], img.device)
+            cmf_indices = cmf_indices.contiguous()
+        elif cmf_indices is not None:
+            raise ValueError('cmf_indices requires a CMF coordinate bank')
 
         if self.field_geometry == 'spherical':
             if fixation_size is not None:
@@ -567,18 +614,18 @@ class GridSampler(BaseGridSampler):
                 if self._native_calibrated is None:
                     from .calibrated_sample_cuda import CalibratedCudaSampler
                     self._native_calibrated = CalibratedCudaSampler(self.camera_model, self.mode, self.gaze_convention)
-                sampled, pixels = self._native_calibrated(img, rays, fix, rotation, return_coords)
+                sampled, pixels = self._native_calibrated(img, rays, fix, rotation, return_coords, cmf_indices=cmf_indices)
                 self._last_backend = 'cuda_calibrated'
             else:
                 compiled = requested == 'compiled' or (requested == 'auto' and img.is_cuda)
                 if compiled:
-                    sampled, pixels = _compiled_calibrated_sampler()(self, img, fix, rotation)
+                    sampled, pixels = _compiled_calibrated_sampler()(self, img, fix, rotation, cmf_indices)
                 else:
-                    sampled, pixels = self.calibrated_forward(img, fix, rotation)
+                    sampled, pixels = self.calibrated_forward(img, fix, rotation, cmf_indices)
                 self._last_backend = 'compiled_calibrated' if compiled else 'torch_calibrated'
             sampled = self._convert_output(sampled)
             if not self._all_samples_valid:
-                sampled = self._mask_invalid_samples(sampled, self.valid_mask, False)
+                sampled = self._mask_invalid_samples(sampled, self.selected_mask(cmf_indices), False)
             if return_coords:
                 h, w = img.shape[-2:]
                 grid = torch.stack((2 * (pixels[..., 0] + 0.5) / w - 1, 2 * (pixels[..., 1] + 0.5) / h - 1), -1).unsqueeze(1)
@@ -590,14 +637,14 @@ class GridSampler(BaseGridSampler):
                 img, fix_loc, fixation_size)
             if direct:
                 sampled = self._torch_direct_sample(
-                    img, fix_loc_t, fixation_size_t)
+                    img, fix_loc_t, fixation_size_t, cmf_indices)
                 self._last_backend = 'torch_direct'
             else:
                 sampled = self._sample_uint8(
-                    img, fix_loc_t, fixation_size_t)
+                    img, fix_loc_t, fixation_size_t, cmf_indices)
             grid = None
             if return_coords:
-                grid = self._direct_grid(img.shape[-2:], fix_loc_t, fixation_size_t)
+                grid = self._direct_grid(img.shape[-2:], fix_loc_t, fixation_size_t, cmf_indices)
         else:
             if not img.is_floating_point():
                 raise TypeError(
@@ -607,19 +654,19 @@ class GridSampler(BaseGridSampler):
                 img, fix_loc, fixation_size, dtype=coordinate_dtype)
             if direct:
                 sampled = self._torch_direct_sample(
-                    img, fix_loc_t, fixation_size_t)
+                    img, fix_loc_t, fixation_size_t, cmf_indices)
                 self._last_backend = 'torch_direct'
                 grid = None
             else:
                 sampled, grid = self._sample_float(
-                    img, fix_loc_t, fixation_size_t)
+                    img, fix_loc_t, fixation_size_t, cmf_indices)
             if return_coords and grid is None:
                 grid = self._direct_grid(
-                    img.shape[-2:], fix_loc_t, fixation_size_t)
+                    img.shape[-2:], fix_loc_t, fixation_size_t, cmf_indices)
 
         sampled = self._convert_output(sampled)
         sampled = self._mask_invalid_samples(
-            sampled, self.valid_mask, self._all_samples_valid)
+            sampled, self.selected_mask(cmf_indices), self._all_samples_valid)
         
         if return_coords:
             return sampled, grid
