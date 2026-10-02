@@ -18,6 +18,26 @@ git rev-parse HEAD
 git status --short
 ```
 
+## 2.4.0
+
+Version 2.4.0 trains one encoder across several CMF levels. Setting
+`saccades.cmf_a` to a list (for example
+`[0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]`) builds a `SamplingCoordsBank`.
+Training draws a level per image and reuses it across that image's fixations.
+Validation assigns levels deterministically and reports per-level loss,
+accuracy and image counts. List-valued `cmf_a` requires a
+`warped_cartesian_as_grid` sensor with square or circular FoV and cortical ViT
+positions. `configure_dinov3_positions` also rejects Cartesian positions for
+checkpoints saved with a list of levels. Evaluating a multi-level model requires
+explicit levels: pass `cmf_indices` to forward calls, or `cmf_level` to
+`Trainer.compute_activations` and `knn_probe`.
+
+Scalar `cmf_a` configs and checkpoints are unaffected, with one bug fix. The
+fast pre-transform path, the training default, now applies the FoV mask, which
+matches the reference and evaluation paths. Before this fix, circular-FoV
+warped-Cartesian models were effectively trained with a square FoV and validated
+with a circular one.
+
 ## 2.3.0
 
 Version 2.3.0 adds square iso-eccentricity shells to the warped-Cartesian
