@@ -561,9 +561,11 @@ def rescale_fov(cfg):
     Returns:
         Configuration object with updated FOV and CMF parameters.
     """
+    # Geometry is the first required key; resolving it first keeps that error explicit.
+    field_geometry = cfg.saccades.field_geometry
     if is_cmf_sequence(cfg.saccades.cmf_a):
         cfg.saccades.cmf_a = list(validate_cmf_values(cfg.saccades.cmf_a))
-    if cfg.saccades.field_geometry == 'spherical':
+    if field_geometry == 'spherical':
         from ..sensing.calibration import calibrated_cmf_a
         from ..sensing.projection import CameraModel
 
