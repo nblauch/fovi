@@ -11,7 +11,7 @@ import torch.nn as nn
 import torchvision.transforms.functional as TF
 from tqdm import tqdm
 
-from ..arch.knn import KNNPoolingLayer
+from ..arch.pooling import build_retinal_pooler, resolve_pool_method
 from ..utils import add_to_all
 from .coords import WARPED_CARTESIAN_STYLES, SamplingCoords, SamplingCoordsBank, is_cmf_sequence, transform_sampling_grid, xy_to_colrow
 from .projection import (
@@ -695,27 +695,36 @@ class GridSampler(BaseGridSampler):
     
 
 @add_to_all(__all__)
-class KNNGridSampler(BaseGridSampler):
+class PoolingGridSampler(BaseGridSampler):
     """
-    K-Nearest Neighbors grid sampler for foveated vision.
+    High-resolution image sampling followed by retinal pooling.
     
-    This sampler uses KNN-based sampling to perform local average pooling over a high-res sensor array into a lower-res sensor array, with the same CorticalSensorManifold.
+    This sampler pools a high-resolution sensor array into a lower-resolution
+    sensor array, using native 2D windows or KNN neighborhoods.
     - highres_coords: akin to photoreceptors: there are more of them
     - coords: akin to retinal ganglion cells: there are less of them, and they integrate over a local pool of photoreceptors (highres_coords)
     """
+
+    default_pool_method = 'auto'
     
     @BaseGridSampler.output_dtype.setter
     def output_dtype(self, output_dtype: torch.dtype | None) -> None:
-        validate_output_dtype(output_dtype, 'KNN pooling')
+        validate_output_dtype(output_dtype, 'retinal pooling')
         self.__dict__['output_dtype'] = output_dtype
 
-    def __init__(self, fov, cmf_a, resolution, res_mult=3, cmf_a_mult=1,
-                 fixation_size=3000, k=None, style='isotropic', sample_cortex=True,
-                 dtype=torch.float, device='cuda', isotropic_plotting_type='v1like',
-                 backend='auto', output_dtype=None, fov_type='circular', field_geometry='planar',
-                 radius_norm=2.0):
+    def __init__(self, fov: float, cmf_a: float, resolution: int,
+                 res_mult: float = 3, cmf_a_mult: float = 1,
+                 fixation_size: int = 3000, k: int | None = None,
+                 style: str = 'isotropic', sample_cortex: bool | str = True,
+                 dtype: torch.dtype = torch.float, device: str | torch.device = 'cuda',
+                 isotropic_plotting_type: str = 'v1like', backend: str = 'auto',
+                 output_dtype: torch.dtype | None = None, fov_type: str = 'circular',
+                 field_geometry: str = 'planar', radius_norm: float = 2.0,
+                 camera_model: CameraModel | CameraCalibration | None = None,
+                 gaze_convention: str = 'camera_xyz', pool_method: str | None = None,
+                 pool_mode: str = 'avg', gauss_sigma: float = 10.0) -> None:
         """
-        Initialize the KNNGridSampler.
+        Initialize the pooling sampler.
         
         Args:
             fov (float): Field of view diameter in degrees.
@@ -724,11 +733,18 @@ class KNNGridSampler(BaseGridSampler):
             res_mult (float, optional): Resolution multiplier for photoreceptor layer vs. rgc layer. Defaults to 3.
             cmf_a_mult (float, optional): CMF_a multiplier for photoreceptor layer vs. rgc layer. Defaults to 1.
             fixation_size (int, optional): Fixation size in pixels. Defaults to 3000.
-            k (int, optional): Number of nearest neighbors. Defaults to None.
+            k (int, optional): Neighbor count for KNN, kernel side for grid2d.
+                None uses the sample-count ratio or exact resolution ratio respectively.
             style (str, optional): Sampling style. Defaults to 'isotropic'.
             sample_cortex (bool, optional): Whether to sample from cortex. Defaults to True.
             dtype (torch.dtype, optional): Data type. Defaults to torch.float.
             device (str, optional): Device to run on. Defaults to 'cuda'.
+            camera_model: Source calibration required for spherical image sampling.
+            gaze_convention: Gaze rotation convention for calibrated sampling.
+            pool_method: 'auto' selects grid2d for _as_grid styles and KNN otherwise.
+                None uses the sampler class's default method.
+            pool_mode: Average or Gaussian weighted pooling.
+            gauss_sigma: Gaussian sigma in normalized neighborhood-distance units.
         """
         super().__init__()
         self.output_dtype = output_dtype
@@ -747,12 +763,12 @@ class KNNGridSampler(BaseGridSampler):
             fov_type=fov_type, field_geometry=field_geometry,
             radius_norm=radius_norm)
 
-        if k is None:
-            # default to the ratio of the number of pixels in the retinal and cortical grids
-            k = int(np.round(len(self.highres_coords) / len(self.coords)))
-            print(f'auto-set knngridsampler k={k}')
-
-        self.pooler = KNNPoolingLayer(k, self.highres_coords, self.coords, mode='avg', device=device, sample_cortex=sample_cortex)
+        method = self.default_pool_method if pool_method is None else pool_method
+        self.pool_method = resolve_pool_method(style, method)
+        self.pooler, k = build_retinal_pooler(
+            self.highres_coords, self.coords, k=k, method=self.pool_method,
+            mode=pool_mode, sample_cortex=sample_cortex, gauss_sigma=gauss_sigma,
+            device=device)
 
         self.input_sampler = GridSampler(
             fov, self.cmf_a_mult * cmf_a, self.highres_resolution,
@@ -760,7 +776,8 @@ class KNNGridSampler(BaseGridSampler):
             mode='nearest', style=style, coords=self.highres_coords,
             isotropic_plotting_type=isotropic_plotting_type, backend=backend,
             fov_type=fov_type, field_geometry=field_geometry,
-            radius_norm=radius_norm)
+            radius_norm=radius_norm, camera_model=camera_model,
+            gaze_convention=gaze_convention)
         self.backend = backend
         self._last_backend = None
 
@@ -780,7 +797,7 @@ class KNNGridSampler(BaseGridSampler):
         self.cmf_a = cmf_a
         self.resolution = resolution
         self.fixation_size = fixation_size
-        self.k = k # number of neighbors to consider, the later ones will be weighted less or not at all
+        self.k = k
         self.dtype = dtype
         self.device = device
         self.style = style
@@ -791,9 +808,14 @@ class KNNGridSampler(BaseGridSampler):
 
         self.rf_sizes = self.coords.get_scatter_sizes()
 
+    @property
+    def camera_model(self) -> CameraModel | None:
+        """Calibration owned by the high-resolution image sampler."""
+        return self.input_sampler.camera_model
+
     def forward(self, img, fix_loc=None, fixation_size=None, direct=False, rotation=None):
         """
-        Forward pass for KNN grid sampling.
+        Sample the high-resolution retina and pool to the output grid.
         
         Args:
             img (torch.Tensor): Input image tensor.
@@ -842,9 +864,16 @@ class KNNGridSampler(BaseGridSampler):
             return self.coords.cartesian.to(device), self.coords.polar.to(device), self.coords.plotting.to(device)
 
     def __repr__(self):
-        """String representation of the KNNGridSampler."""
-        return f'KNNGridSampler(fov={self.fov}, cmf_a={self.cmf_a}, resolution={self.resolution}, num_coords={self.num_coords}, fixation_size={self.fixation_size}, k={self.k}, dtype={self.dtype}, device={self.device}, style={self.style})'
+        """String representation of the retinal pooling sampler."""
+        return f'{type(self).__name__}(fov={self.fov}, cmf_a={self.cmf_a}, resolution={self.resolution}, num_coords={self.num_coords}, fixation_size={self.fixation_size}, k={self.k}, pool_method={self.pool_method}, dtype={self.dtype}, device={self.device}, style={self.style})'
     
+
+@add_to_all(__all__)
+class KNNGridSampler(PoolingGridSampler):
+    """High-resolution image sampling with explicitly selected KNN pooling."""
+
+    default_pool_method = 'knn'
+
 
 @add_to_all(__all__)
 class GaussianKNNGridSampler(KNNGridSampler):
@@ -856,7 +885,7 @@ class GaussianKNNGridSampler(KNNGridSampler):
     providing a more biologically plausible pooling mechanism.
     
     Inherits all attributes and methods from KNNGridSampler, with the pooler
-    replaced by a Gaussian-weighted version.
+    configured for Gaussian weighting.
     """
     def __init__(self, *args, gauss_sigma, **kwargs):
         """Initialize the GaussianKNNGridSampler.
@@ -870,10 +899,7 @@ class GaussianKNNGridSampler(KNNGridSampler):
                 res_mult, cmf_a_mult, fixation_size, k, style, sample_cortex, 
                 dtype, device.
         """
-        super().__init__(*args, **kwargs)
-
-        # just adjust the pooler
-        self.pooler = KNNPoolingLayer(self.k, self.highres_coords, self.coords, mode='gaussian', device=self.device, sample_cortex=self.sample_cortex, gauss_sigma=gauss_sigma)
+        super().__init__(*args, pool_mode='gaussian', gauss_sigma=gauss_sigma, **kwargs)
 
 def compute_knn_indices_chunked(in_coords, out_coords, chunk_size=200, max_k=1000, use_tqdm=True):
     """

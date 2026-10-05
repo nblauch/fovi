@@ -5,9 +5,9 @@ import torch.nn.functional as F
 from einops import rearrange
 import numpy as np
 import torch.nn as nn
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, cKDTree
 
-from ..sensing.coords import SamplingCoords, auto_match_num_coords
+from ..sensing.coords import WARPED_CARTESIAN_STYLES, SamplingCoords, auto_match_num_coords
 from ..utils import normalize, add_to_all
 from .knn_optimization import VALID_BACKENDS, clear_cache, optimized_forward
 
@@ -404,6 +404,30 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
             self.gauss_sigma = gauss_sigma
             self.gaussian_weights = self._compute_gaussian_weights()
 
+    def _compute_knns(self, batch_size: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """Query native 2-D pooling neighborhoods without an all-pairs matrix.
+
+        The CPU tree is used only during construction. Masked cells and spatial
+        padding remain candidates so boundary receptive fields do not stretch.
+        As with topk, equally distant candidates at the cutoff may be tied.
+        """
+        if (self.sample_cortex is not True
+                or self.in_coords.style not in WARPED_CARTESIAN_STYLES
+                or self.out_coords.style not in WARPED_CARTESIAN_STYLES):
+            return super()._compute_knns(batch_size)
+
+        self.sample_coords_cart = torch.cat((
+            self.in_coords.cartesian, self.in_coords.cartesian_pad_coords))
+        self.sample_coords = torch.cat((
+            self.in_coords.cortical, self.in_coords.cortical_pad_coords))
+        candidates = self.sample_coords.detach().to(device='cpu', dtype=torch.float64).numpy()
+        queries = self.out_coords.cortical.detach().to(device='cpu', dtype=torch.float64).numpy()
+        distances, indices = cKDTree(candidates).query(queries, k=np.arange(1, self._k + 1))
+        return (
+            torch.as_tensor(indices.T.copy(), device=self.device, dtype=torch.long),
+            torch.as_tensor(distances.T.copy(), device=self.device, dtype=torch.float32),
+        )
+
     def _compute_gaussian_weights(self):
         """
         Compute Gaussian weights for local pooling based on distances between 
@@ -426,6 +450,11 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
         gaussian_weights = gaussian_weights / (gaussian_weights.sum(dim=0, keepdim=True) + 1e-8)
         
         return gaussian_weights
+
+    @property
+    def last_backend(self) -> str:
+        """Backend used by the most recent pooling forward call."""
+        return self._last_knn_pool_backend
 
     def forward(self, X_l):
         """
