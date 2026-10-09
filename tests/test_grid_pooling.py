@@ -115,6 +115,7 @@ def test_masked_input_gradients_are_zero(mode: str) -> None:
         ("uniform_as_grid", GridPoolingLayer),
         ("warped_cartesian_as_grid", GridPoolingLayer),
         ("logpolar_as_grid", GridPoolingLayer),
+        ("uniform", KNNPoolingLayer),
         ("warped_cartesian", KNNPoolingLayer),
         ("logpolar", KNNPoolingLayer),
         ("isotropic", KNNPoolingLayer),
@@ -142,6 +143,19 @@ def test_grid_alignment_is_required(high_res: int, cmf_a: float, error: str) -> 
     high = low.clone(resolution=high_res, cmf_a=cmf_a)
     with pytest.raises(ValueError, match=error):
         GridPoolingLayer(None, high, low)
+
+
+def test_uniform_sample_set_knn_matches_grid_pooling() -> None:
+    # Uniform sensors have no magnification, so cortical == Cartesian and
+    # KNN neighborhoods coincide with the aligned 2D windows.
+    low = SamplingCoords(50, 5, 4, style="uniform")
+    high = low.clone(resolution=8)
+    torch.testing.assert_close(low.cortical, low.cartesian)
+    knn = KNNPoolingLayer(4, high, low, mode="avg", device="cpu", sample_cortex=True)
+    grid_low = SamplingCoords(50, 5, 4, style="uniform_as_grid")
+    grid = GridPoolingLayer(None, grid_low.clone(resolution=8), grid_low)
+    values = torch.randn(2, 3, len(high))
+    torch.testing.assert_close(knn(values), grid(values))
 
 
 def test_sample_set_sensors_are_rejected() -> None:
