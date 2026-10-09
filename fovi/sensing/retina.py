@@ -52,7 +52,6 @@ class RetinalTransform(nn.Module):
                  radius_norm=2.0,
                  camera_model: CameraModel | CameraCalibration | None = None,
                  gaze_convention='camera_xyz',
-                 pool_method: str = 'auto',
                  **kwargs, # passed to the sampler
                  ):
         """
@@ -82,8 +81,6 @@ class RetinalTransform(nn.Module):
                 Planar/legacy sampling requires None.
             gaze_convention (str, optional): Spherical gaze rotation convention.
                 Defaults to ``'camera_xyz'``.
-            pool_method: Pooling neighborhood selection: 'auto', 'grid2d', or 'knn'.
-                Applies only to pooling samplers. Auto uses 2D pooling for _as_grid sensors.
             **kwargs: Additional arguments passed to warping function.
         """
         super().__init__()
@@ -141,7 +138,7 @@ class RetinalTransform(nn.Module):
         if sampler == 'gaussian_pooling':
             self.sampler = PoolingGridSampler(
                 self.fov, self.cmf_a, resolution,
-                pool_method=pool_method, pool_mode='gaussian',
+                pool_mode='gaussian',
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
                 backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,
@@ -150,7 +147,7 @@ class RetinalTransform(nn.Module):
         elif sampler == 'pooling':
             self.sampler = PoolingGridSampler(
                 self.fov, self.cmf_a, resolution,
-                pool_method=pool_method, pool_mode='avg',
+                pool_mode='avg',
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
                 backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,

@@ -29,14 +29,16 @@ def test_null_kernel_is_exact_downscale_factor(style: str) -> None:
         low.valid_mask.fill_(True)
     pool = GridPoolingLayer(None, high, low)
     image = torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8)
-    assert pool.k == pool.stride == 2
+    assert pool.kernel_size == pool.stride == 2
+    assert pool.k == 4
     actual = low.as_grid(pool(canonical(image)))
     torch.testing.assert_close(actual, torch.nn.functional.avg_pool2d(image, 2))
 
 
-def test_explicit_kernel_side_uses_overlapping_windows_and_preserves_shape() -> None:
+def test_explicit_kernel_uses_overlapping_windows_and_preserves_shape() -> None:
     high, low = grids("uniform_as_grid")
-    pool = GridPoolingLayer(3, high, low)
+    pool = GridPoolingLayer(9, high, low)
+    assert pool.kernel_size == 3
     image = torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8)
     expected = torch.tensor(
         [
@@ -66,7 +68,7 @@ def test_masked_values_never_contribute_and_boundaries_are_normalized(
     mode: str, fov_type: str
 ) -> None:
     high, low = grids(fov_type=fov_type)
-    pool = GridPoolingLayer(4, high, low, mode=mode, gauss_sigma=0.5)
+    pool = GridPoolingLayer(16, high, low, mode=mode, gauss_sigma=0.5)
     constants = torch.tensor([[-2.0, 4.0], [5.0, 10.0]])
     values = constants[..., None].expand(2, 2, len(high)).clone()
     values[..., ~high.valid_mask] = torch.nan
@@ -88,7 +90,7 @@ def test_gaussian_weights_emphasize_the_center() -> None:
     image = torch.zeros(1, 1, 8, 8)
     image[..., 1, 1] = 1
     actual = low.as_grid(
-        GridPoolingLayer(3, high, low, "gaussian", 0.5)(canonical(image))
+        GridPoolingLayer(9, high, low, "gaussian", 0.5)(canonical(image))
     )
     # A full 3x3 window has center weight 1, four axial exp(-1), four corner exp(-2).
     expected = 1 / (
@@ -108,27 +110,30 @@ def test_masked_input_gradients_are_zero(mode: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "method,k,expected",
+    "style,expected",
     [
-        ("auto", 2, GridPoolingLayer),
-        ("grid2d", 2, GridPoolingLayer),
-        ("knn", 4, KNNPoolingLayer),
+        ("uniform_as_grid", GridPoolingLayer),
+        ("warped_cartesian_as_grid", GridPoolingLayer),
+        ("logpolar_as_grid", GridPoolingLayer),
+        ("warped_cartesian", KNNPoolingLayer),
+        ("logpolar", KNNPoolingLayer),
+        ("isotropic", KNNPoolingLayer),
     ],
 )
-def test_transform_selects_pooling_method(method: str, k: int, expected: type) -> None:
+def test_sensor_style_selects_pooler(style: str, expected: type) -> None:
     transform = RetinalTransform(
         4,
         fov=50,
         cmf_a=5,
-        style="warped_cartesian_as_grid",
+        style=style,
         sampler="pooling",
-        pool_method=method,
         res_mult=2,
         auto_match_cart_resources=0,
         device="cpu",
     )
     assert isinstance(transform.sampler.pooler, expected)
-    assert transform.sampler.k == k
+    if expected is GridPoolingLayer:
+        assert transform.sampler.k == 4
 
 
 @pytest.mark.parametrize("high_res,cmf_a,error", [(9, 5, "integer"), (8, 6, "CMF")])
@@ -139,24 +144,46 @@ def test_grid_alignment_is_required(high_res: int, cmf_a: float, error: str) -> 
         GridPoolingLayer(None, high, low)
 
 
-def test_polar_grid_pooling_is_rejected() -> None:
-    with pytest.raises(ValueError, match="polar.*wrap-around"):
-        RetinalTransform(
-            4,
-            fov=1,
-            cmf_a=0.1,
-            style="logpolar_as_grid",
-            sampler="pooling",
-            res_mult=2,
-            auto_match_cart_resources=0,
-            device="cpu",
-        )
+def test_sample_set_sensors_are_rejected() -> None:
+    high = SamplingCoords(50, 5, 8, style="warped_cartesian")
+    with pytest.raises(ValueError, match="_as_grid"):
+        GridPoolingLayer(None, high, high.clone(resolution=4))
 
 
-@pytest.mark.parametrize("k", [0, -1, 1.5, True])
-def test_invalid_kernel_side_is_rejected(k: float | bool) -> None:
+def polar_grids() -> tuple[SamplingCoords, SamplingCoords]:
+    low = SamplingCoords(50, 5, 4, style="logpolar_as_grid")
+    return low.clone(resolution=8), low
+
+
+def test_polar_null_kernel_pools_angle_eccentricity_blocks() -> None:
+    high, low = polar_grids()
+    pool = GridPoolingLayer(None, high, low)
+    image = torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8)
+    actual = low.as_grid(pool(high.as_grid(image.flatten(-2)).flatten(-2)))
+    torch.testing.assert_close(actual, torch.nn.functional.avg_pool2d(image, 2))
+
+
+@pytest.mark.parametrize("mode", ["avg", "max"])
+def test_polar_kernel_wraps_angles_and_excludes_radial_padding(mode: str) -> None:
+    high, low = polar_grids()
+    pool = GridPoolingLayer(9, high, low, mode=mode)
+    image = torch.randn(1, 1, 8, 8)
+    # Output angle i sits on high-res angle 2i, so its 3x3 window spans angles
+    # 2i-1..2i+1 (wrapping) and eccentricities 2j..2j+2 (clipped at the edge).
+    expected = torch.empty(1, 1, 4, 4)
+    reduce = torch.mean if mode == "avg" else torch.amax
+    for i in range(4):
+        rows = [(2 * i + offset) % 8 for offset in (-1, 0, 1)]
+        for j in range(4):
+            cols = [col for col in (2 * j, 2 * j + 1, 2 * j + 2) if col < 8]
+            expected[..., i, j] = reduce(image[..., rows, :][..., cols])
+    torch.testing.assert_close(low.as_grid(pool(image.flatten(-2))), expected)
+
+
+@pytest.mark.parametrize("k", [0, -1, 1.5, True, 3, 8])
+def test_invalid_kernel_is_rejected(k: float | bool) -> None:
     high, low = grids()
-    with pytest.raises(ValueError, match="kernel side"):
+    with pytest.raises(ValueError, match="perfect square"):
         GridPoolingLayer(k, high, low)
 
 

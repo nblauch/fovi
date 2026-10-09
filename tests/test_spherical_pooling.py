@@ -1,10 +1,10 @@
-"""Calibrated KNN pooling preserves retinal support and camera padding."""
+"""Calibrated retinal pooling preserves retinal support and camera padding."""
 
 import pytest
 import torch
 from fovi.sensing.projection import CameraModel, gaze_rotation
 from fovi.sensing.retina import RetinalTransform
-from fovi.sensing.samplers import GaussianKNNGridSampler, GridSampler, KNNGridSampler
+from fovi.sensing.samplers import GridSampler, PoolingGridSampler
 
 
 def camera_model(model: str = "fisheye") -> CameraModel:
@@ -17,15 +17,16 @@ def make_sampler(
     backend: str = "torch",
     model: str = "fisheye",
     fov_type: str = "circular",
-) -> KNNGridSampler:
-    kwargs = {"gauss_sigma": 0.5} if mode == "gaussian" else {}
-    sampler_cls = GaussianKNNGridSampler if mode == "gaussian" else KNNGridSampler
-    return sampler_cls(
+    style: str = "warped_cartesian",
+) -> PoolingGridSampler:
+    return PoolingGridSampler(
         50,
         5,
         8,
         res_mult=2,
-        style="warped_cartesian_as_grid",
+        style=style,
+        pool_mode=mode,
+        gauss_sigma=0.5,
         sample_cortex=True,
         device=device,
         backend=backend,
@@ -33,10 +34,10 @@ def make_sampler(
         camera_model=camera_model(model),
         fov_type=fov_type,
         gaze_convention="pan_tilt",
-        **kwargs,
     )
 
 
+@pytest.mark.parametrize("style", ["warped_cartesian", "warped_cartesian_as_grid"])
 @pytest.mark.parametrize("mode", ["avg", "gaussian"])
 @pytest.mark.parametrize("explicit_rotation", [False, True])
 @pytest.mark.parametrize("model", ["fisheye", "pinhole"])
@@ -44,13 +45,14 @@ def test_spherical_pooling_matches_calibrated_sampling(
     mode: str,
     explicit_rotation: bool,
     model: str,
+    style: str,
 ) -> None:
-    sampler = make_sampler(mode, model=model)
+    sampler = make_sampler(mode, model=model, style=style)
     reference = GridSampler(
         50,
         5,
         16,
-        style="warped_cartesian_as_grid",
+        style=style,
         device="cpu",
         backend="torch",
         field_geometry="spherical",

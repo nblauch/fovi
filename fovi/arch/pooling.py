@@ -1,4 +1,4 @@
-"""Retinal pooling on sample sets and aligned Cartesian image grids."""
+"""Retinal pooling: 2D windows for ``_as_grid`` sensors, KNN for sample sets."""
 
 import math
 
@@ -10,25 +10,27 @@ from torch.nn import functional as F
 from ..sensing.coords import SamplingCoords
 from .knn import KNNPoolingLayer
 
-
-def resolve_pool_method(style: str, method: str) -> str:
-    """Resolve automatic pooling without changing explicitly selected KNN behavior."""
-    if method == "auto":
-        return "grid2d" if style.endswith("_as_grid") else "knn"
-    if method in ("grid2d", "knn"):
-        return method
-    raise ValueError(f"pool_method must be 'auto', 'grid2d', or 'knn', got {method!r}")
+POLAR_GRID_STYLES = ("logpolar_as_grid",)
 
 
 class GridPoolingLayer(nn.Module):
-    """Mask-normalized pooling between aligned Cartesian grids.
+    """Mask-normalized pooling between aligned ``_as_grid`` sensor images.
 
     Inputs and outputs use canonical ``(B, C, N)`` sample ordering. Pooling
-    operates on upright image grids with stride equal to the integer resolution
-    ratio. ``k`` is the kernel side; None uses that ratio. Symmetric windows are
-    used when kernel and stride have matching parity; otherwise SAME-style
-    asymmetric padding selects the window half a sample toward larger image
-    indices. Kernels smaller than the stride crop the corresponding margins.
+    operates on the sensor image (upright for Cartesian grids, angle x
+    eccentricity for log-polar grids) with stride equal to the integer
+    resolution ratio. ``k`` is the neighborhood size (squared kernel side),
+    matching KNN pooling's neighbor count; None uses the squared ratio.
+
+    Spatial axes use SAME-style padding: symmetric windows when kernel and
+    stride have matching parity, otherwise the window sits half a sample toward
+    larger indices; kernels smaller than the stride crop the margins. Padding
+    is excluded from the normalization like masked retinal units. Polar grids
+    pad the angular axis circularly (as ``PolarPadder``), centering each window
+    on its output angle, which coincides with high-res angle ``i * stride``.
+    Their eccentricity axis keeps the spatial convention; because log-polar
+    radii include both endpoints at every resolution, windows there are
+    index-aligned rather than centered on output radii.
     Gaussian sigma uses distances normalized to [0, 1], as in KNN pooling.
     """
 
@@ -41,12 +43,8 @@ class GridPoolingLayer(nn.Module):
         gauss_sigma: float = 10.0,
     ) -> None:
         super().__init__()
-        styles = ("uniform_as_grid", "warped_cartesian_as_grid")
-        if in_coords.style not in styles or out_coords.style != in_coords.style:
-            raise ValueError(
-                "grid2d pooling requires matching Cartesian _as_grid sensors; "
-                "polar sensors require wrap-around handling and are unsupported"
-            )
+        if not in_coords.style.endswith("_as_grid") or out_coords.style != in_coords.style:
+            raise ValueError("grid2d pooling requires matching _as_grid sensors")
         geometry = ("fov", "cmf_a", "fov_type", "field_geometry", "radius_norm")
         if any(
             getattr(in_coords, name) != getattr(out_coords, name) for name in geometry
@@ -61,22 +59,38 @@ class GridPoolingLayer(nn.Module):
             )
         self.stride = high // low
         if k is None:
-            k = self.stride
-        if isinstance(k, bool) or not isinstance(k, int) or k <= 0:
+            k = self.stride**2
+        if (
+            isinstance(k, bool)
+            or not isinstance(k, int)
+            or k <= 0
+            or math.isqrt(k) ** 2 != k
+        ):
             raise ValueError(
-                "grid2d pooling k must be a positive integer kernel side or None"
+                "grid2d pooling k must be a positive perfect square "
+                "(squared kernel side) or None"
             )
         if mode not in ("avg", "gaussian", "max"):
             raise ValueError(f"Unsupported grid2d pooling mode: {mode!r}")
         if mode == "gaussian" and (not math.isfinite(gauss_sigma) or gauss_sigma <= 0):
             raise ValueError("grid2d gauss_sigma must be finite and positive")
         self.k = k
+        self.kernel_size = side = math.isqrt(k)
         self.mode = mode
         self.in_coords = in_coords
         self.out_coords = out_coords
-        before = (k - self.stride) // 2
-        after = k - self.stride - before
-        self.padding = (before, after, before, after)
+        self.polar = in_coords.style in POLAR_GRID_STYLES
+        before = (side - self.stride) // 2
+        after = side - self.stride - before
+        if self.polar:
+            # Rows are angles: wrap around, centered on the output angle.
+            # Trailing samples beyond the last window are ignored by pooling.
+            angle_before = (side - 1) // 2
+            self.angular_padding = (angle_before, max(side - self.stride - angle_before, 0))
+            self.padding = (before, after, 0, 0)
+        else:
+            self.angular_padding = None
+            self.padding = (before, after, before, after)
         self.register_buffer(
             "input_mask",
             in_coords.as_grid(in_coords.valid_mask)[None, None],
@@ -85,8 +99,8 @@ class GridPoolingLayer(nn.Module):
         output_mask = out_coords.as_grid(out_coords.valid_mask)[None, None]
 
         axis = (
-            torch.arange(k, device=in_coords.cartesian.device, dtype=torch.float32)
-            - (k - 1) / 2
+            torch.arange(side, device=in_coords.cartesian.device, dtype=torch.float32)
+            - (side - 1) / 2
         )
         radius = torch.sqrt(axis[:, None].square() + axis[None, :].square())
         span = radius.max() - radius.min()
@@ -95,7 +109,7 @@ class GridPoolingLayer(nn.Module):
             weights = torch.exp(-radius.square() / (2 * gauss_sigma**2))
             weights = weights / weights.sum()
         else:
-            weights = torch.full_like(radius, 1 / k**2)
+            weights = torch.full_like(radius, 1 / k)
         self.register_buffer("weights", weights[None, None], persistent=False)
         coverage = self._weighted_pool(self.input_mask.float())
         self.register_buffer(
@@ -109,10 +123,15 @@ class GridPoolingLayer(nn.Module):
         """The pooling backend; image sampling has its own backend selection."""
         return "torch_grid2d"
 
+    def _pad(self, grid: torch.Tensor, value: float = 0.0) -> torch.Tensor:
+        if self.angular_padding is not None:
+            grid = F.pad(grid, (0, 0, *self.angular_padding), mode="circular")
+        return F.pad(grid, self.padding, value=value)
+
     def _weighted_pool(self, grid: torch.Tensor) -> torch.Tensor:
-        padded = F.pad(grid, self.padding)
+        padded = self._pad(grid)
         if self.mode in ("avg", "max"):
-            return F.avg_pool2d(padded, self.k, self.stride)
+            return F.avg_pool2d(padded, self.kernel_size, self.stride)
         batch, channels = grid.shape[:2]
         pooled = F.conv2d(
             padded.reshape(batch * channels, 1, *padded.shape[-2:]),
@@ -127,13 +146,16 @@ class GridPoolingLayer(nn.Module):
         if self.mode == "max":
             grid = torch.where(self.input_mask, grid, -torch.inf)
             result = F.max_pool2d(
-                F.pad(grid, self.padding, value=-torch.inf), self.k, self.stride
+                self._pad(grid, -torch.inf), self.kernel_size, self.stride
             )
         else:
             grid = torch.where(self.input_mask, grid, 0)
             result = self._weighted_pool(grid) * self.normalizer.to(dtype=grid.dtype)
         result = torch.where(self.output_mask, result, 0)
-        return result.flip(-2).transpose(-2, -1).flatten(-2)
+        if not self.polar:
+            # Invert the upright Cartesian layout produced by ``as_grid``.
+            result = result.flip(-2).transpose(-2, -1)
+        return result.flatten(-2)
 
 
 def build_retinal_pooler(
@@ -142,14 +164,15 @@ def build_retinal_pooler(
     *,
     k: int | None,
     mode: str,
-    method: str,
     sample_cortex: bool | str,
     gauss_sigma: float,
     device: str | torch.device,
 ) -> tuple[KNNPoolingLayer | GridPoolingLayer, int]:
-    """Build a retinal pooler and return its resolved neighbor count/kernel side."""
-    method = resolve_pool_method(out_coords.style, method)
-    if method == "grid2d":
+    """Build a retinal pooler and return its resolved neighbor count.
+
+    ``_as_grid`` sensors always use 2D grid pooling; sample sets use KNN.
+    """
+    if out_coords.style.endswith("_as_grid"):
         pooler = GridPoolingLayer(k, in_coords, out_coords, mode, gauss_sigma)
         return pooler, pooler.k
     if k is None:
