@@ -41,6 +41,9 @@ def test_yaml_camera_compiles_with_fullgraph() -> None:
 
 
 def test_yaml_sampler_fullgraph_preserves_fixation_gradients() -> None:
+    # calibrated_forward's Dynamo cache is process-wide; earlier CUDA tests can
+    # exhaust its recompile limit, which fullgraph turns into a hard failure.
+    torch._dynamo.reset()
     camera = CameraModel("pinhole", (40, 60), (40, 40, 29.5, 19.5))
     sampler = GridSampler(
         20,
