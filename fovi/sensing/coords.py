@@ -270,13 +270,12 @@ class SamplingCoords():
                 0, 2, device=device, dtype=dtype)
             self.cartesian_pad_coords = torch.empty(
                 0, 2, device=device, dtype=dtype)
-            if style in WARPED_CARTESIAN_STYLES or 'logpolar' in style:
+            if (style in WARPED_CARTESIAN_STYLES or 'logpolar' in style
+                    or 'uniform' in style):
                 self.cortical = torch.zeros(
                     1, 2, device=device, dtype=dtype)
                 self.cortical_pad_coords = torch.empty(
                     0, 2, device=device, dtype=dtype)
-            elif 'uniform' in style:
-                self.cortical = None
             else:
                 self.cortical = torch.zeros(
                     1, 3, device=device, dtype=dtype)
@@ -340,7 +339,9 @@ class SamplingCoords():
                 self.cortical_pad_coords = self._logpolar_pad_cortical.to(
                     device=device, dtype=dtype)
             elif 'uniform' in style:
-                self.cortical = None
+                # No magnification: the sensor manifold is the visual plane.
+                self.cortical = self.cartesian.clone()
+                self.cortical_pad_coords = self.cartesian_pad_coords.clone()
             else:
                 # cortical coordinates to be used for sampling RFs
                 self.cortical = vis_to_sensor_manifold(self.cartesian.cpu().numpy(), cmf_a, fov, as_tensor=True, device=device, field_geometry=field_geometry)

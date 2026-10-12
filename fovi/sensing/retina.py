@@ -8,7 +8,7 @@ from scipy.optimize import minimize_scalar
 
 from .coords import find_desired_res, is_cmf_sequence, validate_cmf_values
 from .projection import CameraCalibration, CameraModel
-from .samplers import GaussianKNNGridSampler, KNNGridSampler, GridSampler
+from .samplers import PoolingGridSampler, GridSampler
 from .validation import validate_gaze_convention
 from ..utils import add_to_all
 from ..utils.fastaugs import transforms as fastT
@@ -95,8 +95,9 @@ class RetinalTransform(nn.Module):
         self.fov_type = fov_type
         self.radius_norm = radius_norm
         self.field_geometry = field_geometry
-        if field_geometry == 'spherical' and sampler not in ('grid_nn', 'grid_bilinear'):
-            raise ValueError("Spherical geometry requires grid_nn or grid_bilinear sampling")
+        if field_geometry == 'spherical' and sampler not in (
+                'grid_nn', 'grid_bilinear', 'pooling', 'gaussian_pooling'):
+            raise ValueError("Spherical geometry requires grid_nn, grid_bilinear, pooling, or gaussian_pooling sampling")
         if field_geometry != 'spherical' and camera_model is not None:
             raise ValueError("Calibrated camera sampling requires spherical field_geometry")
         full_fov = self.fov
@@ -135,18 +136,22 @@ class RetinalTransform(nn.Module):
         self.foveal_color = GaussianColorDecay(sigma)
 
         if sampler == 'gaussian_pooling':
-            self.sampler = GaussianKNNGridSampler(
+            self.sampler = PoolingGridSampler(
                 self.fov, self.cmf_a, resolution,
+                pool_mode='gaussian',
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
                 backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,
+                camera_model=camera_model, gaze_convention=gaze_convention,
                 radius_norm=radius_norm, **kwargs)
         elif sampler == 'pooling':
-            self.sampler = KNNGridSampler(
+            self.sampler = PoolingGridSampler(
                 self.fov, self.cmf_a, resolution,
+                pool_mode='avg',
                 fixation_size=self.fixation_size, device=device, style=style,
                 isotropic_plotting_type=isotropic_plotting_type,
                 backend=sampler_backend, fov_type=fov_type, field_geometry=field_geometry,
+                camera_model=camera_model, gaze_convention=gaze_convention,
                 radius_norm=radius_norm, **kwargs)
         elif sampler == 'grid_nn':
             self.sampler = GridSampler(

@@ -18,9 +18,8 @@ from fovi.sensing.projection import CameraModel, gaze_rotation
 from fovi.sensing.retina import RetinalTransform
 from fovi.sensing.samplers import (
     BaseGridSampler,
-    GaussianKNNGridSampler,
     GridSampler,
-    KNNGridSampler,
+    PoolingGridSampler,
 )
 
 
@@ -42,6 +41,9 @@ def test_yaml_camera_compiles_with_fullgraph() -> None:
 
 
 def test_yaml_sampler_fullgraph_preserves_fixation_gradients() -> None:
+    # calibrated_forward's Dynamo cache is process-wide; earlier CUDA tests can
+    # exhaust its recompile limit, which fullgraph turns into a hard failure.
+    torch._dynamo.reset()
     camera = CameraModel("pinhole", (40, 60), (40, 40, 29.5, 19.5))
     sampler = GridSampler(
         20,
@@ -311,9 +313,8 @@ def test_camera_sequence_normalization_preserves_projection(kind: str) -> None:
 
 @pytest.mark.parametrize("gaussian", [False, True])
 def test_pooling_dtype_mutations_preserve_values_and_validation(gaussian: bool) -> None:
-    cls = GaussianKNNGridSampler if gaussian else KNNGridSampler
-    kwargs = {"gauss_sigma": 1.0} if gaussian else {}
-    sampler = cls(16, 0.5, 8, device="cpu", backend="torch", **kwargs)
+    kwargs = {"pool_mode": "gaussian", "gauss_sigma": 1.0} if gaussian else {}
+    sampler = PoolingGridSampler(16, 0.5, 8, device="cpu", backend="torch", **kwargs)
     image = torch.rand(1, 3, 32, 32)
     args = (image, [0.4, 0.6], 24)
     reference = sampler(*args)
@@ -323,7 +324,7 @@ def test_pooling_dtype_mutations_preserve_values_and_validation(gaussian: bool) 
         assert sampler.output_dtype is None
         torch.testing.assert_close(sampler(*args), reference, rtol=0, atol=0)
         with pytest.raises(error, match="output dtype|output_dtype"):
-            cls(16, 0.5, 8, device="cpu", output_dtype=invalid, **kwargs)
+            PoolingGridSampler(16, 0.5, 8, device="cpu", output_dtype=invalid, **kwargs)
     sampler.output_dtype = torch.float64
     torch.testing.assert_close(sampler(*args), reference.double(), rtol=0, atol=0)
     stream = io.BytesIO()
@@ -339,7 +340,7 @@ def test_pooling_dtype_mutations_preserve_values_and_validation(gaussian: bool) 
 
 @pytest.mark.parametrize("pooling", [False, True])
 def test_missing_serialized_output_dtype_uses_attribute_error(pooling: bool) -> None:
-    cls = KNNGridSampler if pooling else GridSampler
+    cls = PoolingGridSampler if pooling else GridSampler
     sampler = cls(16, 0.5, 8, device="cpu")
     del sampler.__dict__["output_dtype"]
     assert not hasattr(sampler, "output_dtype")

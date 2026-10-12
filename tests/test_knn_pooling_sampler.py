@@ -6,7 +6,7 @@ from torch import nn
 
 import fovi.arch.knn as knn_module
 from fovi.arch.knn import KNNPoolingLayer
-from fovi.sensing.samplers import BaseGridSampler, KNNGridSampler
+from fovi.sensing.samplers import BaseGridSampler, PoolingGridSampler
 from fovi.sensing.coords import SamplingCoords
 
 
@@ -43,7 +43,7 @@ class TestKNNPoolingSampler(unittest.TestCase):
         self.assertEqual(torch.count_nonzero(result[:, :, ~outgoing.valid_mask]), 0)
 
     def test_fractional_resolution_multiplier_is_rounded_once(self):
-        sampler = KNNGridSampler(
+        sampler = PoolingGridSampler(
             fov=1.0,
             cmf_a=0.1,
             resolution=5,
