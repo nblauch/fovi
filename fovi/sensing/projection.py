@@ -321,8 +321,7 @@ class CameraModel:
         # Measure each half about the window center so spans over 180 degrees
         # remain continuous even when the optical axis misses this scanline.
         span = sum(
-            torch.acos((rays[index] * rays[1]).sum().clamp(-1, 1))
-            for index in (0, 2)
+            torch.acos((rays[index] * rays[1]).sum().clamp(-1, 1)) for index in (0, 2)
         )
         return math.degrees(float(span))
 
