@@ -12,6 +12,8 @@ from ..sensing.coords import SamplingCoords, SamplingCoordsBank, is_cmf_sequence
 from ..utils.lora import apply_lora
 from ..utils import add_to_all
 from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioningPatchEmbedding, FoviDinoV3RoPE, resample_patch_embed_conv
+from .omni_isotropic import OmniIsotropicPatchEmbedding, POSITION_SPACES
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 __all__ = []
 
@@ -148,6 +150,27 @@ def _select_dinov3_output(output, output_mode, num_register_tokens):
     )
 
 
+def forward_omni_isotropic(
+    model: nn.Module, pixel_values: torch.Tensor, cmf_indices: torch.Tensor,
+    bool_masked_pos: torch.Tensor | None = None,
+) -> BaseModelOutputWithPooling:
+    """Pass level selection explicitly to patch projection and rotary positions."""
+    embedding = model.embeddings
+    pixels = pixel_values.to(embedding.patch_embeddings.weight.dtype)
+    patches = embedding.patch_embeddings(pixels, cmf_indices).transpose(1, 2)
+    if bool_masked_pos is not None:
+        patches = torch.where(bool_masked_pos.unsqueeze(-1), embedding.mask_token.to(patches.dtype), patches)
+    batch = pixels.shape[0]
+    hidden = torch.cat((embedding.cls_token.expand(batch, -1, -1), embedding.register_tokens.expand(batch, -1, -1), patches), dim=1)
+    positions = model.rope_embeddings(pixels, cmf_indices)
+    for layer in _get_dinov3_layers(model):
+        output = layer(hidden, position_embeddings=positions)
+        # Transformers 4 returns a tuple; Transformers 5 returns the hidden tensor.
+        hidden = output if isinstance(output, torch.Tensor) else output[0]
+    hidden = model.norm(hidden)
+    return BaseModelOutputWithPooling(last_hidden_state=hidden, pooler_output=hidden[:, 0])
+
+
 @add_to_all(__all__)
 def load_dinov3(path, device='cuda', pretrained=True):
     """Load a DinoV3 model and processor from Hugging Face.
@@ -190,10 +213,11 @@ def build_fovi_dinov3(cfg, device='cuda'):
     if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
         torch.backends.cuda.enable_cudnn_sdp(False)
 
+    omni_isotropic = is_cmf_sequence(cfg.saccades.cmf_a) and cfg.saccades.mode == 'isotropic_fixn_calibrated'
     if is_cmf_sequence(cfg.saccades.cmf_a):
-        if cfg.saccades.mode != 'warped_cartesian_as_grid':
-            raise ValueError('Multi-level cmf_a requires warped_cartesian_as_grid')
-        if cfg.model.vit.get('position_coordinate_space') == 'cartesian':
+        if cfg.saccades.mode not in ('warped_cartesian_as_grid', 'isotropic_fixn_calibrated'):
+            raise ValueError('Multi-level cmf_a requires a supported fixed-count sampling style')
+        if not omni_isotropic and cfg.model.vit.get('position_coordinate_space') == 'cartesian':
             raise ValueError('Multi-level cmf_a requires cortical ViT positions; Cartesian positions are unsupported')
     load_weights = getattr(cfg.pretrained_model, 'load_weights', True)
     model, processor = load_dinov3(cfg.pretrained_model.path, device=device, pretrained=load_weights)
@@ -202,14 +226,43 @@ def build_fovi_dinov3(cfg, device='cuda'):
     if position_space is None:
         default_space = 'cortical' if cfg.saccades.mode.endswith('_as_grid') else 'cartesian'
         position_space = getattr(model.config, 'position_coordinate_space', default_space)
-    if is_cmf_sequence(cfg.saccades.cmf_a) and position_space != 'cortical':
+    if is_cmf_sequence(cfg.saccades.cmf_a) and not omni_isotropic and position_space != 'cortical':
         raise ValueError('Multi-level cmf_a requires cortical ViT positions; Cartesian positions are unsupported')
-    if position_space not in ('cortical', 'cartesian'):
-        raise ValueError("position_coordinate_space must be 'cortical' or 'cartesian'")
+    allowed_positions = POSITION_SPACES if omni_isotropic else ('cortical', 'cartesian')
+    if position_space not in allowed_positions:
+        raise ValueError(f"position_coordinate_space must be one of {allowed_positions}")
     with open_dict(cfg.model.vit):
         cfg.model.vit.position_coordinate_space = position_space
 
-    if 'as_grid' not in cfg.saccades.mode:
+    if omni_isotropic:
+        if cfg.saccades.field_geometry != 'planar' or cfg.saccades.fov_type != 'circular':
+            raise ValueError('Omni isotropic currently requires circular planar geometry')
+        if cfg.model.vit.partitioning_patches != 'KNN':
+            raise ValueError('Omni isotropic requires partitioning_patches=KNN')
+        patch_embed = OmniIsotropicPatchEmbedding(
+            fov=cfg.saccades.fov, cmf_a=cfg.saccades.cmf_a,
+            resolution=cfg.saccades.resize_size, patch_size=cfg.model.vit.patch_size,
+            # Older saved configs use the pretrained kernel side implicitly.
+            reference_side=cfg.model.vit.get('reference_side', cfg.pretrained_model.patch_size), in_channels=3,
+            # Preserve perimeter placement when reconstructing older checkpoints.
+            patch_max_coord_val=cfg.model.vit.get('patch_max_coord_val', 1.0),
+            embed_dim=model.config.hidden_size, sample_cortex=cfg.saccades.sample_cortex, device=device,
+            position_coordinate_space=position_space)
+        if cfg.pretrained_model.use_patch_weights:
+            patch_embed.load_conv2d_weights(model.embeddings.patch_embeddings)
+        model.embeddings.patch_embeddings = patch_embed
+        model.rope_embeddings = FoviDinoV3RoPE(
+            model.config.rope_theta, model.config.hidden_size // model.config.num_attention_heads,
+            patch_embed.positions, device=device)
+        model.config.position_coordinate_space = position_space
+        model.config.fovi_sensor = {
+            'fov': cfg.saccades.fov, 'cmf_a': list(cfg.saccades.cmf_a),
+            'resolution': cfg.saccades.resize_size, 'style': cfg.saccades.mode,
+            'field_geometry': cfg.saccades.field_geometry, 'fov_type': cfg.saccades.fov_type,
+            'radius_norm': cfg.saccades.radius_norm, 'sample_cortex': cfg.saccades.sample_cortex,
+        }
+        model.total_embed_dim = patch_embed.out_channels * patch_embed.num_patches
+    elif 'as_grid' not in cfg.saccades.mode:
         if cfg.model.vit.partitioning_patches == 'KNN':
             patch_cls = KNNPartitioningPatchEmbedding
             kwargs = dict(
@@ -305,7 +358,7 @@ def build_fovi_dinov3(cfg, device='cuda'):
 
     def forward(*args, **kwargs):
         return _select_dinov3_output(
-            native_forward(*args, **kwargs),
+            forward_omni_isotropic(model, *args, **kwargs) if omni_isotropic else native_forward(*args, **kwargs),
             output_mode,
             num_register_tokens,
         )

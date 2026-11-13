@@ -45,7 +45,7 @@ from dataclasses import dataclass
 
 import torch  # noqa: F401  (must precede cupy; see NVRTC note in fovi.arch.knn_cuda)
 
-from .knn_cuda import _include_options, _launch, _ptr  # imports torch, then cupy
+from .knn_cuda import cuda_include_options, _launch, _ptr  # imports torch, then cupy
 
 import cupy as cp
 import numpy as np
@@ -397,7 +397,7 @@ def _get_kernel(device_index, dtype, mode_id, rs, kind):
     if cached is not None:
         return cached[0]
     name = f"knn_pool_{kind}<{_CTYPE[dtype]}, {mode_id}, {rs}, {_THREADS}>"
-    options = ("--std=c++17", "--use_fast_math") + _include_options()
+    options = ("--std=c++17", "--use_fast_math") + cuda_include_options()
     with cp.cuda.Device(device_index):
         module = cp.RawModule(code=_SOURCE, options=options, name_expressions=(name,))
         kernel = module.get_function(name)

@@ -1,0 +1,8 @@
+# Denser reference weights; retinal geometry and patch neighborhoods are fixed.
+defaults:
+  - dinov3_isotropic_multi_cmf_geodesic
+  - _self_
+
+model:
+  vit:
+    reference_side: 24

@@ -10,11 +10,12 @@ import torch
 from ..utils import normalize, add_to_all
 from .manifold import spherical_radius_limit, validate_field_geometry
 from .manifold import vis_cartesian_to_cortical_cartesian_coords as vis_to_sensor_manifold
+from .isotropic_rings import calibrated_isotropic_coordinates
 
 __all__ = []
 
 SAMPLING_STYLES = (
-    'isotropic', 'isotropic_fixn',
+    'isotropic', 'isotropic_fixn', 'isotropic_fixn_calibrated',
     'logpolar', 'logpolar_as_grid',
     'warped_cartesian', 'warped_cartesian_as_grid',
     'uniform', 'uniform_as_grid',
@@ -237,6 +238,8 @@ class SamplingCoords():
                  ):
 
         validate_field_geometry(field_geometry)
+        if style == 'isotropic_fixn_calibrated' and (field_geometry != 'planar' or fov_type != 'circular'):
+            raise ValueError('Calibrated isotropic rings require a circular planar field')
         self.field_geometry = field_geometry
         _validate_radius_norm(radius_norm, fov_type=fov_type, style=style)
         if radius_norm == math.inf and style in WARPED_CARTESIAN_STYLES:
@@ -1176,6 +1179,14 @@ def get_sampling_coords(
         # These styles retain masked cells in their native rectangular layout.
         # KNN layers use valid_mask to treat them as padding in-place.
         masked_coords = coords.new_empty((0, 2))
+    elif style == 'isotropic_fixn_calibrated':
+        if field_geometry != 'planar' or fov_type != 'circular':
+            raise ValueError('Calibrated isotropic rings require a circular planar field')
+        arrays = calibrated_isotropic_coordinates(fov, cmf_a, res, max_val)
+        coords, polar_coords, plotting_coords = (
+            torch.tensor(array, device=device, dtype=torch.float32) for array in arrays)
+        valid_mask = torch.ones(res**2, device=device, dtype=torch.bool)
+        masked_coords = coords.new_empty((0, 2))
     elif 'isotropic' in style or 'logpolar' in style:
         if 'fixn' in style:
             force_n_points = res**2
@@ -1309,7 +1320,7 @@ def num_sampling_coords(
             fov, cmf_a, res, device=device, fov_type=fov_type, field_geometry=field_geometry)
     elif style in [
             'logpolar', 'logpolar_as_grid', 'warped_cartesian',
-            'warped_cartesian_as_grid', 'isotropic_fixn', 'uniform',
+            'warped_cartesian_as_grid', 'isotropic_fixn', 'isotropic_fixn_calibrated', 'uniform',
             'uniform_as_grid']:
         return res**2
     else:
@@ -1528,12 +1539,12 @@ class SamplingCoordsBank(torch.nn.Module):
     ) -> None:
         super().__init__()
         self.cmf_a = validate_cmf_values(cmf_a)
-        if style != "warped_cartesian_as_grid" or fov_type not in (
+        if style not in ("warped_cartesian_as_grid", "isotropic_fixn_calibrated") or fov_type not in (
             "square",
             "circular",
         ):
             raise ValueError(
-                "CMF banks require warped_cartesian_as_grid with square or circular FoV"
+                "CMF banks require warped_cartesian_as_grid or isotropic_fixn_calibrated"
             )
         if field_geometry not in ("planar", "spherical"):
             raise ValueError("CMF banks require planar or spherical geometry")
@@ -1546,9 +1557,9 @@ class SamplingCoordsBank(torch.nn.Module):
         self.isotropic_plotting_type = isotropic_plotting_type
         levels = [self._build_level(value, device, dtype) for value in self.cmf_a]
         for level in levels:
-            if len(level) != res**2 or not torch.equal(
+            if len(level) != res**2 or (style == "warped_cartesian_as_grid" and not torch.equal(
                 level.cortical, levels[0].cortical
-            ):
+            )):
                 raise ValueError(
                     "CMF levels must share resolution and native grid ordering"
                 )

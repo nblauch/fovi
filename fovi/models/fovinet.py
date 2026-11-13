@@ -56,10 +56,11 @@ class FoviNet(nn.Module):
         self.cmf_values = None
         if is_cmf_sequence(cfg.saccades.cmf_a):
             self.cmf_values = validate_cmf_values(cfg.saccades.cmf_a)
-            if cfg.saccades.mode != 'warped_cartesian_as_grid':
-                raise ValueError('Multi-level cmf_a requires warped_cartesian_as_grid')
-            if cfg.model.vit.get('position_coordinate_space') == 'cartesian':
+            if cfg.saccades.mode not in ('warped_cartesian_as_grid', 'isotropic_fixn_calibrated'):
+                raise ValueError('Multi-level cmf_a requires a supported fixed-count sampling style')
+            if cfg.saccades.mode == 'warped_cartesian_as_grid' and cfg.model.vit.get('position_coordinate_space') == 'cartesian':
                 raise ValueError('Multi-level cmf_a requires cortical ViT positions')
+        self.network_uses_cmf = self.cmf_values is not None and cfg.saccades.mode == 'isotropic_fixn_calibrated'
         self.network = ARCHITECTURE_REGISTRY.get(cfg.model.arch)(cfg, device=device)
 
         self.cfg = cfg
@@ -203,6 +204,7 @@ class FoviNet(nn.Module):
         if self.cmf_values is not None:
             sample_kwargs['cmf_indices'] = torch.zeros(x.shape[0], dtype=torch.int64, device=x.device)
         x = self.retinal_transform(x, None, **sample_kwargs)
+        network_kwargs = sample_kwargs if self.network_uses_cmf else {}
         if self.control_model:
             # standard CNN, no need to do this
             test_mlps = False
@@ -213,7 +215,7 @@ class FoviNet(nn.Module):
         with autocast(device_type='cuda', dtype=self.amp_dtype, enabled=True):
             if test_mlps:
                 # make sure all MLPs are initialized
-                embeddings = self.network(x.to(self.device), return_layer_outputs=False, apply_mlp=False)
+                embeddings = self.network(x.to(self.device), return_layer_outputs=False, apply_mlp=False, **network_kwargs)
 
                 # collapse over spatial positions
                 if len(embeddings.shape) == 3:
@@ -222,9 +224,9 @@ class FoviNet(nn.Module):
                 if hasattr(self.network, 'projector_ssl') and self.network.projector_ssl is not None:
                     embeddings, layer_outputs = self.network.projector_ssl(embeddings, return_layer_outputs=True)
                 # do supervised second so that it determine the mlp_spec appropriately
-                embeddings, layer_outputs = self.network(x.to(self.device), return_layer_outputs=True, apply_mlp=True)
+                embeddings, layer_outputs = self.network(x.to(self.device), return_layer_outputs=True, apply_mlp=True, **network_kwargs)
             else:
-                embeddings, layer_outputs = self.network(x.to(self.device), return_layer_outputs=True)
+                embeddings, layer_outputs = self.network(x.to(self.device), return_layer_outputs=True, **network_kwargs)
         if isinstance(embeddings, (list, tuple)): # model returns list of outputs (e.g., multiple forward passes)
             layer_outputs = layer_outputs[0] # take only final ouput
             assert isinstance(layer_outputs, (list, tuple))
@@ -309,7 +311,8 @@ class FoviNet(nn.Module):
         x_fixs = rearrange(fix_outputs['x_fixs'], 'b f c n -> (f b) c n', f=n_fixations, b=batch_size)
 
         # do the forward pass
-        embeddings, layer_outputs = self.network(x_fixs, return_layer_outputs=True, apply_mlp=True)
+        network_kwargs = {'cmf_indices': selection.repeat(n_fixations)} if self.network_uses_cmf else {}
+        embeddings, layer_outputs = self.network(x_fixs, return_layer_outputs=True, apply_mlp=True, **network_kwargs)
 
         # make the positive pairs (fixations from same image) explicit
         embeddings = rearrange(embeddings, '(f b) c n -> b f c n')
@@ -336,8 +339,8 @@ class FoviNet(nn.Module):
         Returns:
             tuple: (embeddings, layer_outputs, x_fixs) containing the model outputs.
         """
+        selection = self.select_cmf_indices(inputs, cmf_indices)
         if not fixated_inputs:
-            selection = self.select_cmf_indices(inputs, cmf_indices)
             selection_kwargs = {} if selection is None else {'cmf_indices': selection}
             outputs = self.sup_fixator(inputs, **selection_kwargs, fixation_size=fixation_size, area_range=area_range, n_fixations=n_fixations, fixations=fixations)
             x_fixs = outputs['x_fixs']
@@ -355,7 +358,8 @@ class FoviNet(nn.Module):
             inputs = rearrange(x_fixs, 'b f c n -> (f b) c n')
 
         # do the forward pass
-        embeddings, layer_outputs = self.network(inputs, return_layer_outputs=True)
+        network_kwargs = {'cmf_indices': selection.repeat(n_fixations)} if self.network_uses_cmf else {}
+        embeddings, layer_outputs = self.network(inputs, return_layer_outputs=True, **network_kwargs)
 
         # reshape representations to make n_fixations explicit
         embeddings = rearrange(embeddings, '(f b) d -> b f d', f=n_fixations, b=batch_size)

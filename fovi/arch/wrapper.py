@@ -23,7 +23,7 @@ class BackboneProjectorWrapper(nn.Module):
         self.projector = projector
         self.projector_ssl = projector_ssl
 
-    def forward(self, x, return_layer_outputs=False, apply_mlp=True):
+    def forward(self, x, return_layer_outputs=False, apply_mlp=True, cmf_indices=None):
         """        
         Args:
             x (torch.Tensor): Input tensor.
@@ -34,7 +34,10 @@ class BackboneProjectorWrapper(nn.Module):
             torch.Tensor or tuple: Output features and optionally layer outputs.
         """
         # Forward through backbone
-        features = self.backbone(x)   
+        if cmf_indices is None:
+            features = self.backbone(x)
+        else:
+            features = self.backbone(x, cmf_indices=cmf_indices)
 
         # Apply projection if requested
         if apply_mlp:

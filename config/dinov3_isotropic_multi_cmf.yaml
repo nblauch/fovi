@@ -1,0 +1,13 @@
+# Fixed-count ring geometry; all other optimizer/data settings match warped omni.
+defaults:
+  - dinov3_warped_grid_multi_cmf
+  - _self_
+
+model:
+  vit:
+    position_coordinate_space: cartesian
+
+saccades:
+  mode: isotropic_fixn_calibrated
+  # Euclidean distance on the embedded cortical manifold, as in the prototype.
+  sample_cortex: true

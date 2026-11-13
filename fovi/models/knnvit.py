@@ -304,6 +304,7 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
                 in_coords=None,
                 out_coords=None,
                 field_geometry='planar',
+                precomputed_distances: torch.Tensor | None = None,
                  **kwargs,
                  ):
         """Initialize KNN partitioning patch embedding layer.
@@ -348,8 +349,23 @@ class KNNPartitioningPatchEmbedding(KNNPatchEmbedding):
             )
 
         k = int(len(in_coords) / len(out_coords)) # set temporary k for use in geodesic dist computation, if necessary
-        KNNConvLayer.__init__(self, in_channels, embed_dim, k, in_coords, out_coords, device=device, sample_cortex=sample_cortex, **kwargs) # temporary init to set distances
-        distances = self._compute_all_distances()
+        if precomputed_distances is None:
+            KNNConvLayer.__init__(self, in_channels, embed_dim, k, in_coords, out_coords, device=device, sample_cortex=sample_cortex, **kwargs) # temporary init to set distances
+            distances = self._compute_all_distances()
+        else:
+            expected_shape = (len(in_coords) + len(in_coords.cartesian_pad_coords), len(out_coords))
+            if sample_cortex != 'geodesic' or tuple(precomputed_distances.shape) != expected_shape:
+                raise ValueError('Precomputed surface distances require geodesic sampling and every sample/patch pair')
+            if not torch.isfinite(precomputed_distances).all() or (precomputed_distances < 0).any():
+                raise ValueError('Precomputed surface distances must be finite and nonnegative')
+            distances = precomputed_distances.to(device)
+            self.sample_coords_cart = torch.cat((in_coords.cartesian, in_coords.cartesian_pad_coords)).to(device)
+            self.sample_coords = torch.cat((in_coords.cortical, in_coords.cortical_pad_coords)).to(device)
+            initial_indices = self._stable_neighbor_order(distances)[:k]
+            initial_distances = distances.gather(0, initial_indices)
+            # Retain the normal initializer's RNG consumption for matched runs.
+            KNNConvLayer.__init__(self, in_channels, embed_dim, k, in_coords, out_coords, device=device,
+                                 sample_cortex=sample_cortex, _precomputed_knns=(initial_indices, initial_distances), **kwargs)
         neighbor_order = self._stable_neighbor_order(distances)
 
         k = self._minimum_k_covering_inputs(
@@ -537,8 +553,27 @@ class FoviDinoV3RoPE(nn.Module):
         self.device = device
         self.position_config = position_config
 
+        if coords.ndim not in (2, 3) or coords.shape[-1] not in (2, 3):
+            raise ValueError('RoPE coordinates must be [patches, dimensions] or [levels, patches, dimensions] with two or three dimensions')
+        if head_dim % 4 or head_dim < 4 or (coords.shape[-1] == 3 and head_dim < 8):
+            raise ValueError('FOVI DINO RoPE requires head_dim divisible by four, with at least eight dimensions for 3D positions')
+        self.coordinate_dimensions = coords.shape[-1]
+        if self.coordinate_dimensions == 3 and position_config is not None:
+            raise ValueError('Native two-dimensional position augmentation cannot be applied to a 3D manifold')
+
         inv_freq = 1 / self.base ** torch.arange(0, 1, 4 / self.head_dim, dtype=torch.float32, device=device)  # (head_dim / 4,)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        if self.coordinate_dimensions == 3:
+            # Keep the same number of rotary pairs and the same frequency range.
+            # The residual pairs go to row, then column, before cortical height.
+            counts = [head_dim // 6 + int(axis < (head_dim // 2) % 3) for axis in range(3)]
+            axes = torch.repeat_interleave(torch.arange(3, device=device), torch.tensor(counts, device=device))
+            frequencies = torch.cat([
+                self.base ** -torch.linspace(0, 1 - 4 / head_dim, count, device=device)
+                for count in counts
+            ])
+            self.register_buffer('coordinate_axes', axes, persistent=False)
+            self.inv_freq = frequencies
 
     def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> FoviDinoV3RoPE:
         # Positions must retain float32 accuracy when backbone weights use BF16.
@@ -547,7 +582,7 @@ class FoviDinoV3RoPE(nn.Module):
         self.coords = coords.to(device=self.coords.device)
         return self
 
-    def forward(self, pixel_values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, pixel_values: torch.Tensor, cmf_indices: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass for RoPE positional encoding.
 
         Args:
@@ -561,15 +596,26 @@ class FoviDinoV3RoPE(nn.Module):
 
         with torch.autocast(device_type=device_type, enabled=False):  # Force float32
             coords = self.coords
+            if coords.ndim == 3:
+                if cmf_indices is None:
+                    raise ValueError('Batched RoPE geometry requires cmf_indices')
+                coords = coords.index_select(0, cmf_indices)
+            elif cmf_indices is not None:
+                raise ValueError('Scalar RoPE geometry does not accept cmf_indices')
             if self.training and self.position_config is not None:
                 coords = augment_patches_center_coordinates(
                     coords, shift=self.position_config.pos_embed_shift,
                     jitter=self.position_config.pos_embed_jitter,
                     rescale=self.position_config.pos_embed_rescale)
             # (height * width, 2, head_dim / 4) -> (height * width, head_dim / 2) -> (height * width, head_dim)
-            angles = 2 * math.pi * coords[:, :, None] * self.inv_freq[None, None, :]
-            angles = angles.flatten(1, 2)
-            angles = angles.tile(2)
+            if self.coordinate_dimensions == 2:
+                angles = 2 * math.pi * coords[..., None] * self.inv_freq
+                angles = angles.flatten(-2)
+            else:
+                angles = 2 * math.pi * coords.index_select(-1, self.coordinate_axes) * self.inv_freq
+            angles = torch.cat((angles, angles), dim=-1)
+            if coords.ndim == 3:
+                angles = angles.unsqueeze(1)  # broadcast across attention heads
 
             cos = torch.cos(angles)
             sin = torch.sin(angles)

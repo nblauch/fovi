@@ -1,0 +1,6 @@
+defaults:
+  - dinov3_isotropic_multi_cmf
+  - _self_
+
+saccades:
+  sample_cortex: geodesic
