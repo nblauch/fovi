@@ -235,8 +235,8 @@ def build_fovi_dinov3(cfg, device='cuda'):
         cfg.model.vit.position_coordinate_space = position_space
 
     if omni_isotropic:
-        if cfg.saccades.field_geometry != 'planar' or cfg.saccades.fov_type != 'circular':
-            raise ValueError('Omni isotropic currently requires circular planar geometry')
+        if cfg.saccades.field_geometry not in ('planar', 'spherical') or cfg.saccades.fov_type != 'circular':
+            raise ValueError('Omni isotropic requires circular planar or spherical geometry')
         if cfg.model.vit.partitioning_patches != 'KNN':
             raise ValueError('Omni isotropic requires partitioning_patches=KNN')
         patch_embed = OmniIsotropicPatchEmbedding(
@@ -247,7 +247,7 @@ def build_fovi_dinov3(cfg, device='cuda'):
             # Preserve perimeter placement when reconstructing older checkpoints.
             patch_max_coord_val=cfg.model.vit.get('patch_max_coord_val', 1.0),
             embed_dim=model.config.hidden_size, sample_cortex=cfg.saccades.sample_cortex, device=device,
-            position_coordinate_space=position_space)
+            position_coordinate_space=position_space, field_geometry=cfg.saccades.field_geometry)
         if cfg.pretrained_model.use_patch_weights:
             patch_embed.load_conv2d_weights(model.embeddings.patch_embeddings)
         model.embeddings.patch_embeddings = patch_embed

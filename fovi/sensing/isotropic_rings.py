@@ -1,4 +1,4 @@
-"""Deterministic, exact-count rings for planar inverse-linear magnification."""
+"""Deterministic, exact-count rings for inverse-linear magnification."""
 
 import heapq
 import math
@@ -29,7 +29,7 @@ def allocate_ring_counts(target: np.ndarray, count: int) -> np.ndarray:
 
 
 def calibrated_isotropic_rings(
-    cmf_a: float, count: int, radius: float
+    cmf_a: float, count: int, radius: float, field_geometry: str = "planar"
 ) -> tuple[np.ndarray, np.ndarray]:
     """Choose log-spaced radii and integer populations with exactly count samples.
 
@@ -41,11 +41,23 @@ def calibrated_isotropic_rings(
         raise ValueError("cmf_a and radius must be finite and positive")
     if isinstance(count, bool) or not isinstance(count, int) or count < 4:
         raise ValueError("Ring calibration requires an integer count of at least four")
+    if field_geometry not in ("planar", "spherical"):
+        raise ValueError("Ring calibration requires planar or spherical geometry")
+    if field_geometry == "spherical" and radius > 90:
+        raise ValueError("Spherical field diameter must not exceed 180 degrees")
     span = np.log1p(radius / cmf_a)
 
+    def target_counts(s: np.ndarray) -> np.ndarray:
+        target = 2 * np.pi * (-np.expm1(-s[1:])) / (span / (len(s) - 1))
+        if field_geometry == "spherical":
+            # Angular rings have circumference 2*pi*sin(r), with r in radians.
+            # The radial cortical arc remains log1p(r/a); only the circumference changes.
+            radii = cmf_a * np.expm1(s[1:])
+            target *= np.sinc(radii / 180)
+        return target
+
     def ideal(rings: int) -> float:
-        s = np.linspace(0, span, rings)
-        return float(1 + np.sum(2 * np.pi * (-np.expm1(-s[1:])) / (span / (rings - 1))))
+        return float(1 + np.sum(target_counts(np.linspace(0, span, rings))))
 
     lo, hi = 2, (count - 1) // 3 + 1
     while lo < hi:
@@ -57,7 +69,7 @@ def calibrated_isotropic_rings(
     best_score = math.inf
     for rings in range(max(2, lo - 6), min((count - 1) // 3 + 1, lo + 6) + 1):
         s = np.linspace(0, span, rings)
-        target = 2 * np.pi * (-np.expm1(-s[1:])) / (span / (rings - 1))
+        target = target_counts(s)
         populations = np.r_[1, allocate_ring_counts(target, count - 1)]
         score = np.average(
             np.log(target / populations[1:]) ** 2, weights=populations[1:]
@@ -71,12 +83,18 @@ def calibrated_isotropic_rings(
 
 
 def calibrated_isotropic_coordinates(
-    fov: float, cmf_a: float, resolution: int, max_val: float
+    fov: float,
+    cmf_a: float,
+    resolution: int,
+    max_val: float,
+    field_geometry: str = "planar",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return normalized xy, polar, and log-polar plotting coordinates."""
     max_val = float(max_val)
     count = resolution**2
-    radii, populations = calibrated_isotropic_rings(cmf_a, count, fov / 2)
+    radii, populations = calibrated_isotropic_rings(
+        cmf_a, count, fov / 2, field_geometry
+    )
     ring = np.repeat(np.arange(len(radii)), populations)
     starts = np.repeat(np.cumsum(populations) - populations, populations)
     angles = (np.arange(count) - starts) * (2 * np.pi / populations[ring])

@@ -1,10 +1,12 @@
 """Mixed-level geometry, CUDA derivatives, and complete image-to-logit routing."""
 
 from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 import torch
+from omegaconf import open_dict
 from transformers import DINOv3ViTConfig, DINOv3ViTModel
 
 from fovi.models import dinov3
@@ -13,6 +15,7 @@ from fovi.models.knnvit import KNNPartitioningPatchEmbedding
 from fovi.models.loading import load_config
 from fovi.models.omni_isotropic import OmniIsotropicPatchEmbedding
 from fovi.sensing.coords import SamplingCoords, SamplingCoordsBank
+from fovi.sensing.projection import CameraModel
 
 LEVELS = (0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0)
 
@@ -34,13 +37,13 @@ def test_exact_deterministic_count_and_planar_scale_invariance(resolution: int) 
         torch.testing.assert_close(
             bank.cartesian[level], bank.for_level(level).cartesian, atol=0, rtol=0
         )
-    with pytest.raises(ValueError, match="planar"):
+    with pytest.raises(ValueError, match="circular"):
         SamplingCoordsBank(
             160,
             LEVELS,
             resolution,
             style="isotropic_fixn_calibrated",
-            field_geometry="spherical",
+            fov_type="square",
         )
 
 
@@ -140,9 +143,11 @@ def test_cuda_forward_and_gradients(
         "dinov3_isotropic_multi_cmf_manifold_3d",
     ],
 )
+@pytest.mark.parametrize("field_geometry", ["planar", "spherical"])
 def test_image_to_logits_mixed_levels_and_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
     config_name: str,
+    field_geometry: str,
 ) -> None:
     native = DINOv3ViTModel(
         DINOv3ViTConfig(
@@ -167,6 +172,14 @@ def test_image_to_logits_mixed_levels_and_checkpoint(
         device="cpu",
     )
     cfg.pretrained_model.lora.layers = [-1, 0]
+    cfg.saccades.field_geometry = field_geometry
+    if field_geometry == "spherical":
+        cfg.saccades.fov = 120
+        cfg.saccades.rescale_fov = 0
+        with open_dict(cfg.saccades):
+            cfg.saccades.camera_model = asdict(
+                CameraModel("fisheye", (32, 32), (12, 12, 15.5, 15.5))
+            )
     cfg.pretrained_model.patch_size = 8
     cfg.model.vit.patch_size = 8
     cfg.model.mlp = "16"

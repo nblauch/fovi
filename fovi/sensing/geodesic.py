@@ -19,7 +19,7 @@ def patch_geodesic_distances(
 ) -> torch.Tensor:
     """Return [real + padding samples, patches] distances on the cortical mesh.
 
-    Triangulate in the visual plane, but measure on the embedded cortical
+    Triangulate in the visual coordinate chart, but measure on the embedded cortical
     surface. Include the actual patch centers as mesh vertices, rather than
     moving each source to its nearest retinal sample. Distances are exact on
     this piecewise-linear mesh, an approximation to the smooth manifold.
@@ -27,8 +27,13 @@ def patch_geodesic_distances(
     """
     import pygeodesic
 
-    if inputs.field_geometry != "planar" or patches.field_geometry != "planar":
-        raise ValueError("Fixed-count geodesic banks currently require planar geometry")
+    if (
+        inputs.field_geometry not in ("planar", "spherical")
+        or inputs.field_geometry != patches.field_geometry
+    ):
+        raise ValueError(
+            "Samples and patches must share planar or spherical field geometry"
+        )
     if inputs.fov != patches.fov or inputs.cmf_a != patches.cmf_a:
         raise ValueError("Geodesic samples and patches must share FoV and CMF")
     visual = (

@@ -7,7 +7,9 @@ style; existing isotropic checkpoints retain their original geometry.
 Each level has exactly `resolution**2` real retinal samples and
 `(resolution // patch_size)**2` real patch centers. Integer ring populations
 are calibrated while retaining logarithmic radial spacing, the specified CMF,
-and the outer field radius. No intrinsic relaxation is applied. This reduces
+and the outer field radius. Spherical calibration adjusts the target population
+of each ring for its angular circumference rather than treating eccentricity as
+a planar radius. No intrinsic relaxation is applied. This reduces
 radial/tangential spacing distortion; it does not guarantee perfect discrete
 isotropy or eliminate the aligned angular seams between rings.
 
@@ -81,9 +83,18 @@ perimeter-centered distance tables. This is the standard boundary-placement
 heuristic, not a solver that optimizes RF extent. Changing this option when
 loading a checkpoint deliberately changes its geometry.
 
-This implementation currently accepts circular **planar** geometry. Spherical
-geometry fails explicitly; its ring calibration still needs implementation and
-validation. A change in spherical field diameter or planar-to-spherical transfer
+This implementation accepts circular **planar** and **spherical** geometry through
+`saccades.field_geometry`. Existing recipes retain planar pretraining geometry;
+set `saccades.field_geometry=spherical`, the intended `saccades.fov`, and the
+source `saccades.camera_model` calibration to build an angular sensor. Use
+`saccades.rescale_fov=0` to retain that explicit FoV, or configure the existing
+calibrated crop scaling. Retinal samples, patches, cortical geodesics, and 3D RoPE all
+use the selected metric. Spherical FoV is a diameter in degrees, limited to 180
+degrees. The existing cortical-manifold domain check also rejects configurations
+whose required outer padding exceeds the embeddable radius; this can impose a
+tighter limit for coarse grids and strong foveation.
+
+A change in spherical field diameter or planar-to-spherical transfer
 requires regenerating the sample/patch grids, neighbor and reference-bin tables,
 and RoPE positions. Keep sample count, patch count, reference kernel dimensions,
 and coordinate conventions fixed to reuse learned weights. In planar geometry,
@@ -98,11 +109,10 @@ existing style's behavior or introduce a new versioned style.
 
 ## Validation
 
-Run `pytest tests/test_omni_isotropic.py tests/test_omni_positions.py
-tests/test_omni_patch_extent.py tests/test_omni_reference_kernel.py` for exact
+Run `pytest tests/test_omni*.py` for exact
 counts, planar scale invariance, independent scalar-layer parity, CUDA
 derivatives, mixed-level end-to-end routing, checkpoint reconstruction, patch
-boundary placement, and reference-kernel resizing. Run
+boundary placement, reference-kernel resizing, and spherical geometry. Run
 `python scripts/check_omni_isotropic.py --batch-size 128 --output /tmp/omni-smoke`
 to qualify the actual pretrained model and optimizer on a GPU before training.
 Pass `--config-name` to qualify one of the new geodesic/RoPE variants.

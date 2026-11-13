@@ -45,7 +45,7 @@ def patch_positions(patches: SamplingCoords, space: str) -> torch.Tensor:
                 patches.cmf_a,
                 patches.fov,
                 k=1,
-                field_geometry="planar",
+                field_geometry=patches.field_geometry,
                 as_tensor=True,
             )
             / radial_extent
@@ -73,8 +73,11 @@ class OmniIsotropicPatchEmbedding(nn.Module):
         device: str | torch.device,
         position_coordinate_space: str = "cartesian",
         patch_max_coord_val: float | str = 1.0,
+        field_geometry: str = "planar",
     ) -> None:
         super().__init__()
+        if field_geometry not in ("planar", "spherical"):
+            raise ValueError("Omni isotropic requires planar or spherical geometry")
         if not isinstance(reference_side, int) or reference_side < 2:
             raise ValueError("reference_side must be an integer of at least two")
         if position_coordinate_space not in POSITION_SPACES:
@@ -101,7 +104,11 @@ class OmniIsotropicPatchEmbedding(nn.Module):
         tables, positions = [], []
         for value in self.cmf_a:
             coords = SamplingCoords(
-                fov, value, resolution, style="isotropic_fixn_calibrated"
+                fov,
+                value,
+                resolution,
+                style="isotropic_fixn_calibrated",
+                field_geometry=field_geometry,
             )
             _, patches, _ = get_in_out_coords(
                 resolution,
@@ -113,6 +120,7 @@ class OmniIsotropicPatchEmbedding(nn.Module):
                 in_cart_res=resolution,
                 device="cpu",
                 max_out_coord_val=patch_max_coord_val,
+                field_geometry=field_geometry,
             )
             distances = None
             if sample_cortex == "geodesic":
@@ -137,6 +145,7 @@ class OmniIsotropicPatchEmbedding(nn.Module):
                 kernel_backend="baseline",
                 bias=True,
                 precomputed_distances=distances,
+                field_geometry=field_geometry,
             )
             tables.append(
                 incidence_tables(
