@@ -1,3 +1,3 @@
 """Package version, read by the build backend and documentation."""
 
-__version__ = "2.5.1"
+__version__ = "2.6.0"

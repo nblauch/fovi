@@ -18,9 +18,9 @@ git rev-parse HEAD
 git status --short
 ```
 
-## 2.5.1
+## 2.6.0
 
-Version 2.5.1 adds fixed-count isotropic omni-foveation for DINOv3 with planar
+Version 2.6.0 adds fixed-count isotropic omni-foveation for DINOv3 with planar
 and spherical geometry, configurable distance metrics and positional coordinates,
 and a persistent geodesic cache. Isotropic visualization supports `v1like`,
 `schwartz`, and `warp` layouts. It also fixes SSL view handling and fixation
