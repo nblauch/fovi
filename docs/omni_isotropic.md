@@ -30,6 +30,11 @@ omni-isotropic views passed with `fixated_inputs=True` require their original
 indices in both training and evaluation; selecting a new level would apply the
 wrong patch neighborhoods and positions to those samples.
 
+Omni-isotropic banks require `model.arch: fovi_dinov3`; direct backbone calls
+always require `cmf_indices`. For two-view SSL, configure an SSL training loss,
+`saccades.ssl_policy: multi_random`, and `saccades.n_fixations: 2`. The SSL path
+uses its dedicated projector and returns embeddings shaped `[batch, views, dim]`.
+
 The initial configuration uses Euclidean distances on the embedded cortical
 manifold (`sample_cortex: true`), matching the research prototype. This is a
 chord-distance approximation, not the `geodesic` option used by historical
@@ -39,6 +44,10 @@ considered when interpreting comparisons.
 
 ## Geodesic and positional ablations
 
+Calibrated isotropic sampling supports the existing `v1like` plotting option,
+which displays its normalized radial-log layout. Other plotting options raise
+an error instead of silently producing that same layout.
+
 `dinov3_isotropic_multi_cmf_geodesic` retains Cartesian RoPE and changes
 neighborhood membership to cortical surface geodesics. It triangulates the real
 samples, spatial padding and actual patch centers together. PyGeodesic solves
@@ -47,10 +56,14 @@ This path does not snap patch origins to retinal samples or restrict candidate
 neighbors. Historical single-level geodesic construction is unchanged. Reference
 bin coordinates retain the existing chord-radius/visual-angle convention.
 
-The optional `FOVI_GEODESIC_CACHE_DIR` stores checksummed distances keyed by exact
-geometry, algorithm version and solver dependency versions. Corrupt entries fail
-explicitly. This cache only avoids CPU setup work; the CUDA convolution is
-unchanged, and its geometry remains fixed for the model lifetime.
+Model construction caches checksummed distances in `$XDG_CACHE_HOME/fovi/geodesic`
+(or `~/.cache/fovi/geodesic` when XDG is unset). Set `FOVI_GEODESIC_CACHE_DIR` to
+override the directory, or to an empty string to disable caching. Entries are
+keyed by exact geometry, algorithm version and solver dependency versions;
+corrupt entries fail explicitly. This cache only avoids CPU setup work; the CUDA
+convolution is unchanged, and its geometry remains fixed for the model lifetime.
+Writes are atomic, but simultaneous cold starts can duplicate computation;
+prewarm a shared cache before launching multiple ranks to avoid that work.
 
 `dinov3_isotropic_multi_cmf_radial_log` additionally uses the normalized radial
 mapping `log1p(r/a) / log1p(R/a)` with the original polar angle, in row/column

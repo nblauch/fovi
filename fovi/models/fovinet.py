@@ -12,6 +12,7 @@ from ..sensing.policies import FIXATION_POLICY_REGISTRY
 from ..sensing.retina import RetinalTransform
 from ..utils.std_transforms import get_std_transforms
 from .architectures import ARCHITECTURE_REGISTRY
+from .omni_isotropic import is_omni_isotropic
 from .probes import FoviNetProbe
 
 __all__ = ['FoviNet']
@@ -60,7 +61,9 @@ class FoviNet(nn.Module):
                 raise ValueError('Multi-level cmf_a requires a supported fixed-count sampling style')
             if cfg.saccades.mode == 'warped_cartesian_as_grid' and cfg.model.vit.get('position_coordinate_space') == 'cartesian':
                 raise ValueError('Multi-level cmf_a requires cortical ViT positions')
-        self.network_uses_cmf = self.cmf_values is not None and cfg.saccades.mode == 'isotropic_fixn_calibrated'
+        self.network_uses_cmf = is_omni_isotropic(cfg)
+        if self.network_uses_cmf and cfg.model.arch != 'fovi_dinov3':
+            raise ValueError('Omni-isotropic CMF banks require model.arch=fovi_dinov3')
         self.network = ARCHITECTURE_REGISTRY.get(cfg.model.arch)(cfg, device=device)
 
         self.cfg = cfg
@@ -205,7 +208,7 @@ class FoviNet(nn.Module):
             sample_kwargs['cmf_indices'] = torch.zeros(x.shape[0], dtype=torch.int64, device=x.device)
         x = self.retinal_transform(x, None, **sample_kwargs)
         network_kwargs = sample_kwargs if self.network_uses_cmf else {}
-        if self.control_model:
+        if self.control_model and self.network.projector_ssl is None:
             # standard CNN, no need to do this
             test_mlps = False
         else:
@@ -302,20 +305,23 @@ class FoviNet(nn.Module):
 
         selection = self.select_cmf_indices(inputs, cmf_indices)
         selection_kwargs = {} if selection is None else {'cmf_indices': selection}
-        fix_outputs = self.ssl_fixator(inputs, **selection_kwargs, f1=f1, fixation_size=fixation_size, area_range=area_range, f1_only=self.control_model)
+        fix_outputs = self.ssl_fixator(inputs, **selection_kwargs, f1=f1, fixation_size=fixation_size, area_range=area_range)
 
         batch_size = fix_outputs['x_fixs'].shape[0]
         n_fixations = fix_outputs['x_fixs'].shape[1]
 
         # concatenate the fixations in the batch dimension
-        x_fixs = rearrange(fix_outputs['x_fixs'], 'b f c n -> (f b) c n', f=n_fixations, b=batch_size)
+        x_fixs = rearrange(fix_outputs['x_fixs'], 'b f ... -> (f b) ...')
 
         # do the forward pass
         network_kwargs = {'cmf_indices': selection.repeat(n_fixations)} if self.network_uses_cmf else {}
-        embeddings, layer_outputs = self.network(x_fixs, return_layer_outputs=True, apply_mlp=True, **network_kwargs)
+        if self.network.projector_ssl is None:
+            raise ValueError('SSL forward requires an SSL projector; configure training.loss for self-supervised learning')
+        features = self.network(x_fixs, apply_mlp=False, **network_kwargs)
+        embeddings, layer_outputs = self.network.projector_ssl(features)
 
         # make the positive pairs (fixations from same image) explicit
-        embeddings = rearrange(embeddings, '(f b) c n -> b f c n')
+        embeddings = rearrange(embeddings, '(f b) d -> b f d', f=n_fixations, b=batch_size)
 
         return embeddings, layer_outputs, x_fixs
 

@@ -576,10 +576,11 @@ class FoviDinoV3RoPE(nn.Module):
             self.inv_freq = frequencies
 
     def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> FoviDinoV3RoPE:
-        # Positions must retain float32 accuracy when backbone weights use BF16.
-        coords = self.coords
+        # Preserve geometry and frequencies when backbone weights use low precision.
+        coords, inv_freq = self.coords, self.inv_freq
         super()._apply(fn, recurse=recurse)
         self.coords = coords.to(device=self.coords.device)
+        self.inv_freq = inv_freq.to(device=self.inv_freq.device)
         return self
 
     def forward(self, pixel_values: torch.Tensor, cmf_indices: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:

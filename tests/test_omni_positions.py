@@ -183,8 +183,9 @@ def test_rope_variants_share_geodesic_projection_and_initial_weights() -> None:
     ],
 )
 def test_geodesic_recipes_only_change_metric_and_positions(
-    config_name: str, space: str
+    config_name: str, space: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("FOVI_DATASETS_DIR", str(tmp_path / "datasets"))
     directory = Path(__file__).parents[1] / "config"
     baseline = load_config(
         "dinov3_isotropic_multi_cmf", False, directory, device="cpu"

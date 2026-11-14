@@ -240,6 +240,8 @@ class SamplingCoords():
         validate_field_geometry(field_geometry)
         if style == 'isotropic_fixn_calibrated' and (field_geometry not in ('planar', 'spherical') or fov_type != 'circular'):
             raise ValueError('Calibrated isotropic rings require a circular planar or spherical field')
+        if style == 'isotropic_fixn_calibrated' and isotropic_plotting_type != 'v1like':
+            raise ValueError("Calibrated isotropic rings support only isotropic_plotting_type='v1like' (radial log layout)")
         self.field_geometry = field_geometry
         _validate_radius_norm(radius_norm, fov_type=fov_type, style=style)
         if radius_norm == math.inf and style in WARPED_CARTESIAN_STYLES:
@@ -1180,6 +1182,8 @@ def get_sampling_coords(
         # KNN layers use valid_mask to treat them as padding in-place.
         masked_coords = coords.new_empty((0, 2))
     elif style == 'isotropic_fixn_calibrated':
+        if isotropic_plotting_type != 'v1like':
+            raise ValueError("Calibrated isotropic rings support only isotropic_plotting_type='v1like' (radial log layout)")
         if field_geometry not in ('planar', 'spherical') or fov_type != 'circular':
             raise ValueError('Calibrated isotropic rings require a circular planar or spherical field')
         arrays = calibrated_isotropic_coordinates(fov, cmf_a, res, max_val, field_geometry)
@@ -1539,13 +1543,14 @@ class SamplingCoordsBank(torch.nn.Module):
     ) -> None:
         super().__init__()
         self.cmf_a = validate_cmf_values(cmf_a)
-        if style not in ("warped_cartesian_as_grid", "isotropic_fixn_calibrated") or fov_type not in (
-            "square",
-            "circular",
-        ):
+        if style not in ("warped_cartesian_as_grid", "isotropic_fixn_calibrated"):
             raise ValueError(
                 "CMF banks require warped_cartesian_as_grid or isotropic_fixn_calibrated"
             )
+        if fov_type not in ("square", "circular"):
+            raise ValueError("CMF banks require fov_type='square' or 'circular'")
+        if style == "isotropic_fixn_calibrated" and fov_type != "circular":
+            raise ValueError("Calibrated isotropic CMF banks require fov_type='circular'")
         if field_geometry not in ("planar", "spherical"):
             raise ValueError("CMF banks require planar or spherical geometry")
         self.fov = fov

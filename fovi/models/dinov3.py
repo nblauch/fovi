@@ -12,7 +12,7 @@ from ..sensing.coords import SamplingCoords, SamplingCoordsBank, is_cmf_sequence
 from ..utils.lora import apply_lora
 from ..utils import add_to_all
 from .knnvit import KNNPatchEmbedding, PartitioningPatchEmbedding, KNNPartitioningPatchEmbedding, FoviDinoV3RoPE, resample_patch_embed_conv
-from .omni_isotropic import OmniIsotropicPatchEmbedding, POSITION_SPACES
+from .omni_isotropic import OmniIsotropicPatchEmbedding, POSITION_SPACES, is_omni_isotropic
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 __all__ = []
@@ -151,10 +151,12 @@ def _select_dinov3_output(output, output_mode, num_register_tokens):
 
 
 def forward_omni_isotropic(
-    model: nn.Module, pixel_values: torch.Tensor, cmf_indices: torch.Tensor,
+    model: nn.Module, pixel_values: torch.Tensor, cmf_indices: torch.Tensor | None = None,
     bool_masked_pos: torch.Tensor | None = None,
 ) -> BaseModelOutputWithPooling:
     """Pass level selection explicitly to patch projection and rotary positions."""
+    if cmf_indices is None:
+        raise ValueError('Omni-isotropic backbone requires explicit cmf_indices')
     embedding = model.embeddings
     pixels = pixel_values.to(embedding.patch_embeddings.weight.dtype)
     patches = embedding.patch_embeddings(pixels, cmf_indices).transpose(1, 2)
@@ -213,7 +215,7 @@ def build_fovi_dinov3(cfg, device='cuda'):
     if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
         torch.backends.cuda.enable_cudnn_sdp(False)
 
-    omni_isotropic = is_cmf_sequence(cfg.saccades.cmf_a) and cfg.saccades.mode == 'isotropic_fixn_calibrated'
+    omni_isotropic = is_omni_isotropic(cfg)
     if is_cmf_sequence(cfg.saccades.cmf_a):
         if cfg.saccades.mode not in ('warped_cartesian_as_grid', 'isotropic_fixn_calibrated'):
             raise ValueError('Multi-level cmf_a requires a supported fixed-count sampling style')

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import tempfile
 from pathlib import Path
 
@@ -12,6 +13,16 @@ import torch
 from scipy.spatial import Delaunay
 
 from .coords import SamplingCoords
+
+
+def geodesic_cache_directory() -> Path | None:
+    """Resolve the model's persistent cache; an empty override disables caching."""
+    override = os.environ.get("FOVI_GEODESIC_CACHE_DIR")
+    if override is not None:
+        return Path(override).expanduser() if override else None
+    cache_home = os.environ.get("XDG_CACHE_HOME")
+    root = Path(cache_home).expanduser() if cache_home else Path.home() / ".cache"
+    return root / "fovi" / "geodesic"
 
 
 def patch_geodesic_distances(

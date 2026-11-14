@@ -3,22 +3,29 @@
 from __future__ import annotations
 
 import math
-import os
 from collections.abc import Sequence
-from pathlib import Path
 
 import torch
+from omegaconf import DictConfig
 from torch import nn
 from torch.nn import functional as F
 
 from ..arch.knn import get_in_out_coords
 from ..arch.knn_bank import IncidenceBank, incidence_tables
-from ..sensing.coords import SamplingCoords, validate_cmf_values
-from ..sensing.geodesic import patch_geodesic_distances
+from ..sensing.coords import SamplingCoords, is_cmf_sequence, validate_cmf_values
+from ..sensing.geodesic import geodesic_cache_directory, patch_geodesic_distances
 from ..sensing.manifold import vis_cartesian_to_cortical_cartesian_coords
 from .knnvit import KNNPartitioningPatchEmbedding
 
 POSITION_SPACES = ("cartesian", "cortical_radial_log", "cortical_manifold_3d")
+
+
+def is_omni_isotropic(cfg: DictConfig) -> bool:
+    """Whether the configured backbone needs a per-image isotropic geometry index."""
+    return (
+        is_cmf_sequence(cfg.saccades.cmf_a)
+        and cfg.saccades.mode == "isotropic_fixn_calibrated"
+    )
 
 
 def patch_positions(patches: SamplingCoords, space: str) -> torch.Tensor:
@@ -124,9 +131,8 @@ class OmniIsotropicPatchEmbedding(nn.Module):
             )
             distances = None
             if sample_cortex == "geodesic":
-                cache_dir = os.environ.get("FOVI_GEODESIC_CACHE_DIR")
                 distances = patch_geodesic_distances(
-                    coords, patches, None if cache_dir is None else Path(cache_dir)
+                    coords, patches, geodesic_cache_directory()
                 )
             # Reuse the scalar layer's covering-kNN and reference-bin definitions.
             layer = KNNPartitioningPatchEmbedding(

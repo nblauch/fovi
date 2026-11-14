@@ -263,7 +263,7 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
         self.nonrandom_first = nonrandom_first
         self.norm_dist_from_center = norm_dist_from_center
     
-    def forward(self, x, n_fixations=None, fixations=None, fixation_size=None, area_range=None, cmf_indices=None):
+    def forward(self, x, n_fixations=None, fixations=None, fixation_size=None, area_range=None, cmf_indices=None, f1=None):
         """
         Forward pass for the MultiRandomSaccadePolicy.
 
@@ -273,6 +273,7 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
             x (torch.Tensor): The input images of shape (n, c, h, w), where n is the batch size, c is the number of channels, h is the height, and w is the width.
             n_fixations (int, optional): The number of fixations to generate. Defaults to None, which uses the default number of fixations set in the policy.
             fixations (list of torch.Tensor, optional): A list of pre-defined fixations. Defaults to None, which generates random fixations.
+            f1 (torch.Tensor, optional): Fixed first fixation, with remaining fixations sampled normally. Cannot be combined with fixations.
             fixation_size (int, optional): The size of the fixation area. Defaults to None, which uses the default fixation size set in the policy.
             area_range (tuple, optional): The range of areas to sample from for the fixation size. Defaults to None.
 
@@ -287,6 +288,8 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
             n_fixations = self.n_fixations
 
         assert fixations is None or len(fixations) == n_fixations    
+        if f1 is not None and fixations is not None:
+            raise ValueError('Specify either f1 or fixations, not both')
 
         selection_kwargs = {} if cmf_indices is None else {'cmf_indices': cmf_indices}
         fixation_sizes = []
@@ -305,10 +308,13 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
         else:
             assert len(fixations) == n_fixations
             for ii, fixation in enumerate(fixations):
-                if len(fixation) == 2:
-                    fixation = torch.ones(x.shape[0], 2)*fixation
-                    fixations[ii] = fixation
+                fixation = torch.as_tensor(fixation, device=x.device, dtype=self.dtype)
+                if fixation.ndim == 1:
+                    fixation = fixation.unsqueeze(0).expand(x.shape[0], -1)
+                fixations[ii] = fixation
                  
+        if f1 is not None:
+            fixations[0] = f1
         x_fixs = []
         fix_deltas = []
         for ii, (fixation, fixation_size) in enumerate(zip(fixations, fixation_sizes)):
