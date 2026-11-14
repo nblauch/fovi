@@ -88,14 +88,8 @@ def calibrated_isotropic_coordinates(
     resolution: int,
     max_val: float,
     field_geometry: str = "planar",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return normalized xy, polar, and unnormalized radial-log coordinates.
-
-    The third return retains the low-level radial representation; SamplingCoords
-    selects named visualization layouts from xy and polar coordinates instead.
-    The dimensionless max_val scales the actual visual eccentricity, including
-    the radius used in the radial-log representation.
-    """
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return normalized xy and polar coordinates for the calibrated rings."""
     max_val = float(max_val)
     count = resolution**2
     radii, populations = calibrated_isotropic_rings(
@@ -109,5 +103,4 @@ def calibrated_isotropic_coordinates(
     return (
         normalized_radius[:, None] * directions,
         np.column_stack((normalized_radius, angles)),
-        np.log1p(radii[ring] * max_val / cmf_a)[:, None] * directions,
     )

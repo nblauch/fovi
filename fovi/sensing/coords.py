@@ -1187,7 +1187,7 @@ def get_sampling_coords(
             raise ValueError('Calibrated isotropic rings require a circular planar or spherical field')
         arrays = calibrated_isotropic_coordinates(fov, cmf_a, res, max_val, field_geometry)
         coords, polar_coords = (
-            torch.tensor(array, device=device, dtype=torch.float32) for array in arrays[:2])
+            torch.tensor(array, device=device, dtype=torch.float32) for array in arrays)
         plotting_coords = _get_sampling_plotting_coords(
             coords, polar_coords, fov, cmf_a, isotropic_plotting_type)
         valid_mask = torch.ones(res**2, device=device, dtype=torch.bool)
