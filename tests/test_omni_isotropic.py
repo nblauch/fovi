@@ -1,5 +1,7 @@
 """Mixed-level geometry, CUDA derivatives, and complete image-to-logit routing."""
 
+from __future__ import annotations
+
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -132,21 +134,24 @@ def test_cuda_forward_and_gradients(
 
 
 @pytest.mark.parametrize(
-    "config_name",
+    "sample_cortex,space,reference_side,patch_extent",
     [
-        "dinov3_isotropic_multi_cmf",
-        "dinov3_isotropic_multi_cmf_geodesic",
-        "dinov3_isotropic_multi_cmf_geodesic_kernel24",
-        "dinov3_isotropic_multi_cmf_geodesic_inset",
-        "dinov3_isotropic_multi_cmf_geodesic_inset_kernel24",
-        "dinov3_isotropic_multi_cmf_radial_log",
-        "dinov3_isotropic_multi_cmf_manifold_3d",
+        (True, "cartesian", 16, 1.0),
+        ("geodesic", "cartesian", 16, 1.0),
+        ("geodesic", "cartesian", 24, 1.0),
+        ("geodesic", "cartesian", 16, "auto"),
+        ("geodesic", "cartesian", 24, "auto"),
+        ("geodesic", "cortical_radial_log", 16, 1.0),
+        ("geodesic", "cortical_manifold_3d", 16, 1.0),
     ],
 )
 @pytest.mark.parametrize("field_geometry", ["planar", "spherical"])
 def test_image_to_logits_mixed_levels_and_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
-    config_name: str,
+    sample_cortex: bool | str,
+    space: str,
+    reference_side: int,
+    patch_extent: float | str,
     field_geometry: str,
 ) -> None:
     native = DINOv3ViTModel(
@@ -166,11 +171,16 @@ def test_image_to_logits_mixed_levels_and_checkpoint(
         lambda path, device, pretrained: (deepcopy(native).to(device), None),
     )
     cfg, _, _ = load_config(
-        config_name,
+        "dinov3_isotropic_multi_cmf",
         False,
         Path(__file__).parents[1] / "config",
         device="cpu",
     )
+    cfg.saccades.sample_cortex = sample_cortex
+    cfg.model.vit.position_coordinate_space = space
+    with open_dict(cfg.model.vit):
+        cfg.model.vit.reference_side = reference_side
+        cfg.model.vit.patch_max_coord_val = patch_extent
     cfg.pretrained_model.lora.layers = [-1, 0]
     cfg.saccades.field_geometry = field_geometry
     if field_geometry == "spherical":

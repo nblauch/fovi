@@ -4,6 +4,10 @@
 multi-CMF recipe. `isotropic_fixn_calibrated` is a new, deterministic sampling
 style; existing isotropic checkpoints retain their original geometry.
 
+This single recipe uses cortical surface geodesics, visual Cartesian RoPE,
+automatic inward patch placement, and a 24-by-24 reference kernel. The pretrained
+16-by-16 DINOv3 patch weights are bilinearly resized to that reference kernel.
+
 Each level has exactly `resolution**2` real retinal samples and
 `(resolution // patch_size)**2` real patch centers. Integer ring populations
 are calibrated while retaining logarithmic radial spacing, the specified CMF,
@@ -35,14 +39,12 @@ always require `cmf_indices`. For two-view SSL, configure an SSL training loss,
 `saccades.ssl_policy: multi_random`, and `saccades.n_fixations: 2`. The SSL path
 uses its dedicated projector and returns embeddings shaped `[batch, views, dim]`.
 
-The initial configuration uses Euclidean distances on the embedded cortical
-manifold (`sample_cortex: true`), matching the research prototype. This is a
-chord-distance approximation, not the `geodesic` option used by historical
-single-strength isotropic pretraining. The backbone uses visual Cartesian RoPE;
-the warped omni baseline uses native grid RoPE. These differences must be
+The configuration uses cortical surface geodesics (`sample_cortex: geodesic`),
+as in historical single-strength isotropic pretraining. The backbone uses visual
+Cartesian RoPE; the warped omni baseline uses native grid RoPE. These differences must be
 considered when interpreting comparisons.
 
-## Geodesic and positional ablations
+## Visualization, distance metrics, and positions
 
 Calibrated isotropic sampling supports the same `isotropic_plotting_type` layouts
 as historical isotropic sampling: `v1like` gives the inverted, separated
@@ -57,8 +59,7 @@ name. `v1like` now has its established hemifield meaning; select `warp` for a
 radial disc normalized by the full field radius. Inset patches use their actual
 eccentricity within that full field for all layouts.
 
-`dinov3_isotropic_multi_cmf_geodesic` retains Cartesian RoPE and changes
-neighborhood membership to cortical surface geodesics. It triangulates the real
+The geodesic neighborhood builder triangulates the real
 samples, spatial padding and actual patch centers together. PyGeodesic solves
 distances on this piecewise-linear surface, approximating the smooth manifold.
 This path does not snap patch origins to retinal samples or restrict candidate
@@ -74,13 +75,17 @@ convolution is unchanged, and its geometry remains fixed for the model lifetime.
 Writes are atomic, but simultaneous cold starts can duplicate computation;
 prewarm a shared cache before launching multiple ranks to avoid that work.
 
-`dinov3_isotropic_multi_cmf_radial_log` additionally uses the normalized radial
+Other supported settings can be selected with overrides of the same recipe.
+`saccades.sample_cortex=true` uses chord distances on the embedded cortical
+manifold instead of surface geodesics.
+
+`model.vit.position_coordinate_space=cortical_radial_log` uses the normalized radial
 mapping `log1p(r/a) / log1p(R/a)` with the original polar angle, in row/column
 order. This retains two-axis RoPE and its frequency allocation. Flattening
 distorts circumferential distances; it changes only the positional signal, not
 the isotropic sample locations or geodesic neighborhoods.
 
-`dinov3_isotropic_multi_cmf_manifold_3d` instead uses the embedded cortical
+`model.vit.position_coordinate_space=cortical_manifold_3d` uses the embedded cortical
 row/column/height coordinates. A common scalar, the cortical radial arc length
 to the field boundary, normalizes all axes together. The attention width remains
 fixed: a 64-dimensional head has 32 rotary pairs, assigned 11/11/10 to the axes.
@@ -93,13 +98,12 @@ All three ablations retain exactly the same sample and token counts.
 
 ### Patch boundary placement
 
-The original omni configs retain perimeter-centered outer patches for checkpoint
-compatibility. The optional `model.vit.patch_max_coord_val` defaults to `1.0` when
-absent from a saved config. `dinov3_isotropic_multi_cmf_geodesic_inset` explicitly
-sets it to `auto`: the existing `get_in_out_coords` helper regenerates the patch
+The recipe sets `model.vit.patch_max_coord_val=auto`: the existing
+`get_in_out_coords` helper regenerates the patch
 grid with maximum radius halfway between its provisional two outermost rings.
-The corresponding `_inset_kernel24` config changes only `reference_side` to 24.
-Both use Cartesian RoPE and geodesic neighborhoods.
+Older saved configs without this field retain perimeter-centered outer patches
+(`1.0`) for checkpoint compatibility. Set `model.vit.reference_side=16` to use
+the original pretrained kernel size instead of the recipe's enlarged kernel.
 
 Retinal coordinates and counts are unchanged, and every level still has 64
 patches. Patch positions, neighborhoods, bin tables, and positional encodings
@@ -109,7 +113,7 @@ heuristic, not a solver that optimizes RF extent. Changing this option when
 loading a checkpoint deliberately changes its geometry.
 
 This implementation accepts circular **planar** and **spherical** geometry through
-`saccades.field_geometry`. Existing recipes retain planar pretraining geometry;
+`saccades.field_geometry`. The recipe retains planar pretraining geometry;
 set `saccades.field_geometry=spherical`, the intended `saccades.fov`, and the
 source `saccades.camera_model` calibration to build an angular sensor. Use
 `saccades.rescale_fov=0` to retain that explicit FoV, or configure the existing
@@ -140,4 +144,4 @@ derivatives, mixed-level end-to-end routing, checkpoint reconstruction, patch
 boundary placement, reference-kernel resizing, and spherical geometry. Run
 `python scripts/check_omni_isotropic.py --batch-size 128 --output /tmp/omni-smoke`
 to qualify the actual pretrained model and optimizer on a GPU before training.
-Pass `--config-name` to qualify one of the new geodesic/RoPE variants.
+Pass `--config-name` to qualify a custom configuration.

@@ -6,8 +6,9 @@ defaults:
 model:
   vit:
     position_coordinate_space: cartesian
+    reference_side: 24
+    patch_max_coord_val: auto
 
 saccades:
   mode: isotropic_fixn_calibrated
-  # Euclidean distance on the embedded cortical manifold, as in the prototype.
-  sample_cortex: true
+  sample_cortex: geodesic

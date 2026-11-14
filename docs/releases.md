@@ -25,6 +25,8 @@ and spherical geometry, configurable distance metrics and positional coordinates
 and a persistent geodesic cache. Isotropic visualization supports `v1like`,
 `schwartz`, and `warp` layouts. It also fixes SSL view handling and fixation
 normalization while preserving existing single-strength checkpoint geometry.
+The supplied recipe uses geodesic neighborhoods, Cartesian RoPE, automatic
+inward patch placement, and a 24-by-24 reference kernel.
 
 See [isotropic omni-foveation](omni_isotropic.md) for configuration and usage.
 

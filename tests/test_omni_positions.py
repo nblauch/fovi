@@ -174,29 +174,29 @@ def test_rope_variants_share_geodesic_projection_and_initial_weights() -> None:
             )
 
 
-@pytest.mark.parametrize(
-    "config_name,space",
-    [
-        ("dinov3_isotropic_multi_cmf_geodesic", "cartesian"),
-        ("dinov3_isotropic_multi_cmf_radial_log", "cortical_radial_log"),
-        ("dinov3_isotropic_multi_cmf_manifold_3d", "cortical_manifold_3d"),
-    ],
-)
-def test_geodesic_recipes_only_change_metric_and_positions(
-    config_name: str, space: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_isotropic_recipe_only_changes_sensor_and_patch_geometry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("FOVI_DATASETS_DIR", str(tmp_path / "datasets"))
     directory = Path(__file__).parents[1] / "config"
     baseline = load_config(
+        "dinov3_warped_grid_multi_cmf", False, directory, device="cpu"
+    )[0]
+    candidate = load_config(
         "dinov3_isotropic_multi_cmf", False, directory, device="cpu"
     )[0]
-    candidate = load_config(config_name, False, directory, device="cpu")[0]
-    assert candidate.model.vit.position_coordinate_space == space
+    assert candidate.model.vit.position_coordinate_space == "cartesian"
+    assert candidate.model.vit.reference_side == 24
+    assert candidate.model.vit.patch_max_coord_val == "auto"
+    assert candidate.saccades.mode == "isotropic_fixn_calibrated"
     assert candidate.saccades.sample_cortex == "geodesic"
+    del candidate.model.vit.reference_side
+    del candidate.model.vit.patch_max_coord_val
     candidate.model.vit.position_coordinate_space = (
         baseline.model.vit.position_coordinate_space
     )
     candidate.saccades.sample_cortex = baseline.saccades.sample_cortex
+    candidate.saccades.mode = baseline.saccades.mode
     assert OmegaConf.to_container(candidate, resolve=True) == OmegaConf.to_container(
         baseline, resolve=True
     )
