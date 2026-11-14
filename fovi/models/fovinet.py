@@ -331,22 +331,29 @@ class FoviNet(nn.Module):
             do_postproc (bool, optional): Whether to apply post-processing. Defaults to True.
             fixated_inputs (bool, optional): Whether inputs are already fixated. Defaults to False.
             cmf_indices (torch.Tensor, optional): Int64 per-image level indices
-                on the input device. Training samples uniformly when omitted;
-                multi-level evaluation requires explicit indices. All fixations
-                of an image reuse its selected level.
+                on the input device. Training on source images samples uniformly
+                when omitted; multi-level evaluation requires explicit indices.
+                Already-fixated omni-isotropic inputs require their original
+                indices in both training and evaluation. All fixations of an
+                image reuse its selected level.
             **kwargs: Additional keyword arguments.
 
         Returns:
             tuple: (embeddings, layer_outputs, x_fixs) containing the model outputs.
         """
-        selection = self.select_cmf_indices(inputs, cmf_indices)
+        selection = None
         if not fixated_inputs:
+            selection = self.select_cmf_indices(inputs, cmf_indices)
             selection_kwargs = {} if selection is None else {'cmf_indices': selection}
             outputs = self.sup_fixator(inputs, **selection_kwargs, fixation_size=fixation_size, area_range=area_range, n_fixations=n_fixations, fixations=fixations)
             x_fixs = outputs['x_fixs']
             self.last_fixations = outputs['fixations']
         else:
             x_fixs = inputs
+            if self.network_uses_cmf:
+                if cmf_indices is None:
+                    raise ValueError('Already-fixated omni-isotropic inputs require explicit cmf_indices')
+                selection = self.select_cmf_indices(inputs, cmf_indices)
 
         batch_size = x_fixs.shape[0]
         n_fixations = x_fixs.shape[1]

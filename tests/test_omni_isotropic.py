@@ -213,6 +213,8 @@ def test_image_to_logits_mixed_levels_and_checkpoint(
         actual, restored(images, fixations=fixes, cmf_indices=levels)[0], atol=0, rtol=0
     )
     model.train()
+    with pytest.raises(ValueError, match="Already-fixated.*explicit cmf_indices"):
+        model(views.detach(), fixated_inputs=True)
     loss = model(images, cmf_indices=levels)[0].square().mean()
     loss.backward()
     gradients = [p.grad for p in model.parameters() if p.requires_grad]

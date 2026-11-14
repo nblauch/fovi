@@ -25,7 +25,10 @@ supports inspection and tests.
 The per-image `cmf_indices` also select the configured patch positions for RoPE.
 All fixations of one image reuse its level; flattening fixations into the batch
 repeats the indices in fixation-major order. Evaluation requires explicit level
-indices, and existing per-CMF validation metrics are retained.
+indices, and existing per-CMF validation metrics are retained. Already-sampled
+omni-isotropic views passed with `fixated_inputs=True` require their original
+indices in both training and evaluation; selecting a new level would apply the
+wrong patch neighborhoods and positions to those samples.
 
 The initial configuration uses Euclidean distances on the embedded cortical
 manifold (`sample_cortex: true`), matching the research prototype. This is a
