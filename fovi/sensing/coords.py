@@ -21,6 +21,7 @@ SAMPLING_STYLES = (
     'uniform', 'uniform_as_grid',
 )
 FOV_TYPES = ('circular', 'square', 'wang')
+ISOTROPIC_PLOTTING_TYPES = ('v1like', 'schwartz', 'warp')
 WARPED_CARTESIAN_STYLES = (
     'warped_cartesian', 'warped_cartesian_as_grid')
 #: Norms available for measuring native-plane radius in the Cartesian warp.
@@ -240,8 +241,8 @@ class SamplingCoords():
         validate_field_geometry(field_geometry)
         if style == 'isotropic_fixn_calibrated' and (field_geometry not in ('planar', 'spherical') or fov_type != 'circular'):
             raise ValueError('Calibrated isotropic rings require a circular planar or spherical field')
-        if style == 'isotropic_fixn_calibrated' and isotropic_plotting_type != 'v1like':
-            raise ValueError("Calibrated isotropic rings support only isotropic_plotting_type='v1like' (radial log layout)")
+        if style == 'isotropic_fixn_calibrated' and isotropic_plotting_type not in ISOTROPIC_PLOTTING_TYPES:
+            raise ValueError(f"isotropic_plotting_type must be one of {ISOTROPIC_PLOTTING_TYPES}")
         self.field_geometry = field_geometry
         _validate_radius_norm(radius_norm, fov_type=fov_type, style=style)
         if radius_norm == math.inf and style in WARPED_CARTESIAN_STYLES:
@@ -656,7 +657,7 @@ class SamplingCoords():
 def _get_sampling_plotting_coords(
         coords, polar_coords, fov, cmf_a, plotting_type):
     """Map visual-field coordinates into the requested plotting layout."""
-    assert plotting_type in ('v1like', 'schwartz', 'warp'), \
+    assert plotting_type in ISOTROPIC_PLOTTING_TYPES, \
         f"plotting_type must be one of 'v1like', 'schwartz', 'warp'; got {plotting_type!r}"
 
     if plotting_type == 'warp':
@@ -1182,13 +1183,13 @@ def get_sampling_coords(
         # KNN layers use valid_mask to treat them as padding in-place.
         masked_coords = coords.new_empty((0, 2))
     elif style == 'isotropic_fixn_calibrated':
-        if isotropic_plotting_type != 'v1like':
-            raise ValueError("Calibrated isotropic rings support only isotropic_plotting_type='v1like' (radial log layout)")
         if field_geometry not in ('planar', 'spherical') or fov_type != 'circular':
             raise ValueError('Calibrated isotropic rings require a circular planar or spherical field')
         arrays = calibrated_isotropic_coordinates(fov, cmf_a, res, max_val, field_geometry)
-        coords, polar_coords, plotting_coords = (
-            torch.tensor(array, device=device, dtype=torch.float32) for array in arrays)
+        coords, polar_coords = (
+            torch.tensor(array, device=device, dtype=torch.float32) for array in arrays[:2])
+        plotting_coords = _get_sampling_plotting_coords(
+            coords, polar_coords, fov, cmf_a, isotropic_plotting_type)
         valid_mask = torch.ones(res**2, device=device, dtype=torch.bool)
         masked_coords = coords.new_empty((0, 2))
     elif 'isotropic' in style or 'logpolar' in style:

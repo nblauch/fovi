@@ -44,9 +44,18 @@ considered when interpreting comparisons.
 
 ## Geodesic and positional ablations
 
-Calibrated isotropic sampling supports the existing `v1like` plotting option,
-which displays its normalized radial-log layout. Other plotting options raise
-an error instead of silently producing that same layout.
+Calibrated isotropic sampling supports the same `isotropic_plotting_type` layouts
+as historical isotropic sampling: `v1like` gives the inverted, separated
+hemifield complex-log display; `schwartz` gives the upright complex-log display;
+and `warp` gives the normalized radial-log disc. The option only affects
+isotropic visualization, not sample positions, cortical geometry, patch
+neighborhoods, or model positional encoding. Warped-Cartesian sampling ignores
+this isotropic option and retains its native grid layout.
+
+Earlier revisions displayed an unnormalized radial-log disc under the `v1like`
+name. `v1like` now has its established hemifield meaning; select `warp` for a
+radial disc normalized by the full field radius. Inset patches use their actual
+eccentricity within that full field for all layouts.
 
 `dinov3_isotropic_multi_cmf_geodesic` retains Cartesian RoPE and changes
 neighborhood membership to cortical surface geodesics. It triangulates the real

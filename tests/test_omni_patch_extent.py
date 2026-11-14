@@ -65,6 +65,15 @@ def test_legacy_patch_extent_remains_at_perimeter() -> None:
 
 
 def test_inset_plotting_coordinates_use_actual_visual_radius() -> None:
-    coords = SamplingCoords(16, 1, 8, style="isotropic_fixn_calibrated", max_val=0.75)
-    expected_radius = torch.log1p(coords.polar[:, 0] * 8)
+    coords = SamplingCoords(
+        16,
+        1,
+        8,
+        style="isotropic_fixn_calibrated",
+        max_val=0.75,
+        isotropic_plotting_type="warp",
+    )
+    expected_radius = torch.log1p(coords.polar[:, 0] * 8) / torch.log1p(
+        torch.tensor(8.0)
+    )
     torch.testing.assert_close(coords.plotting.norm(dim=-1), expected_radius)

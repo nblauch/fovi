@@ -172,8 +172,9 @@ def test_backbone_requires_explicit_cmf(omni_config: DictConfig) -> None:
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("first_only", [False, True])
 def test_explicit_fixations_for_two_images(
-    omni_config: DictConfig, device: str, shared: bool
+    omni_config: DictConfig, device: str, shared: bool, first_only: bool
 ) -> None:
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA required")
@@ -183,9 +184,14 @@ def test_explicit_fixations_for_two_images(
     fixation = torch.tensor([[0.4, 0.5], [0.7, 0.8]], device=device)
     supplied = fixation[0] if shared else fixation
     expected = fixation[:1].expand(2, 2) if shared else fixation
-    result = model.sup_fixator(
-        images, fixations=[supplied], n_fixations=1, cmf_indices=levels
-    )
+    if first_only:
+        result = model.sup_fixator(
+            images, f1=supplied.cpu().double(), n_fixations=2, cmf_indices=levels
+        )
+    else:
+        result = model.sup_fixator(
+            images, fixations=[supplied], n_fixations=1, cmf_indices=levels
+        )
     torch.testing.assert_close(result["fixations"][:, 0], expected)
     expected_view = model.retinal_transform(images, expected, cmf_indices=levels)
     torch.testing.assert_close(result["x_fixs"][:, 0], expected_view)
@@ -229,7 +235,7 @@ def test_calibrated_plotting_rejects_unsupported_layout() -> None:
             1,
             8,
             style="isotropic_fixn_calibrated",
-            isotropic_plotting_type="schwartz",
+            isotropic_plotting_type="invalid",
         )
 
 

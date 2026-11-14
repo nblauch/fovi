@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -263,6 +267,15 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
         self.nonrandom_first = nonrandom_first
         self.norm_dist_from_center = norm_dist_from_center
     
+    def _normalize_fixation(
+        self, fixation: torch.Tensor | Sequence[float], images: torch.Tensor,
+    ) -> torch.Tensor:
+        """Place shared or per-image fixation pairs on the sampler's dtype/device."""
+        fixation = torch.as_tensor(fixation, device=images.device, dtype=self.dtype)
+        if fixation.ndim == 1:
+            fixation = fixation.unsqueeze(0).expand(images.shape[0], -1)
+        return fixation
+
     def forward(self, x, n_fixations=None, fixations=None, fixation_size=None, area_range=None, cmf_indices=None, f1=None):
         """
         Forward pass for the MultiRandomSaccadePolicy.
@@ -308,13 +321,10 @@ class MultiRandomSaccadePolicy(BaseSaccadePolicy):
         else:
             assert len(fixations) == n_fixations
             for ii, fixation in enumerate(fixations):
-                fixation = torch.as_tensor(fixation, device=x.device, dtype=self.dtype)
-                if fixation.ndim == 1:
-                    fixation = fixation.unsqueeze(0).expand(x.shape[0], -1)
-                fixations[ii] = fixation
+                fixations[ii] = self._normalize_fixation(fixation, x)
                  
         if f1 is not None:
-            fixations[0] = f1
+            fixations[0] = self._normalize_fixation(f1, x)
         x_fixs = []
         fix_deltas = []
         for ii, (fixation, fixation_size) in enumerate(zip(fixations, fixation_sizes)):
