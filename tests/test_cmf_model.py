@@ -66,6 +66,8 @@ def test_model_reuses_level_across_fixations_and_roundtrips(
     with pytest.raises(ValueError, match="explicit cmf_indices"):
         model(images)
     actual, _, views = model(images, fixations=fixations, cmf_indices=indices)
+    # Native warped-grid positions do not need the sampling level once views exist.
+    torch.testing.assert_close(actual, model(views, fixated_inputs=True)[0])
     torch.testing.assert_close(views[:, 0], views[:, 1], atol=0, rtol=0)
     for i, level in enumerate(indices.tolist()):
         cfg = deepcopy(local_config)

@@ -767,7 +767,7 @@ class Trainer:
                         total_loss_train = total_loss_train + current_loss
                         step_num = step_num+1
                     else: # simclr, barlow, vicreg
-                        assert len(embeddings) == 2
+                        assert embeddings.shape[1] == 2, 'SSL losses require two views per image'
                         if "simclr" in self.loss_name:
                             loss_num, loss_denum = self.ssl_loss(embeddings[:,0], embeddings[:,1])
                             total_loss_train = total_loss_train + loss_num + loss_denum

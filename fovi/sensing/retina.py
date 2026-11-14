@@ -88,8 +88,8 @@ class RetinalTransform(nn.Module):
         self.sigma = sigma
         if is_cmf_sequence(cmf_a):
             cmf_a = validate_cmf_values(cmf_a)
-            if style != 'warped_cartesian_as_grid' or sampler not in ('grid_nn', 'grid_bilinear'):
-                raise ValueError('Multi-level cmf_a requires warped_cartesian_as_grid and grid_nn or grid_bilinear')
+            if style not in ('warped_cartesian_as_grid', 'isotropic_fixn_calibrated') or sampler not in ('grid_nn', 'grid_bilinear'):
+                raise ValueError('Multi-level cmf_a requires a supported fixed-count bank and grid_nn or grid_bilinear')
         self.cmf_a = cmf_a
         self.fov = fov
         self.fov_type = fov_type

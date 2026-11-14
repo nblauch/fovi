@@ -69,6 +69,7 @@ __all__ = [
     "default_grad_weight_config",
     "default_grad_weight_ksplit",
     "clear_kernel_cache",
+    "cuda_include_options",
 ]
 
 
@@ -121,7 +122,8 @@ def _candidate_include_dirs():
     return unique
 
 
-def _include_options():
+def cuda_include_options() -> tuple[str, ...]:
+    """Find CUDA headers for NVRTC kernels using the configured environment."""
     dirs = _candidate_include_dirs()
     missing = [
         h for h in _REQUIRED_HEADERS
@@ -659,7 +661,7 @@ def _get_kernel(device_index, dtype, cfg, kind="forward"):
     if kernel is not None:
         return kernel
     name = _instantiation(dtype, cfg, kind)
-    options = ("--std=c++17", "--use_fast_math") + _include_options()
+    options = ("--std=c++17", "--use_fast_math") + cuda_include_options()
     with cp.cuda.Device(device_index):
         smem = _smem_bytes(cfg, kind)
         limit = cp.cuda.runtime.deviceGetAttribute(
