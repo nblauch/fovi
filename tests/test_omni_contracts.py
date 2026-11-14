@@ -74,12 +74,15 @@ def test_ssl_forward_backward_and_fixation_order(
     model = FoviNet(cfg, device="cpu").train()
     images = torch.rand(3, 3, 16, 16)
     levels = torch.tensor([2, 0, 1])
-    f1 = torch.full((3, 2), 0.5)
+    # A full-size random crop is centered; offset the first view so its paired
+    # loss tests a real gradient rather than roundoff between identical views.
+    f1 = torch.tensor([[0.2, 0.3], [0.7, 0.6], [0.3, 0.7]])
     embeddings, _, views = model(images, f1=f1, cmf_indices=levels)
     assert embeddings.shape == (3, 2, 16)
     # The fixed first fixation has the same level as its image's second view.
     expected_view = model.retinal_transform(images, f1, cmf_indices=levels)
     torch.testing.assert_close(views[:3], expected_view)
+    assert not torch.equal(views[:3], views[3:])
     kwargs = (
         {"cmf_indices": levels.repeat(2)}
         if style == "isotropic_fixn_calibrated"
