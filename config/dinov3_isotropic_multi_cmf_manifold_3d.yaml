@@ -1,7 +1,0 @@
-defaults:
-  - dinov3_isotropic_multi_cmf_geodesic
-  - _self_
-
-model:
-  vit:
-    position_coordinate_space: cortical_manifold_3d

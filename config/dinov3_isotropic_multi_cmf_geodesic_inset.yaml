@@ -1,9 +1,0 @@
-# Standard automatic patch-radius placement with fixed sample and token counts.
-defaults:
-  - dinov3_isotropic_multi_cmf_geodesic
-  - _self_
-
-model:
-  vit:
-    reference_side: 16
-    patch_max_coord_val: auto
