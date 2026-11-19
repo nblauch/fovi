@@ -10,6 +10,7 @@ from scipy.spatial import Delaunay, cKDTree
 from ..sensing.coords import WARPED_CARTESIAN_STYLES, SamplingCoords, auto_match_num_coords
 from ..utils import normalize, add_to_all
 from .knn_optimization import VALID_BACKENDS, clear_cache, optimized_forward
+from .modal import modal_pool
 
 # Lazy handle for the optional fused pooling backend (requires cupy); resolved on
 # first CUDA pooling forward, None-cached if unavailable so we never retry the import.
@@ -370,7 +371,9 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
         k (int): Number of nearest neighbors to consider.
         in_coords (SamplingCoords): Input sampling coordinates object.
         out_coords (SamplingCoords): Output sampling coordinates object.
-        mode (str): Pooling mode ('max', 'avg', 'sum', 'gaussian').
+        mode (str): Pooling mode ('max', 'avg', 'sum', 'gaussian', or 'modal'
+            for label maps: the most common value among the neighbors, see
+            :func:`~fovi.arch.modal.modal_pool`).
         device (str): PyTorch device to run on.
         sample_cortex (bool or str): Whether/how to sample cortical space:
             - False: Sample visual field
@@ -387,7 +390,7 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
         self.in_coords = in_coords
         self.out_coords = out_coords
         self.device = device
-        assert mode in ['max', 'avg', 'sum', 'gaussian']
+        assert mode in ['max', 'avg', 'sum', 'gaussian', 'modal']
         self.mode = mode
         self.sample_cortex = sample_cortex
         self.batch_size = batch_size
@@ -456,16 +459,26 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
         """Backend used by the most recent pooling forward call."""
         return self._last_knn_pool_backend
 
-    def forward(self, X_l):
+    def forward(self, X_l, visible=None):
         """
         Apply KNN pooling to input features.
-        
+
         Args:
             X_l (torch.Tensor): Input features of shape [batch_size, channels, num_nodes].
-            
+                Modal pooling takes any dtype and keeps it.
+            visible (torch.Tensor, optional): ``mode='modal'`` only: a
+                [batch_size, num_nodes] mask of the inputs each image sees; the
+                others do not vote.
+
         Returns:
             torch.Tensor: Pooled features of shape [batch_size, channels, num_output_nodes].
         """
+        if self.mode == 'modal':
+            # The neighbor table is nearest first, so ties go to the nearest neighbor.
+            self._last_knn_pool_backend = 'modal'
+            return modal_pool(X_l, self.knn_indices_pad_token, visible)
+        if visible is not None:
+            raise ValueError("visible is supported only by modal pooling")
         # Optimized fused gather+reduce backend; returns None on ineligible
         # mode/dtype/shape and we fall through to the reference implementation below.
         global _optimized_pool_forward

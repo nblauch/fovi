@@ -9,6 +9,7 @@ from torch.nn import functional as F
 
 from ..sensing.coords import SamplingCoords
 from .knn import KNNPoolingLayer
+from .modal import modal_pool
 
 POLAR_GRID_STYLES = ("logpolar_as_grid",)
 
@@ -32,6 +33,11 @@ class GridPoolingLayer(nn.Module):
     radii include both endpoints at every resolution, windows there are
     index-aligned rather than centered on output radii.
     Gaussian sigma uses distances normalized to [0, 1], as in KNN pooling.
+
+    ``mode="modal"`` gives each output the most common value in its window, for
+    label maps (see :func:`~fovi.arch.modal.modal_pool`). Ties go to the sample
+    nearest the window's center, then the first in row-major window order;
+    padding and masked samples do not vote.
     """
 
     def __init__(
@@ -70,7 +76,7 @@ class GridPoolingLayer(nn.Module):
                 "grid2d pooling k must be a positive perfect square "
                 "(squared kernel side) or None"
             )
-        if mode not in ("avg", "gaussian", "max"):
+        if mode not in ("avg", "gaussian", "max", "modal"):
             raise ValueError(f"Unsupported grid2d pooling mode: {mode!r}")
         if mode == "gaussian" and (not math.isfinite(gauss_sigma) or gauss_sigma <= 0):
             raise ValueError("grid2d gauss_sigma must be finite and positive")
@@ -117,6 +123,34 @@ class GridPoolingLayer(nn.Module):
         )
         normalizer = torch.where(coverage > 0, coverage, 1).reciprocal()
         self.register_buffer("normalizer", normalizer, persistent=False)
+        if mode == "modal":
+            self.register_buffer("neighbor_table", self._neighbor_table(), persistent=False)
+
+    def _neighbor_table(self) -> torch.Tensor:
+        """Each output's window as a ``(k, N_low)`` table of input indices in tie-break order.
+
+        Windows use the pooler's padding, stride and masks. Within a window,
+        samples are ordered by distance from its center, then row-major;
+        ``N_high`` marks padding, masked inputs and every slot of a masked output.
+        """
+        num_inputs = len(self.in_coords)
+        device = self.input_mask.device
+        # Pool sample indices (float64 is exact for any realistic count); -1 marks padding and masked samples.
+        index = torch.arange(num_inputs, device=device, dtype=torch.float64)
+        grid = self.in_coords.as_grid(index[None, None])
+        grid = self._pad(torch.where(self.input_mask, grid, -1.0), -1.0)
+        side, stride = self.kernel_size, self.stride
+        windows = grid[0, 0].unfold(0, side, stride).unfold(1, side, stride)  # (H_lo, W_lo, side, side)
+        windows = windows.flatten(-2).permute(2, 0, 1)  # (k, H_lo, W_lo)
+        axis = torch.arange(side, device=device, dtype=torch.float64) - (side - 1) / 2
+        radius = (axis[:, None].square() + axis[None, :].square()).flatten()
+        windows = windows[torch.sort(radius, stable=True).indices]
+        windows = torch.where(self.output_mask[0], windows, -1.0)
+        if not self.polar:
+            # Invert the upright Cartesian layout produced by ``as_grid``, as forward does.
+            windows = windows.flip(-2).transpose(-2, -1)
+        indices = windows.flatten(-2).long()
+        return torch.where(indices < 0, num_inputs, indices)
 
     @property
     def last_backend(self) -> str:
@@ -130,7 +164,7 @@ class GridPoolingLayer(nn.Module):
 
     def _weighted_pool(self, grid: torch.Tensor) -> torch.Tensor:
         padded = self._pad(grid)
-        if self.mode in ("avg", "max"):
+        if self.mode in ("avg", "max", "modal"):
             return F.avg_pool2d(padded, self.kernel_size, self.stride)
         batch, channels = grid.shape[:2]
         pooled = F.conv2d(
@@ -140,8 +174,18 @@ class GridPoolingLayer(nn.Module):
         )
         return pooled.reshape(batch, channels, *pooled.shape[-2:])
 
-    def forward(self, values: torch.Tensor) -> torch.Tensor:
-        """Pool ``(B, C, N_high)`` values to ``(B, C, N_low)``."""
+    def forward(self, values: torch.Tensor, visible: torch.Tensor | None = None) -> torch.Tensor:
+        """Pool ``(B, C, N_high)`` values to ``(B, C, N_low)``.
+
+        Args:
+            values: Values to pool. Modal pooling takes any dtype and keeps it.
+            visible: ``mode="modal"`` only: optional ``(B, N_high)`` mask of the
+                inputs each image sees; the others do not vote.
+        """
+        if self.mode == "modal":
+            return modal_pool(values, self.neighbor_table, visible)
+        if visible is not None:
+            raise ValueError("visible is supported only by modal pooling")
         grid = self.in_coords.as_grid(values)
         if self.mode == "max":
             grid = torch.where(self.input_mask, grid, -torch.inf)
