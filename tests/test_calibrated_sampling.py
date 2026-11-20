@@ -85,7 +85,9 @@ def test_fisheye_field_of_view_can_span_more_than_half_a_sphere() -> None:
 def test_fisheye_field_of_view_is_continuous_with_offset_principal_point() -> None:
     spans = [
         CameraModel(
-            "fisheye", (240, 320), (focal_length, focal_length, 159.5, 60.0),
+            "fisheye",
+            (240, 320),
+            (focal_length, focal_length, 159.5, 60.0),
             max_angle_deg=179,
         ).field_of_view("long")
         for focal_length in (108.68, 108.67)
