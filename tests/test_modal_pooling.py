@@ -13,6 +13,8 @@ from fovi.arch.knn import KNNPoolingLayer
 from fovi.arch.modal import modal_pool
 from fovi.arch.pooling import GridPoolingLayer, build_retinal_pooler
 from fovi.sensing.coords import SamplingCoords
+from fovi.sensing.projection import CameraModel
+from fovi.sensing.samplers import GridSampler, PoolingGridSampler
 
 DEVICES = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
 
@@ -160,6 +162,93 @@ class TestModalPoolers(unittest.TestCase):
         actual = modal_pool(labels.cuda(), table.cuda(), visible.cuda())
         self.assertTrue(torch.equal(actual.cpu(), expected))
         self.assertTrue(torch.equal(expected, reference_modal_pool(labels, table, visible)))
+
+
+def _label_image(batch, height, width, dtype=torch.int64):
+    """Blocky label maps with no zero label; int64 IDs lie beyond float precision."""
+    rows = torch.arange(height)[:, None] // 6
+    cols = torch.arange(width)[None, :] // 6
+    base = 2**40 if dtype == torch.int64 else 1
+    labels = base + rows * 100 + cols
+    return torch.stack([labels + 7 * b for b in range(batch)])[:, None].to(dtype)
+
+
+def _pooler_table(sampler):
+    pooler = sampler.pooler
+    return pooler.neighbor_table if isinstance(pooler, GridPoolingLayer) else pooler.knn_indices_pad_token
+
+
+class TestModalPoolingSampler(unittest.TestCase):
+
+    def _check(self, sampler, image, fix_loc, **kwargs):
+        pooled = sampler(image, fix_loc, **kwargs)
+        self.assertEqual(pooled.dtype, image.dtype)
+        samples = sampler.input_sampler(image, fix_loc=fix_loc, **kwargs)
+        visible = sampler.input_sampler.sample_visibility(image, fix_loc=fix_loc, **kwargs)
+        # No label is zero, so a photoreceptor reads zero exactly where it misses the image.
+        self.assertTrue(torch.equal(visible, samples[:, 0] != 0))
+        self.assertTrue(bool((~visible).any()) and bool(visible.any()))
+        table = _pooler_table(sampler)
+        self.assertTrue(torch.equal(pooled, reference_modal_pool(samples, table, visible)))
+        # Outputs that see any of the image keep a real label rather than the zero padding.
+        padded = torch.cat([visible, torch.zeros(len(visible), 1, dtype=torch.bool)], dim=1)
+        sees = padded[:, table].any(1)  # (B, N_out)
+        self.assertTrue(bool((pooled[:, 0][sees] != 0).all()))
+
+    def test_planar_label_maps_pool_exactly(self):
+        image = _label_image(2, 64, 64)
+        # The second fixation sits near a corner, so part of the retina misses the image.
+        fix_loc = torch.tensor([[0.5, 0.5], [0.15, 0.9]])
+        for style in ("warped_cartesian_as_grid", "isotropic"):
+            with self.subTest(style=style):
+                sampler = PoolingGridSampler(
+                    fov=16, cmf_a=1, resolution=8, res_mult=2, style=style, sample_cortex=False,
+                    device="cpu", pool_mode="modal")
+                self._check(sampler, image, fix_loc, fixation_size=64)
+
+    def test_calibrated_label_maps_pool_exactly(self):
+        sampler = PoolingGridSampler(
+            fov=50, cmf_a=5, resolution=8, res_mult=2, style="warped_cartesian_as_grid",
+            field_geometry="spherical", camera_model=CameraModel("fisheye", (48, 64), (35, 35, 31.5, 23.5)),
+            device="cpu", backend="torch", pool_mode="modal")
+        image = _label_image(2, 48, 64, dtype=torch.int32)
+        self._check(sampler, image, torch.tensor([[0.5, 0.5], [0.4, 0.95]]))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
+    def test_calibrated_modal_sampling_on_cuda_matches_cpu(self):
+        # uint8 labels take the native CUDA sampler; int32 labels take the compiled Torch path.
+        kwargs = dict(
+            fov=50, cmf_a=5, resolution=8, res_mult=2, style="warped_cartesian_as_grid",
+            field_geometry="spherical", camera_model=CameraModel("fisheye", (48, 64), (35, 35, 31.5, 23.5)),
+            pool_mode="modal")
+        cpu = PoolingGridSampler(**kwargs, device="cpu", backend="torch")
+        cuda = PoolingGridSampler(**kwargs, device="cuda")
+        fix_loc = torch.tensor([[0.5, 0.5], [0.4, 0.95]])
+        for dtype in (torch.uint8, torch.int32):
+            with self.subTest(dtype=dtype):
+                image = _label_image(2, 48, 64, dtype=torch.int32).remainder(251).add(1).to(dtype)
+                expected = cpu(image, fix_loc)
+                actual = cuda(image.cuda(), fix_loc.cuda())
+                self.assertEqual(actual.dtype, dtype)
+                self.assertTrue(torch.equal(actual.cpu(), expected))
+
+    def test_integer_output_dtype_is_allowed_only_for_modal_pooling(self):
+        kwargs = dict(fov=16, cmf_a=1, resolution=8, res_mult=2, style="warped_cartesian_as_grid", device="cpu")
+        sampler = PoolingGridSampler(**kwargs, pool_mode="modal", output_dtype=torch.int32)
+        image = _label_image(1, 64, 64, dtype=torch.int32)
+        pooled = sampler(image, torch.tensor([[0.5, 0.5]]), fixation_size=64)
+        self.assertEqual(pooled.dtype, torch.int32)
+        with self.assertRaises(ValueError):
+            PoolingGridSampler(**kwargs, pool_mode="avg", output_dtype=torch.int32)
+
+    def test_nearest_sampling_keeps_integer_labels(self):
+        sampler = GridSampler(16, 1, 8, mode="nearest", style="warped_cartesian_as_grid", device="cpu")
+        image = _label_image(1, 64, 64, dtype=torch.int32)
+        fix_loc = torch.tensor([[0.3, 0.6]])
+        labels = sampler(image, fix_loc, fixation_size=64)
+        self.assertEqual(labels.dtype, torch.int32)
+        as_float = sampler(image.float(), fix_loc, fixation_size=64)
+        self.assertTrue(torch.equal(labels.float(), as_float))
 
 
 if __name__ == "__main__":
