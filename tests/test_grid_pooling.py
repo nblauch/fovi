@@ -1,7 +1,10 @@
 """Mask-normalized 2D retinal pooling and automatic sampler selection."""
 
+from __future__ import annotations
+
 import pytest
 import torch
+
 from fovi.arch.knn import KNNPoolingLayer
 from fovi.arch.pooling import GridPoolingLayer
 from fovi.sensing.coords import SamplingCoords
@@ -240,3 +243,64 @@ def test_calibrated_grid_pooling_is_cuda_graph_capturable(mode: str) -> None:
     fixation.fill_(0.5)
     graph.replay()
     torch.testing.assert_close(actual.cpu(), reference(image.cpu(), fixation.cpu()))
+
+
+@pytest.mark.parametrize("mode", ["avg", "gaussian", "max"])
+def test_visibility_excludes_unseen_values_and_preserves_gradients(mode: str) -> None:
+    high, low = grids("uniform_as_grid")
+    pool = GridPoolingLayer(4, high, low, mode=mode)
+    values = torch.full((2, 2, len(high)), -2.0, requires_grad=True)
+    visible = torch.ones(2, len(high), dtype=torch.bool)
+    visible[0, ::2] = False
+    visible[1] = False
+    result = pool(values, visible)
+    torch.testing.assert_close(result[0], torch.full_like(result[0], -2.0))
+    assert not result[1].any()
+    result.sum().backward()
+    assert not values.grad[1].any()
+    assert not values.grad[0, :, ~visible[0]].any()
+    assert values.grad[0, :, visible[0]].abs().sum() > 0
+
+
+def test_uint8_grid_pooling_rounds_ties_to_even() -> None:
+    high, low = grids("uniform_as_grid")
+    pool = GridPoolingLayer(None, high, low)
+    stripe = torch.arange(len(high)).remainder(2).to(torch.uint8)
+    values = torch.stack((stripe, stripe + 1))[None]
+    actual = pool(values)
+    assert actual.dtype == torch.uint8
+    assert torch.equal(actual[0, 0], torch.zeros(len(low), dtype=torch.uint8))
+    assert torch.equal(actual[0, 1], torch.full((len(low),), 2, dtype=torch.uint8))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        torch.ones(1, 64),
+        torch.ones(2, 64, dtype=torch.bool),
+        torch.ones(1, 63, dtype=torch.bool),
+    ],
+)
+def test_grid_visibility_requires_matching_boolean_batch(bad: torch.Tensor) -> None:
+    high, low = grids("uniform_as_grid")
+    with pytest.raises(ValueError, match="visibility"):
+        GridPoolingLayer(None, high, low)(torch.ones(1, 2, len(high)), bad)
+
+
+def test_visibility_normalization_keeps_uint8_half_ties_at_retina_edge() -> None:
+    high, low = grids("uniform_as_grid")
+    high.valid_mask[0] = False
+    pool = GridPoolingLayer(None, high, low)
+    counts = (pool.neighbor_table != len(high)).sum(0)
+    output = int(torch.where(counts == 3)[0][0])
+    inputs = pool.neighbor_table[:, output]
+    inputs = inputs[inputs != len(high)][:2]
+    # At a masked retina edge the static normalizer is 4/3. Multiplying both sums and counts by that
+    # approximate float before division perturbs some exact half-integers and changes their uint8 rounding.
+    values = torch.zeros(1, 128, len(high), dtype=torch.uint8)
+    values[0, :, inputs[0]] = torch.arange(128, dtype=torch.uint8)
+    values[0, :, inputs[1]] = torch.arange(1, 129, dtype=torch.uint8)
+    visible = torch.zeros(1, len(high), dtype=torch.bool)
+    visible[0, inputs] = True
+    expected = (torch.arange(128) + 0.5).round().to(torch.uint8)
+    assert torch.equal(pool(values, visible)[0, :, output], expected)

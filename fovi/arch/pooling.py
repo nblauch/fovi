@@ -1,5 +1,7 @@
 """Retinal pooling: 2D windows for ``_as_grid`` sensors, KNN for sample sets."""
 
+from __future__ import annotations
+
 import math
 
 import numpy as np
@@ -49,7 +51,10 @@ class GridPoolingLayer(nn.Module):
         gauss_sigma: float = 10.0,
     ) -> None:
         super().__init__()
-        if not in_coords.style.endswith("_as_grid") or out_coords.style != in_coords.style:
+        if (
+            not in_coords.style.endswith("_as_grid")
+            or out_coords.style != in_coords.style
+        ):
             raise ValueError("grid2d pooling requires matching _as_grid sensors")
         geometry = ("fov", "cmf_a", "fov_type", "field_geometry", "radius_norm")
         if any(
@@ -80,6 +85,7 @@ class GridPoolingLayer(nn.Module):
             raise ValueError(f"Unsupported grid2d pooling mode: {mode!r}")
         if mode == "gaussian" and (not math.isfinite(gauss_sigma) or gauss_sigma <= 0):
             raise ValueError("grid2d gauss_sigma must be finite and positive")
+        self._last_backend = "torch_grid2d"
         self.k = k
         self.kernel_size = side = math.isqrt(k)
         self.mode = mode
@@ -92,7 +98,10 @@ class GridPoolingLayer(nn.Module):
             # Rows are angles: wrap around, centered on the output angle.
             # Trailing samples beyond the last window are ignored by pooling.
             angle_before = (side - 1) // 2
-            self.angular_padding = (angle_before, max(side - self.stride - angle_before, 0))
+            self.angular_padding = (
+                angle_before,
+                max(side - self.stride - angle_before, 0),
+            )
             self.padding = (before, after, 0, 0)
         else:
             self.angular_padding = None
@@ -123,8 +132,10 @@ class GridPoolingLayer(nn.Module):
         )
         normalizer = torch.where(coverage > 0, coverage, 1).reciprocal()
         self.register_buffer("normalizer", normalizer, persistent=False)
-        if mode == "modal":
-            self.register_buffer("neighbor_table", self._neighbor_table(), persistent=False)
+        if mode in ("modal", "avg", "max"):
+            self.register_buffer(
+                "neighbor_table", self._neighbor_table().contiguous(), persistent=False
+            )
 
     def _neighbor_table(self) -> torch.Tensor:
         """Each output's window as a ``(k, N_low)`` table of input indices in tie-break order.
@@ -140,7 +151,9 @@ class GridPoolingLayer(nn.Module):
         grid = self.in_coords.as_grid(index[None, None])
         grid = self._pad(torch.where(self.input_mask, grid, -1.0), -1.0)
         side, stride = self.kernel_size, self.stride
-        windows = grid[0, 0].unfold(0, side, stride).unfold(1, side, stride)  # (H_lo, W_lo, side, side)
+        windows = (
+            grid[0, 0].unfold(0, side, stride).unfold(1, side, stride)
+        )  # (H_lo, W_lo, side, side)
         windows = windows.flatten(-2).permute(2, 0, 1)  # (k, H_lo, W_lo)
         axis = torch.arange(side, device=device, dtype=torch.float64) - (side - 1) / 2
         radius = (axis[:, None].square() + axis[None, :].square()).flatten()
@@ -155,7 +168,7 @@ class GridPoolingLayer(nn.Module):
     @property
     def last_backend(self) -> str:
         """The pooling backend; image sampling has its own backend selection."""
-        return "torch_grid2d"
+        return self._last_backend
 
     def _pad(self, grid: torch.Tensor, value: float = 0.0) -> torch.Tensor:
         if self.angular_padding is not None:
@@ -174,18 +187,77 @@ class GridPoolingLayer(nn.Module):
         )
         return pooled.reshape(batch, channels, *pooled.shape[-2:])
 
-    def forward(self, values: torch.Tensor, visible: torch.Tensor | None = None) -> torch.Tensor:
-        """Pool ``(B, C, N_high)`` values to ``(B, C, N_low)``.
+    def forward(
+        self, values: torch.Tensor, visible: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Pool ``(B, C, N_high)`` samples, accepting strided channel-first views of HWC storage.
 
-        Args:
-            values: Values to pool. Modal pooling takes any dtype and keeps it.
-            visible: ``mode="modal"`` only: optional ``(B, N_high)`` mask of the
-                inputs each image sees; the others do not vote.
+        ``visible`` is an optional boolean ``(B, N_high)`` mask on the values' device. Unseen samples are left
+        out of the reduction; outputs with no visible neighbors are zero. Visibility-normalized Gaussian
+        pooling keeps the original spatial weights. Uint8 values retain their dtype with ties-to-even rounding.
+
+        CUDA float32/uint8 average and max inference fuse gathering, masking, normalization and conversion.
+        CPU, other dtypes/modes, autograd and torch.compile use Torch. The fused path needs no full-resolution
+        float or layout copy. Warm up before CUDA graph capture, as for the other native samplers.
         """
         if self.mode == "modal":
+            self._last_backend = "modal"
             return modal_pool(values, self.neighbor_table, visible)
-        if visible is not None:
-            raise ValueError("visible is supported only by modal pooling")
+        if values.ndim != 3 or values.shape[-1] != len(self.in_coords):
+            raise ValueError("Grid pooling values must have shape (B, C, N_high)")
+        if values.device != self.input_mask.device:
+            raise ValueError("Grid pooling values and layer must be on the same device")
+        if visible is not None and (
+            visible.dtype != torch.bool
+            or visible.device != values.device
+            or visible.shape != (values.shape[0], values.shape[-1])
+        ):
+            raise ValueError(
+                "Grid pooling visibility must be boolean (B, N_high) on the values' device"
+            )
+        if (
+            values.is_cuda
+            and self.mode in ("avg", "max")
+            and values.dtype in (torch.uint8, torch.float32)
+            and not torch.compiler.is_compiling()
+            and not (torch.is_grad_enabled() and values.requires_grad)
+        ):
+            from .grid_pool_warp import pool_forward
+
+            result = pool_forward(values, self.neighbor_table, visible, self.mode)
+            self._last_backend = "warp_grid2d"
+            return result
+        self._last_backend = "torch_grid2d"
+        work = values.float() if values.dtype == torch.uint8 else values
+        if visible is None and values.dtype == torch.uint8:
+            visible = torch.ones(
+                (values.shape[0], values.shape[-1]),
+                dtype=torch.bool,
+                device=values.device,
+            )
+        if visible is None:
+            result = self._forward_torch(work)
+        else:
+            seen = visible[:, None, :]
+            weight = seen.to(work.dtype)
+            fill = -torch.inf if self.mode == "max" else 0.0
+            masked = torch.where(seen, work, fill)
+            pooled = self._forward_torch(
+                torch.cat((masked, weight), dim=1), normalize=False
+            )
+            channels = values.shape[1]
+            result, coverage = pooled[:, :channels], pooled[:, channels:]
+            if self.mode != "max":
+                result = result / coverage.clamp_min(torch.finfo(work.dtype).tiny)
+            result = torch.where(coverage > 0, result, 0)
+        if values.dtype == torch.uint8:
+            result = result.round().clamp(0, 255).to(torch.uint8)
+        return result
+
+    def _forward_torch(
+        self, values: torch.Tensor, normalize: bool = True
+    ) -> torch.Tensor:
+        """Differentiable image-layout reference path."""
         grid = self.in_coords.as_grid(values)
         if self.mode == "max":
             grid = torch.where(self.input_mask, grid, -torch.inf)
@@ -194,7 +266,16 @@ class GridPoolingLayer(nn.Module):
             )
         else:
             grid = torch.where(self.input_mask, grid, 0)
-            result = self._weighted_pool(grid) * self.normalizer.to(dtype=grid.dtype)
+            if self.mode == "avg" and not normalize:
+                # Visibility normalization divides the raw sums by their counts. Avoid multiplying both by
+                # the static retina normalizer: its roundoff can move exact uint8 half-ties across a boundary.
+                result = F.avg_pool2d(
+                    self._pad(grid), self.kernel_size, self.stride, divisor_override=1
+                )
+            else:
+                result = self._weighted_pool(grid)
+            if normalize:
+                result = result * self.normalizer.to(dtype=grid.dtype)
         result = torch.where(self.output_mask, result, 0)
         if not self.polar:
             # Invert the upright Cartesian layout produced by ``as_grid``.
