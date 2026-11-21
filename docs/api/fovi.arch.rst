@@ -20,4 +20,5 @@ fovi.arch package
    fovi.arch.mlp
    fovi.arch.norm
    fovi.arch.polar
+   fovi.arch.pooling
    fovi.arch.wrapper
