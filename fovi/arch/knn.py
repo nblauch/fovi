@@ -17,6 +17,95 @@ _optimized_pool_forward = False  # False = unresolved, None = unavailable
 
 __all__ = []
 
+NEIGHBOR_TIE_TOLERANCE = 5e-5
+"""Relative tolerance within which two neighbor distances count as tied.
+
+Sampling coordinates computed on different devices differ by float32 rounding,
+which grows with the coordinates' magnitude (up to about 1e-5 of it, for
+padding near the field edge), and symmetric sensors such as isotropic rings
+place many candidates at equal distances. For each query, distances within
+``NEIGHBOR_TIE_TOLERANCE * (|query| + d_k)`` of each other count as tied, where
+``d_k`` is the query's k-th neighbor distance, and ties are broken by candidate
+index, so neighbor tables do not depend on the device.
+"""
+
+
+def _nearest_neighbors(candidates, k, query_coords, num_candidates):
+    """Choose each query's ``k`` nearest neighbors from sorted candidates, independent of rounding.
+
+    Args:
+        candidates: Callable taking a candidate count ``c`` and the queries
+            (indices, or None for all) and returning ``(values, indices)``, each
+            ``(c, num_selected_queries)``: each selected query's ``c`` nearest
+            candidates, sorted by distance.
+        k: Neighbors per query.
+        query_coords: ``(num_queries, dims)`` query coordinates, which scale
+            each query's tie tolerance (see :data:`NEIGHBOR_TIE_TOLERANCE`).
+        num_candidates: Total number of candidates.
+
+    Returns:
+        ``(indices, distances)``, each ``(k, num_queries)``. Candidates nearer than
+        the k-th distance by more than the tolerance are always chosen; candidates
+        tied with the k-th distance fill the remaining slots in index order. Chosen
+        neighbors are ordered by distance, near-equal distances by index.
+    """
+    magnitude = torch.linalg.vector_norm(query_coords.detach().float(), dim=-1)
+    count = min(num_candidates, k + 2)
+    values, indices = candidates(count, None)
+    magnitude = magnitude.to(values.device)
+    chosen_indices, chosen_values, pending = _choose_neighbors(values, indices, k, magnitude, num_candidates)
+    if count == num_candidates or not bool(pending.any()):
+        return chosen_indices, chosen_values
+    # Search further only for the queries whose ties reach past their c nearest.
+    queries = torch.nonzero(pending).squeeze(1)
+    while queries.numel():
+        count = min(num_candidates, 2 * count)
+        values, indices = candidates(count, queries)
+        query_indices, query_values, pending = _choose_neighbors(
+            values, indices, k, magnitude[queries], num_candidates)
+        if count == num_candidates:
+            pending[:] = False
+        done = ~pending
+        chosen_indices[:, queries[done]] = query_indices[:, done]
+        chosen_values[:, queries[done]] = query_values[:, done]
+        queries = queries[pending]
+    return chosen_indices, chosen_values
+
+
+def _choose_neighbors(values, indices, k, magnitude, num_candidates):
+    """The k neighbors :func:`_nearest_neighbors` chooses from ``(c, n)`` sorted candidates.
+
+    Also returns which queries' ties may reach past the ``c`` candidates, whose
+    choices are then incomplete.
+    """
+    count = values.shape[0]
+    cutoff = values[k - 1]
+    tol = NEIGHBOR_TIE_TOLERANCE * (magnitude.to(values.dtype) + cutoff)
+    pending = values[-1] <= cutoff + tol
+    position = torch.arange(count, device=values.device, dtype=torch.int64)[:, None]
+    nearer = values < cutoff - tol
+    tied = ~nearer & (values <= cutoff + tol)
+    # Nearer candidates by distance first, then tied ones by index.
+    unused = 2 * count + int(num_candidates)
+    rank = torch.where(nearer, position, torch.where(tied, count + indices, unused))
+    chosen = torch.topk(rank, k, dim=0, largest=False, sorted=True).indices
+    values, indices = values.gather(0, chosen), indices.gather(0, chosen)
+    # Order by distance, with runs of near-equal distances in index order.
+    order = torch.argsort(values, dim=0, stable=True)
+    values, indices = values.gather(0, order), indices.gather(0, order)
+    run = torch.ones_like(values, dtype=torch.int64)
+    run[1:] = (values[1:] - values[:-1] > tol).long()
+    order = torch.argsort(run.cumsum(0) * int(num_candidates) + indices, dim=0)
+    return indices.gather(0, order), values.gather(0, order), pending
+
+
+def _topk_candidates(distances):
+    """A :func:`_nearest_neighbors` candidate source over a ``(num_candidates, num_queries)`` distance matrix."""
+    def nearest(count, queries):
+        selected = distances if queries is None else distances[:, queries]
+        return torch.topk(selected, count, dim=0, largest=False, sorted=True)
+    return nearest
+
 
 @add_to_all(__all__)
 class KNNBaseLayer:
@@ -144,16 +233,18 @@ class KNNBaseLayer:
         # Initialize output tensors
         knn_indices = torch.zeros((self._k, self.out_coords.shape[0]), dtype=torch.long, device=self.device)
         knn_distances = torch.zeros((self._k, self.out_coords.shape[0]), dtype=torch.float32, device=self.device)
+        num_samples = self.sample_coords.shape[0]
+        num_neighbors = int(num_neighbors)
 
         # iterate over output units and compute geodesic distances to the m*k nearest euclidean neighbors
         for i in range(self.out_coords.shape[0]):
-            # Compute euclidean distances for the single output coordinate
-            single_out_coord = out_coords[i:i+1]
-            D_euc = torch.cdist(self.sample_coords, single_out_coord).squeeze(1)
-            
-            # Find m*k nearest euclidean neighbors
-            target_points = D_euc.topk(num_neighbors, dim=0, largest=False).indices
-            
+            # Find the m*k nearest euclidean neighbors, nearest first (the geodesic source)
+            D_euc = torch.cdist(self.sample_coords, out_coords[i:i+1])
+            target_points, _ = _nearest_neighbors(
+                _topk_candidates(D_euc),
+                num_neighbors, out_coords[i:i+1], num_samples)
+            target_points = target_points[:, 0]
+
             # Compute geodesic distances
             tri = Delaunay(self.sample_coords_cart[target_points].cpu())
             faces = tri.simplices  # shape: [M, 3]
@@ -162,15 +253,14 @@ class KNNBaseLayer:
             algorithm = geodesic.PyGeodesicAlgorithmExact(
                 vertices, faces)
             dists = algorithm.geodesicDistances([0])
-            
-            # Store geodesic distances for all candidates
-            geodesic_dists = torch.full((self.sample_coords.shape[0],), float('inf'), dtype=torch.float32, device=self.device)
-            geodesic_dists[target_points] = torch.tensor(dists[0], dtype=torch.float32, device=self.device)
-            
+
             # Find k nearest neighbors from geodesic distances
-            _, topk_indices = torch.topk(geodesic_dists, self._k, dim=0, largest=False)
-            knn_indices[:, i] = topk_indices
-            knn_distances[:, i] = geodesic_dists[topk_indices]
+            geodesic_dists = torch.as_tensor(dists[0], dtype=torch.float32, device=target_points.device)[:, None]
+            chosen, chosen_dists = _nearest_neighbors(
+                _topk_candidates(geodesic_dists),
+                self._k, out_coords[i:i+1], num_neighbors)
+            knn_indices[:, i] = target_points[chosen[:, 0]].to(self.device)
+            knn_distances[:, i] = chosen_dists[:, 0].to(device=self.device, dtype=torch.float32)
 
         return knn_indices, knn_distances
     
@@ -207,12 +297,13 @@ class KNNBaseLayer:
         num_output_coords = out_coords.shape[0]
         knn_indices = torch.zeros((self._k, num_output_coords), dtype=torch.long, device=self.device)
         knn_distances = torch.zeros((self._k, num_output_coords), dtype=torch.float32, device=self.device)
-        
+        num_samples = self.sample_coords.shape[0]
+
         # Process output coordinates in batches
         for start_idx in range(0, num_output_coords, batch_size):
             end_idx = min(start_idx + batch_size, num_output_coords)
             batch_out_coords = out_coords[start_idx:end_idx]
-            
+
             # Compute distances for this batch
             if wrap_row:
                 # for log polar image cortical distances, we wrap along the row dimension (angles)
@@ -223,14 +314,16 @@ class KNNBaseLayer:
                 batch_distances = (row_dists**2 + col_dists**2)**(1/2)
             else:
                 batch_distances = torch.cdist(self.sample_coords, batch_out_coords)
-            
-            # Find k nearest neighbors for this batch
-            batch_knn_distances, batch_knn_indices = torch.topk(batch_distances, self._k, dim=0, largest=False)
-            
+
+            # Find k nearest neighbors for this batch, breaking ties by index
+            batch_knn_indices, batch_knn_distances = _nearest_neighbors(
+                _topk_candidates(batch_distances),
+                self._k, batch_out_coords, num_samples)
+
             # Store results
             knn_indices[:, start_idx:end_idx] = batch_knn_indices
-            knn_distances[:, start_idx:end_idx] = batch_knn_distances
-        
+            knn_distances[:, start_idx:end_idx] = batch_knn_distances.float()
+
         return knn_indices, knn_distances
 
     def _compute_all_distances(self):
@@ -409,7 +502,8 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
 
         The CPU tree is used only during construction. Masked cells and spatial
         padding remain candidates so boundary receptive fields do not stretch.
-        As with topk, equally distant candidates at the cutoff may be tied.
+        Candidates tied at the cutoff are chosen by index, as in the other KNN
+        searches (see :data:`NEIGHBOR_TIE_TOLERANCE`).
         """
         if (self.sample_cortex is not True
                 or self.in_coords.style not in WARPED_CARTESIAN_STYLES
@@ -422,10 +516,18 @@ class KNNPoolingLayer(nn.Module, KNNBaseLayer):
             self.in_coords.cortical, self.in_coords.cortical_pad_coords))
         candidates = self.sample_coords.detach().to(device='cpu', dtype=torch.float64).numpy()
         queries = self.out_coords.cortical.detach().to(device='cpu', dtype=torch.float64).numpy()
-        distances, indices = cKDTree(candidates).query(queries, k=np.arange(1, self._k + 1))
+        tree = cKDTree(candidates)
+
+        def nearest(count, selected):
+            points = queries if selected is None else queries[selected.numpy()]
+            distances, indices = tree.query(points, k=np.arange(1, count + 1))
+            return torch.from_numpy(distances.T.copy()), torch.from_numpy(indices.T.copy()).long()
+
+        indices, distances = _nearest_neighbors(
+            nearest, self._k, self.out_coords.cortical, len(candidates))
         return (
-            torch.as_tensor(indices.T.copy(), device=self.device, dtype=torch.long),
-            torch.as_tensor(distances.T.copy(), device=self.device, dtype=torch.float32),
+            indices.to(device=self.device),
+            distances.to(device=self.device, dtype=torch.float32),
         )
 
     def _compute_gaussian_weights(self):
