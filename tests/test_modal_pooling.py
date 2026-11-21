@@ -78,6 +78,25 @@ class TestModalPool(unittest.TestCase):
         pooled = modal_pool(vectors.T[None], HAND_TABLE)
         self.assertTrue(torch.equal(pooled[0].T, torch.tensor([[1, 2**40 + 1], [5, 6], [0, 0]])))
 
+    def test_unsigned_labels_keep_all_bits(self):
+        for device in DEVICES:
+            for dtype in (torch.uint16, torch.uint32, torch.uint64):
+                for channels in (1, 2):
+                    with self.subTest(device=device, dtype=dtype, channels=channels):
+                        high = torch.iinfo(dtype).max
+                        labels = torch.tensor([high, high, 1, high - 1, 2], dtype=dtype)
+                        values = labels[None, None].expand(2, channels, -1).clone()
+                        if channels == 2:
+                            # A distinct full vector at slot 1 makes slot 0 win the tie.
+                            values[:, 1, 1] = 3
+                        visible = torch.tensor([[True] * 5, [False, False, True, False, False]])
+                        for mask in (None, visible):
+                            expected = reference_modal_pool(values, HAND_TABLE, mask)
+                            actual = modal_pool(values.to(device), HAND_TABLE.to(device),
+                                                None if mask is None else mask.to(device))
+                            self.assertEqual(actual.dtype, dtype)
+                            self.assertTrue(torch.equal(actual.cpu(), expected))
+
     def test_unseen_inputs_do_not_vote(self):
         # Output 0 sees labels [1, 1, 2]; hiding the 1s leaves 2. Output 1 sees [4, 5]; hiding both leaves nothing.
         labels = torch.tensor([1, 1, 2, 4, 5], dtype=torch.int32)[None, None].expand(2, -1, -1)
@@ -96,6 +115,22 @@ class TestModalPool(unittest.TestCase):
         with mock.patch.object(modal, "_CHUNK_ELEMENTS", 1):
             pooled = modal_pool(labels, table, visible)
         self.assertTrue(torch.equal(pooled, reference_modal_pool(labels, table, visible)))
+
+    def test_large_image_vote_respects_chunk_budget(self):
+        generator = torch.Generator().manual_seed(7)
+        table = torch.randint(0, 41, (6, 31), generator=generator)
+        labels = torch.randint(0, 3, (3, 2, 40), generator=generator)
+        visible = torch.rand(3, 40, generator=generator) > 0.3
+        for batch in (1, 3):
+            for mask in (None, visible[:batch]):
+                for budget in (1, 20, 400):
+                    with self.subTest(batch=batch, visible=mask is not None, budget=budget):
+                        with mock.patch.object(modal, "_CHUNK_ELEMENTS", budget), mock.patch.object(
+                                modal, "_modal_slot", wraps=modal._modal_slot) as vote:
+                            pooled = modal_pool(labels[:batch], table, mask)
+                        self.assertTrue(torch.equal(pooled, reference_modal_pool(labels[:batch], table, mask)))
+                        for call in vote.call_args_list:
+                            self.assertLessEqual(call.args[0].numel(), max(budget, table.shape[0]))
 
 
 class TestModalPoolers(unittest.TestCase):

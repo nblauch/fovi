@@ -11,6 +11,7 @@ __all__ = ["modal_pool"]
 
 # Upper bound on ``batch * outputs * k`` elements per chunk. Each chunk holds about
 # ten int64 tensors of this size, so peak scratch memory stays near 300 MB.
+# A single neighborhood is indivisible, so the effective minimum is k elements.
 _CHUNK_ELEMENTS = 2**22
 
 
@@ -49,19 +50,30 @@ def modal_pool(values: torch.Tensor, neighbors: torch.Tensor, visible: torch.Ten
     # Equality keys, padded with one never-voting input at index N_in.
     keys = torch.nn.functional.pad(_equality_keys(samples), (0, 1))  # (B, N_in + 1)
     table = neighbors.T.to(device=values.device, dtype=torch.long)  # (N_out, k)
-    valid = table != num_inputs  # (N_out, k)
-    chunk = max(1, _CHUNK_ELEMENTS // max(1, num_outputs * k))
-    seen = None if visible is None else torch.nn.functional.pad(visible.to(torch.bool), (0, 1)).split(chunk)
-    slots = []
-    for index, chunk_keys in enumerate(keys.split(chunk)):
-        chunk_valid = valid if seen is None else valid & seen[index][:, table]  # (N_out, k) or (b, N_out, k)
-        slots.append(_modal_slot(chunk_keys[:, table], chunk_valid))
-    slot = torch.cat(slots)  # (B, N_out); k where no neighbor votes
+    seen = None if visible is None else torch.nn.functional.pad(visible.to(torch.bool), (0, 1))
+    slot = torch.empty((batch, num_outputs), dtype=torch.long, device=values.device)
+    # Split outputs as well as images: even one image can exceed the scratch budget.
+    output_chunk = max(1, _CHUNK_ELEMENTS // max(1, k))
+    for output_start in range(0, num_outputs, output_chunk):
+        chunk_table = table[output_start:output_start + output_chunk]
+        valid = chunk_table != num_inputs
+        batch_chunk = max(1, _CHUNK_ELEMENTS // max(1, chunk_table.numel()))
+        for batch_start in range(0, batch, batch_chunk):
+            chunk_keys = keys[batch_start:batch_start + batch_chunk]
+            chunk_valid = valid if seen is None else valid & seen[batch_start:batch_start + batch_chunk][:, chunk_table]
+            slot[batch_start:batch_start + batch_chunk, output_start:output_start + output_chunk] = _modal_slot(
+                chunk_keys[:, chunk_table], chunk_valid)
     has_value = slot < k
     # Input index per output; outputs without a value read input 0 and are zeroed below.
     source = table.gather(1, slot.clamp(max=k - 1).T).T.clamp(max=num_inputs - 1)
-    pooled = samples.gather(1, source.unsqueeze(-1).expand(-1, -1, channels))
-    pooled = torch.where(has_value.unsqueeze(-1), pooled, torch.zeros((), dtype=values.dtype, device=values.device))
+    # Torch gather/where do not support the wider unsigned dtypes on every device.
+    # Reinterpret their bits as same-width signed integers; never cast large IDs.
+    copy_dtype = {torch.uint16: torch.int16, torch.uint32: torch.int32, torch.uint64: torch.int64}.get(values.dtype)
+    copy_samples = samples if copy_dtype is None else samples.view(copy_dtype)
+    pooled = copy_samples.gather(1, source.unsqueeze(-1).expand(-1, -1, channels))
+    pooled = torch.where(has_value.unsqueeze(-1), pooled, torch.zeros((), dtype=copy_samples.dtype, device=values.device))
+    if copy_dtype is not None:
+        pooled = pooled.view(values.dtype)
     return pooled.transpose(1, 2)
 
 
