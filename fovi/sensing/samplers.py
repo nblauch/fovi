@@ -542,6 +542,32 @@ class GridSampler(BaseGridSampler):
                   + gather(x0 + 1, y0 + 1).to(work_dtype) * wx * wy)
         return result.to(image.dtype) if image.is_floating_point() else result
 
+    def sample_visibility(self, img: torch.Tensor, fix_loc=None, fixation_size=None, rotation=None) -> torch.Tensor:
+        """Return a (B, N) mask of the samples that read the source image at this fixation.
+
+        The sampler fills the other samples, which fall outside the image (or a
+        calibrated camera's domain) or outside the sensor's field, with zero.
+        Nearest-neighbor sampling only.
+        """
+        if self.mode != 'nearest':
+            raise ValueError("sample_visibility is defined for nearest sampling")
+        batch, _, height, width = img.shape
+        if self.field_geometry == 'spherical':
+            coordinate_dtype = torch.float64 if img.dtype == torch.float64 else torch.float32
+            fix = torch.as_tensor(fix_loc if fix_loc is not None else (0.5, 0.5), device=img.device, dtype=coordinate_dtype)
+            if fix.ndim == 1:
+                fix = fix.unsqueeze(0).expand(batch, -1)
+            pixels, valid = self.calibrated_pixels(fix, rotation)
+            x, y = torch.floor(pixels[..., 0] + 0.5), torch.floor(pixels[..., 1] + 0.5)
+        else:
+            fix_loc_t, fixation_size_t = self._prepare_sampling_args(img, fix_loc, fixation_size)
+            pixel_x, pixel_y = self._direct_pixel_coords((height, width), fix_loc_t, fixation_size_t)
+            # The nearest source pixel, as the direct gather rounds it.
+            x, y = torch.round(pixel_x - 0.5), torch.round(pixel_y - 0.5)
+            valid = self.selected_mask(None).to(img.device)
+        inside = (x >= 0) & (x < width) & (y >= 0) & (y < height)
+        return inside & valid
+
     def calibrated_forward(self, image: torch.Tensor, fixation: torch.Tensor, rotation: torch.Tensor | None, cmf_indices: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Eager calibrated sampling returning values and source pixels; supports autograd."""
         pixels, valid = self.calibrated_pixels(fixation, rotation, cmf_indices)
@@ -632,7 +658,16 @@ class GridSampler(BaseGridSampler):
                 return sampled, grid
             return sampled
 
-        if img.dtype == torch.uint8:
+        if not img.is_floating_point() and img.dtype != torch.uint8 and self.mode == 'nearest':
+            # Label maps (other integer dtypes, bool): the exact direct gather keeps their values.
+            fix_loc_t, fixation_size_t = self._prepare_sampling_args(
+                img, fix_loc, fixation_size)
+            sampled = self._torch_direct_sample(img, fix_loc_t, fixation_size_t, cmf_indices)
+            self._last_backend = 'torch_direct'
+            grid = None
+            if return_coords:
+                grid = self._direct_grid(img.shape[-2:], fix_loc_t, fixation_size_t, cmf_indices)
+        elif img.dtype == torch.uint8:
             fix_loc_t, fixation_size_t = self._prepare_sampling_args(
                 img, fix_loc, fixation_size)
             if direct:
@@ -648,7 +683,8 @@ class GridSampler(BaseGridSampler):
         else:
             if not img.is_floating_point():
                 raise TypeError(
-                    f"integer sampling currently supports torch.uint8, got {img.dtype}")
+                    f"bilinear integer sampling supports torch.uint8, got {img.dtype}; "
+                    "sample label maps with mode='nearest'")
             coordinate_dtype = self._coordinate_dtype(img.dtype)
             fix_loc_t, fixation_size_t = self._prepare_sampling_args(
                 img, fix_loc, fixation_size, dtype=coordinate_dtype)
@@ -708,7 +744,9 @@ class PoolingGridSampler(BaseGridSampler):
 
     @BaseGridSampler.output_dtype.setter
     def output_dtype(self, output_dtype: torch.dtype | None) -> None:
-        validate_output_dtype(output_dtype, 'retinal pooling')
+        # Modal pooling copies values, so label maps may keep an integer dtype.
+        modal = self.__dict__.get('pool_mode') == 'modal'
+        validate_output_dtype(output_dtype, None if modal else 'retinal pooling')
         self.__dict__['output_dtype'] = output_dtype
 
     def __init__(self, fov: float, cmf_a: float, resolution: int,
@@ -740,10 +778,14 @@ class PoolingGridSampler(BaseGridSampler):
             device (str, optional): Device to run on. Defaults to 'cuda'.
             camera_model: Source calibration required for spherical image sampling.
             gaze_convention: Gaze rotation convention for calibrated sampling.
-            pool_mode: Average or Gaussian weighted pooling.
+            pool_mode: Average or Gaussian weighted pooling, or ``'modal'`` for label
+                maps: each output takes the most common value among the photoreceptors
+                it pools, in the image's dtype (see :func:`~fovi.arch.modal.modal_pool`).
+                Photoreceptors outside the source image do not vote.
             gauss_sigma: Gaussian sigma in normalized neighborhood-distance units.
         """
         super().__init__()
+        self.__dict__['pool_mode'] = pool_mode
         self.output_dtype = output_dtype
         self.res_mult = float(res_mult)
         self.cmf_a_mult = float(cmf_a_mult)
@@ -824,17 +866,27 @@ class PoolingGridSampler(BaseGridSampler):
             img = TF.to_tensor(img).unsqueeze(0)
         img = img.to(self.device)
 
+        modal = self.pool_mode == 'modal'
         # Sample integer images before casting, so only the compact photoreceptor array is
-        # promoted for the arithmetic required by KNN pooling.
+        # promoted for the arithmetic required by KNN pooling. Modal pooling copies values,
+        # so label maps keep their dtype.
         ret_samples = self.input_sampler(
             img, fix_loc=fix_loc, fixation_size=fixation_size,
-            direct=direct, rotation=rotation).to(self.dtype)
+            direct=direct, rotation=rotation)
+        if not modal:
+            ret_samples = ret_samples.to(self.dtype)
         self._last_backend = self.input_sampler._last_backend
         ret_samples = self._mask_invalid_samples(
             ret_samples, self.highres_valid_mask,
             self._all_highres_samples_valid)
         # pool to get the final retinal samples
-        pooled_samples = self.pooler(ret_samples)
+        if modal:
+            # Photoreceptors outside the source image read zero; they do not vote.
+            visible = self.input_sampler.sample_visibility(
+                img, fix_loc=fix_loc, fixation_size=fixation_size, rotation=rotation)
+            pooled_samples = self.pooler(ret_samples, visible=visible)
+        else:
+            pooled_samples = self.pooler(ret_samples)
         pooled_samples = self._mask_invalid_samples(
             pooled_samples, self.valid_mask, self._all_samples_valid)
 
