@@ -51,10 +51,7 @@ class GridPoolingLayer(nn.Module):
         gauss_sigma: float = 10.0,
     ) -> None:
         super().__init__()
-        if (
-            not in_coords.style.endswith("_as_grid")
-            or out_coords.style != in_coords.style
-        ):
+        if not in_coords.style.endswith("_as_grid") or out_coords.style != in_coords.style:
             raise ValueError("grid2d pooling requires matching _as_grid sensors")
         geometry = ("fov", "cmf_a", "fov_type", "field_geometry", "radius_norm")
         if any(
@@ -98,10 +95,7 @@ class GridPoolingLayer(nn.Module):
             # Rows are angles: wrap around, centered on the output angle.
             # Trailing samples beyond the last window are ignored by pooling.
             angle_before = (side - 1) // 2
-            self.angular_padding = (
-                angle_before,
-                max(side - self.stride - angle_before, 0),
-            )
+            self.angular_padding = (angle_before, max(side - self.stride - angle_before, 0))
             self.padding = (before, after, 0, 0)
         else:
             self.angular_padding = None
@@ -133,9 +127,7 @@ class GridPoolingLayer(nn.Module):
         normalizer = torch.where(coverage > 0, coverage, 1).reciprocal()
         self.register_buffer("normalizer", normalizer, persistent=False)
         if mode in ("modal", "avg", "max"):
-            self.register_buffer(
-                "neighbor_table", self._neighbor_table().contiguous(), persistent=False
-            )
+            self.register_buffer("neighbor_table", self._neighbor_table().contiguous(), persistent=False)
 
     def _neighbor_table(self) -> torch.Tensor:
         """Each output's window as a ``(k, N_low)`` table of input indices in tie-break order.
@@ -151,9 +143,7 @@ class GridPoolingLayer(nn.Module):
         grid = self.in_coords.as_grid(index[None, None])
         grid = self._pad(torch.where(self.input_mask, grid, -1.0), -1.0)
         side, stride = self.kernel_size, self.stride
-        windows = (
-            grid[0, 0].unfold(0, side, stride).unfold(1, side, stride)
-        )  # (H_lo, W_lo, side, side)
+        windows = grid[0, 0].unfold(0, side, stride).unfold(1, side, stride)  # (H_lo, W_lo, side, side)
         windows = windows.flatten(-2).permute(2, 0, 1)  # (k, H_lo, W_lo)
         axis = torch.arange(side, device=device, dtype=torch.float64) - (side - 1) / 2
         radius = (axis[:, None].square() + axis[None, :].square()).flatten()
@@ -187,9 +177,7 @@ class GridPoolingLayer(nn.Module):
         )
         return pooled.reshape(batch, channels, *pooled.shape[-2:])
 
-    def forward(
-        self, values: torch.Tensor, visible: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, values: torch.Tensor, visible: torch.Tensor | None = None) -> torch.Tensor:
         """Pool ``(B, C, N_high)`` samples, accepting strided channel-first views of HWC storage.
 
         ``visible`` is an optional boolean ``(B, N_high)`` mask on the values' device. Unseen samples are left
