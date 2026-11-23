@@ -8,6 +8,7 @@ import torch.nn as nn
 from scipy.spatial import Delaunay, cKDTree
 
 from ..sensing.coords import WARPED_CARTESIAN_STYLES, SamplingCoords, auto_match_num_coords
+from ..sensing.mesh_geodesic import distances_from_first_vertex
 from ..utils import normalize, add_to_all
 from .knn_optimization import VALID_BACKENDS, clear_cache, optimized_forward
 from .modal import modal_pool
@@ -100,6 +101,15 @@ def _choose_neighbors(values, indices, k, magnitude, num_candidates):
     return indices.gather(0, order), values.gather(0, order), pending
 
 
+_GEODESIC_CANDIDATE_ELEMENTS = 2**25
+"""Upper bound on the Euclidean distance-matrix elements per chunk of the geodesic candidate search."""
+
+
+def _local_geodesic_distances(meshes, device):
+    """Exact surface distances from vertex 0 to every vertex of each ``(vertices, faces)`` local mesh."""
+    return distances_from_first_vertex(meshes, device)
+
+
 def _topk_candidates(distances):
     """A :func:`_nearest_neighbors` candidate source over a ``(num_candidates, num_queries)`` distance matrix."""
     def nearest(count, queries):
@@ -175,7 +185,7 @@ class KNNBaseLayer:
 
     @staticmethod
     def _as_geodesic_vertices(coords):
-        """Lift a planar cortical representation into PyGeodesic's 3-D API."""
+        """Lift a planar cortical representation into 3-D surface vertices."""
         if coords.shape[1] == 2:
             return F.pad(coords, (0, 1))
         if coords.shape[1] == 3:
@@ -222,47 +232,42 @@ class KNNBaseLayer:
     
     def _compute_geodesic_distances(self):
         """
-        Compute geodesic distances using the existing approach (already memory efficient).
+        Choose each output's k nearest inputs by exact geodesic distance on the cortical surface.
+
+        Each output's m*k nearest Euclidean candidates form a local mesh, and all
+        local meshes are solved in one batch on the layer's device.
         """
-        import pygeodesic.geodesic as geodesic
-        m = 4 # multiple of k nearest euclidean neighbors to consider for geodesic distance computation. speeds things up substantially. works well because euclidean is a good local approximation. 
-        num_neighbors = torch.minimum(torch.tensor(self.k*m), torch.tensor(self.in_coords.shape[0]))
+        m = 4 # multiple of k nearest euclidean neighbors to consider for geodesic distance computation. speeds things up substantially. works well because euclidean is a good local approximation.
+        num_neighbors = int(min(int(self.k) * m, self.in_coords.shape[0]))
         self.sample_coords_cart = torch.concatenate([self.in_coords.cartesian, self.in_coords.cartesian_pad_coords], dim=0)
         self.sample_coords = torch.concatenate([self.in_coords.cortical, self.in_coords.cortical_pad_coords], dim=0)
         out_coords = self.out_coords.cortical.clone()
-
-        # Initialize output tensors
-        knn_indices = torch.zeros((self._k, self.out_coords.shape[0]), dtype=torch.long, device=self.device)
-        knn_distances = torch.zeros((self._k, self.out_coords.shape[0]), dtype=torch.float32, device=self.device)
         num_samples = self.sample_coords.shape[0]
-        num_neighbors = int(num_neighbors)
+        num_outputs = out_coords.shape[0]
 
-        # iterate over output units and compute geodesic distances to the m*k nearest euclidean neighbors
-        for i in range(self.out_coords.shape[0]):
-            # Find the m*k nearest euclidean neighbors, nearest first (the geodesic source)
-            D_euc = torch.cdist(self.sample_coords, out_coords[i:i+1])
-            target_points, _ = _nearest_neighbors(
-                _topk_candidates(D_euc),
-                num_neighbors, out_coords[i:i+1], num_samples)
-            target_points = target_points[:, 0]
+        # The m*k nearest euclidean neighbors of each output, nearest first (the geodesic
+        # source), searched for chunks of outputs at a time on the layer's device
+        chunk = max(1, _GEODESIC_CANDIDATE_ELEMENTS // max(num_samples, 1))
+        targets = torch.cat([
+            _nearest_neighbors(
+                _topk_candidates(torch.cdist(self.sample_coords, out_coords[begin:begin + chunk])),
+                num_neighbors, out_coords[begin:begin + chunk], num_samples)[0]
+            for begin in range(0, num_outputs, chunk)], dim=1)
 
-            # Compute geodesic distances
-            tri = Delaunay(self.sample_coords_cart[target_points].cpu())
-            faces = tri.simplices  # shape: [M, 3]
-            vertices = self._as_geodesic_vertices(
-                self.sample_coords[target_points]).cpu().numpy()
-            algorithm = geodesic.PyGeodesicAlgorithmExact(
-                vertices, faces)
-            dists = algorithm.geodesicDistances([0])
+        # One local mesh per output: triangulated in the visual field, measured on the cortex
+        sample_cart = self.sample_coords_cart.cpu().numpy()
+        sample_surface = self._as_geodesic_vertices(self.sample_coords).cpu().numpy()
+        meshes = [(sample_surface[points], Delaunay(sample_cart[points]).simplices)
+                  for points in targets.T.cpu().numpy()]
 
-            # Find k nearest neighbors from geodesic distances
-            geodesic_dists = torch.as_tensor(dists[0], dtype=torch.float32, device=target_points.device)[:, None]
-            chosen, chosen_dists = _nearest_neighbors(
-                _topk_candidates(geodesic_dists),
-                self._k, out_coords[i:i+1], num_neighbors)
-            knn_indices[:, i] = target_points[chosen[:, 0]].to(self.device)
-            knn_distances[:, i] = chosen_dists[:, 0].to(device=self.device, dtype=torch.float32)
-
+        # Geodesic distances from each source over its local mesh, then the k nearest
+        dists = _local_geodesic_distances(meshes, self.device)
+        geodesic_dists = torch.as_tensor(np.stack(dists, axis=1), dtype=torch.float32, device=targets.device)
+        chosen, chosen_dists = _nearest_neighbors(
+            _topk_candidates(geodesic_dists),
+            self._k, out_coords, num_neighbors)
+        knn_indices = targets.gather(0, chosen).to(self.device)
+        knn_distances = chosen_dists.to(device=self.device, dtype=torch.float32)
         return knn_indices, knn_distances
     
     def _compute_euclidean_distances_batched(self, batch_size):
@@ -341,7 +346,6 @@ class KNNBaseLayer:
         """
 
         if self.sample_cortex == 'geodesic':
-            import pygeodesic.geodesic as geodesic
             m = 4 # multiple of k nearest euclidean neighbors to consider for geodesic distance computation. speeds things up substantially. works well because euclidean is a good local approximation. 
             num_neighbors = torch.minimum(torch.tensor(self.k*m), torch.tensor(self.in_coords.shape[0]))
             self.sample_coords_cart = torch.concatenate([self.in_coords.cartesian, self.in_coords.cartesian_pad_coords], dim=0)
@@ -353,22 +357,19 @@ class KNNBaseLayer:
 
             D_init = torch.inf * torch.ones_like(D_euc)
 
-            # iterate over output units and compute geodesic distances to the m*k nearest euclidean neighbors
-            all_dists = []
-            all_indices = []
+            # geodesic distances from each output's nearest input to its m*k nearest euclidean neighbors,
+            # with all local meshes solved in one batch
+            all_indices, meshes = [], []
             for i in range(self.out_coords.shape[0]):
-                source_idx = i
                 target_points = D_euc[:,i].topk(num_neighbors, dim=0, largest=False).indices
-                tri = Delaunay(self.sample_coords_cart[target_points].cpu())
-                faces = tri.simplices  # shape: [M, 3]
+                faces = Delaunay(self.sample_coords_cart[target_points].cpu()).simplices
                 vertices = self._as_geodesic_vertices(
                     self.sample_coords[target_points]).cpu().numpy()
-                algorithm = geodesic.PyGeodesicAlgorithmExact(
-                    vertices, faces)
-                dists = algorithm.geodesicDistances([0])
-                all_dists.append(dists[0])
                 all_indices.append(target_points)
-                D_init[target_points,i] = torch.tensor(dists[0], dtype=D_euc.dtype, device=D_euc.device)
+                meshes.append((vertices, faces))
+            all_dists = _local_geodesic_distances(meshes, self.device)
+            for i, (target_points, dists) in enumerate(zip(all_indices, all_dists)):
+                D_init[target_points,i] = torch.tensor(dists, dtype=D_euc.dtype, device=D_euc.device)
 
             distances = D_init
         else:
