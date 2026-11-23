@@ -7,7 +7,6 @@ import numpy as np
 import torch.return_types
 import time
 from contextlib import contextmanager
-from skimage.measure import EllipseModel
 from collections import OrderedDict
 
 __all__ = ['add_to_all', 'IMAGENET_MEAN', 'IMAGENET_STD']
@@ -228,6 +227,12 @@ def analyze_rf(points, rf_center=None):
             - radial_displacement (float): Normalized radial displacement of
               the center from the ellipse center, in range [0, 2].
     """
+    # scikit-image is a training/analysis extra, not a base dependency.
+    from .._optional import require_dependencies
+
+    require_dependencies("training", ("skimage",))
+    from skimage.measure import EllipseModel
+
     if isinstance(points, torch.Tensor):
         points = points.cpu().numpy()
     x, y = points[:, 0], points[:, 1]
