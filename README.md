@@ -35,10 +35,13 @@ pip install -e '.[all]'          # identical dependencies to .[models,training]
 ```
 
 Choose one installation command. All source ships in the same package; extras select dependencies.
-The base includes PyTorch, torchvision, geometry/image-processing libraries, CuPy, and Warp, but does not
-require model registries, Transformers, FFCV, or experiment tracking. Importing `fovi`,
-`fovi.sensing`, and primitive `fovi.arch` modules does not import models or training or require
-research storage environment variables.
+The base requires only PyTorch, torchvision, NumPy, SciPy, Pillow, trimesh, einops, IPython, tqdm,
+CuPy, and Warp. It does not require model registries, Transformers, FFCV, or experiment tracking.
+Importing `fovi`, `fovi.sensing`, and primitive `fovi.arch` modules does not import models or
+training or require research storage environment variables. Sensing, pooling and KNN layers,
+including exact geodesic neighborhoods (`sample_cortex="geodesic"`), work with the base install.
+The `fastaugs` augmentation pipelines need `fovi[models]`, and RF ellipse analysis
+(`fovi.utils.analyze_rf`) needs `fovi[training]`.
 
 FFCV is an external prerequisite for the built-in training and validation loaders.
 It is installed manually, including when using `all`. Trainer subclasses or external

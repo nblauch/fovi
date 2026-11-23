@@ -6,9 +6,16 @@ from torchvision import transforms as tv_transforms
 
 try:
     from fastcore.dispatch import typedispatch
-except:
+except ImportError:
     # https://answerdotai.github.io/fasttransform/fastcore_migration_guide.html
-    from plum import dispatch as typedispatch
+    try:
+        from plum import dispatch as typedispatch
+    except ImportError as error:
+        raise ModuleNotFoundError(
+            "fovi.utils.fastaugs needs fastcore or plum-dispatch, which are not "
+            "base dependencies. Install with `pip install 'fovi[models]'` or "
+            "`pip install 'fovi[training]'`."
+        ) from error
 
 import PIL
 from PIL import Image, ImageEnhance 

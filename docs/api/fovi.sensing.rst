@@ -15,6 +15,7 @@ fovi.sensing package
    fovi.sensing.coords
    fovi.sensing.grid_sample_cuda
    fovi.sensing.manifold
+   fovi.sensing.mesh_geodesic
    fovi.sensing.policies
    fovi.sensing.projection
    fovi.sensing.retina

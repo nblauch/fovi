@@ -1,16 +1,12 @@
 einops
-fastcore
 ipython
 numpy
 Pillow
-pygeodesic
 scipy
-scikit-image
 torch
 torchvision
 tqdm
 trimesh
-plum-dispatch
 cupy-cuda12x>=13,<14; python_version < "3.10"
 cupy-cuda12x>=13; python_version >= "3.10"
 warp-lang>=1.12

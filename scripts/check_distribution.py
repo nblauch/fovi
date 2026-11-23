@@ -86,15 +86,27 @@ def check_wheel(path: Path, release_tag: str | None = None) -> None:
             "torchmetrics",
             "hydra-core",
         }
+        assert not base_names & {
+            "scikit-image",
+            "fastcore",
+            "plum-dispatch",
+            "pygeodesic",
+        }, "Sensing and KNN pooling must not pull training-only dependencies"
         assert {
             "torch",
             "torchvision",
             "scipy",
             "trimesh",
-            "scikit-image",
             "cupy-cuda12x",
             "warp-lang",
         } <= base_names
+        model_names = {name for name, _, _ in selected["models"]}
+        training_names = {name for name, _, _ in selected["training"]}
+        assert {"fastcore", "plum-dispatch"} <= model_names
+        assert "scikit-image" in training_names
+        assert "pygeodesic" not in {
+            name for names in selected.values() for name, _, _ in names
+        }, "pygeodesic is a test-only reference"
     print(f"Validated source contents and base/models/training/all metadata: {path}")
 
 

@@ -1,0 +1,4 @@
+# Test-only dependencies, not part of any published extra.
+pytest
+# Reference exact geodesic solver for fovi.sensing.surface_geodesic parity tests.
+pygeodesic

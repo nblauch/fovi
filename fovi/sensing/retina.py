@@ -11,11 +11,23 @@ from .projection import CameraCalibration, CameraModel
 from .samplers import PoolingGridSampler, GridSampler
 from .validation import validate_gaze_convention
 from ..utils import add_to_all
-from ..utils.fastaugs import transforms as fastT
-from ..utils.fastaugs import functional as fastF
-from ..utils.fastaugs import functional_tensor as fastFT
+
+# fovi.utils.fastaugs needs the training extra (fastcore or plum-dispatch). The
+# retina imports it only when fastaugs pre_transforms are in use, so sampling
+# works with the base install.
 
 __all__ = []
+
+
+def _fast_pre_transform_types():
+    """Return (Compose, pointwise transform types) eligible for the fast path,
+    or None when fastaugs is unavailable (so no fastaugs transform can be in use)."""
+    try:
+        from ..utils.fastaugs import transforms as fastT
+    except ImportError:
+        return None
+    return fastT.Compose, (fastT.RandomColorJitter, fastT.RandomGrayscale,
+                           fastT.NormalizeGPU)
 
 @add_to_all(__all__)
 class RetinalTransform(nn.Module):
@@ -287,9 +299,6 @@ class RetinalTransform(nn.Module):
     # Sample-then-augment fast path for pre-warp transforms
     # ------------------------------------------------------------------
 
-    _FAST_PRE_TRANSFORM_TYPES = (fastT.RandomColorJitter, fastT.RandomGrayscale,
-                                 fastT.NormalizeGPU)
-
     def _announce_pre_transform_execution(self, fast):
         """One-time notice per decision, making the semantics/execution distinction
         explicit: the ``transforms.where`` config declares SEMANTICS (pre_warp =
@@ -338,9 +347,13 @@ class RetinalTransform(nn.Module):
             return False
         if type(self.sampler) is not GridSampler or self.sampler.mode != 'nearest':
             return False
-        if type(self.pre_transforms) is not fastT.Compose:
+        eligible = _fast_pre_transform_types()
+        if eligible is None:
             return False
-        return all(type(t) in self._FAST_PRE_TRANSFORM_TYPES for t in self.pre_transforms.transforms)
+        compose, pointwise = eligible
+        if type(self.pre_transforms) is not compose:
+            return False
+        return all(type(t) in pointwise for t in self.pre_transforms.transforms)
 
     def _random_grayscale_points(self, s4, idx, num_output_channels):
         """Same arithmetic as ``fastF.random_grayscale`` (ITU-R 601-2 luma, index_copy on the
@@ -348,6 +361,7 @@ class RetinalTransform(nn.Module):
         H2D copy per call."""
         weights = getattr(self, '_grayscale_weights', None)
         if weights is None or weights.device != s4.device:
+            from ..utils.fastaugs import functional as fastF
             weights = fastF.grayscale[None, :, :, :].to(s4.device)
             self._grayscale_weights = weights
         sel = s4.index_select(0, idx)
@@ -381,6 +395,8 @@ class RetinalTransform(nn.Module):
         - RNG draws (bernoulli masks + per-image jitter parameters) have identical shapes
           and order, leaving the CUDA generator stream identical to the reference path.
         """
+        from ..utils.fastaugs import transforms as fastT
+
         input_is_uint8 = x.dtype == torch.uint8
         if input_is_uint8:
             sampled = self.sampler(
@@ -605,6 +621,8 @@ def _color_jitter_points(pts, full_sel, hue, sat, val, con):
     the full image (bit-exact), evaluated only at the sampled points. The wrapper asserts of
     the ``adjust_*`` functions (``.any()``/``.all()`` device syncs) are intentionally skipped.
     """
+    from ..utils.fastaugs import functional_tensor as fastFT
+
     if val is not None:
         v4 = val[:, None, None, None]
         pts = fastFT._blend(pts, torch.zeros_like(pts), v4)

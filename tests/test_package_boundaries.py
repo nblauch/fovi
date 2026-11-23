@@ -43,13 +43,21 @@ def probe_core() -> None:
                 "transformers",
                 "accelerate",
                 "hydra",
+                # Training and test-only packages, absent from a base install.
+                "skimage",
+                "fastcore",
+                "plum",
+                "pygeodesic",
+                "fovi.utils.fastaugs",
             )
         ),
     )
     import torch
 
     import fovi
+    import fovi.sensing.projection  # noqa: F401
     from fovi.arch.knn import KNNPoolingLayer
+    from fovi.arch.pooling import build_retinal_pooler
     from fovi.sensing.coords import SamplingCoords
     from fovi.sensing.retina import RetinalTransform
     from fovi.sensing.samplers import GridSampler
@@ -68,6 +76,28 @@ def probe_core() -> None:
         torch.full((1, 1, 5, 5), 7.0), fix_loc=(0.5, 0.5), fixation_size=(4, 4)
     )
     torch.testing.assert_close(output, torch.full_like(output, 7.0))
+
+    # A retina without augmentations, in training mode, and geodesic KNN pooling.
+    retina = RetinalTransform(
+        8, fov=20, cmf_a=1, sampler="grid_nn", device="cpu", fixation_size=4
+    )
+    retina.train()
+    samples = retina(torch.full((1, 3, 5, 5), 7.0), fix_loc=(0.5, 0.5))
+    torch.testing.assert_close(samples, torch.full_like(samples, 7.0))
+    out_coords = SamplingCoords(
+        fov=90.0, cmf_a=9.0, res=8, style="isotropic", field_geometry="spherical"
+    )
+    pooler, k = build_retinal_pooler(
+        out_coords.clone(resolution=16),
+        out_coords,
+        k=None,
+        mode="avg",
+        sample_cortex="geodesic",
+        gauss_sigma=10.0,
+        device="cpu",
+    )
+    assert isinstance(pooler, KNNPoolingLayer) and k > 1
+    assert pooler.knn_indices.shape == (k, len(out_coords))
 
 
 def probe_models() -> None:

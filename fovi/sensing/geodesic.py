@@ -13,6 +13,7 @@ import torch
 from scipy.spatial import Delaunay
 
 from .coords import SamplingCoords
+from .mesh_geodesic import SOLVER_VERSION, ExactGeodesicSolver
 
 
 def geodesic_cache_directory() -> Path | None:
@@ -36,8 +37,6 @@ def patch_geodesic_distances(
     this piecewise-linear mesh, an approximation to the smooth manifold.
     Construction is CPU-only and stays outside the training hot path.
     """
-    import pygeodesic
-
     if (
         inputs.field_geometry not in ("planar", "spherical")
         or inputs.field_geometry != patches.field_geometry
@@ -62,7 +61,7 @@ def patch_geodesic_distances(
     sample_count = len(inputs) + len(inputs.cartesian_pad_coords)
     expected_shape = (sample_count, len(patches))
     signature = hashlib.sha256(
-        f"surface-geodesic-v1:{np.__version__}:{scipy.__version__}:{pygeodesic.__version__}:{expected_shape}".encode()
+        f"surface-geodesic-v2:{np.__version__}:{scipy.__version__}:{SOLVER_VERSION}:{expected_shape}".encode()
         + visual.tobytes()
         + cortical.tobytes()
     ).hexdigest()
@@ -110,23 +109,17 @@ def _solve_surface_geodesics(
     visual: np.ndarray, cortical: np.ndarray, sample_count: int
 ) -> np.ndarray:
     """Solve all sample/patch pairs on one joint triangulated surface."""
-    from pygeodesic import geodesic
-
     unique, first, inverse = np.unique(
         visual, axis=0, return_index=True, return_inverse=True
     )
-    faces = Delaunay(unique).simplices.astype(np.int32)
+    inverse = inverse.reshape(-1)
+    faces = Delaunay(unique).simplices.astype(np.int64)
     if len(np.unique(faces)) != len(unique):
         raise RuntimeError("Geodesic triangulation omitted a sample or patch center")
-    solver = geodesic.PyGeodesicAlgorithmExact(cortical[first], faces)
-    targets = inverse[:sample_count].astype(np.int32)
-    sources = inverse[sample_count:].astype(np.int32)
-    distances = np.empty((sample_count, len(sources)), dtype=np.float32)
-    for column, source in enumerate(sources):
-        values, _ = solver.geodesicDistances(
-            np.array([source], dtype=np.int32), targets
-        )
-        if not np.isfinite(values).all() or (values < 0).any():
-            raise RuntimeError("Geodesic solver returned invalid cortical distances")
-        distances[:, column] = values
-    return distances
+    solver = ExactGeodesicSolver(cortical[first], faces)
+    targets = inverse[:sample_count]
+    sources = inverse[sample_count:]
+    values = solver.distances_from_each(sources)[:, targets].T
+    if not np.isfinite(values).all() or (values < 0).any():
+        raise RuntimeError("Geodesic solver returned invalid cortical distances")
+    return np.ascontiguousarray(values, dtype=np.float32)
