@@ -33,7 +33,12 @@ pre-load hook used by DINO checkpoint compatibility.
 
 Shared numerical and image transforms remain in `fovi.utils` and `fovi.utils.fastaugs`.
 Importing those transforms no longer attempts to load FFCV. Plotly/video helpers import their
-optional dependencies only when called.
+optional dependencies only when called. Since 2.7, `fovi.utils.fastaugs` needs
+`plum-dispatch` (or a `fastcore` that still provides `typedispatch`), from `fovi[models]`;
+`RetinalTransform` imports it only for `fastaugs` pre-transforms. `fovi.utils.analyze_rf`
+needs `scikit-image`, from `fovi[training]`. Exact geodesic neighborhoods
+(`sample_cortex="geodesic"`) use fovi's own solver in `fovi.sensing.mesh_geodesic` and need
+no extra.
 
 Pure-Torch losses and schedulers can be imported without the training extra.
 Each helper requires only the libraries it uses. Importing `Trainer` requires

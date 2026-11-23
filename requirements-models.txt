@@ -1,8 +1,12 @@
 accelerate
+# fovi.utils.fastaugs (FoviNet's transform pipelines) dispatches with plum-dispatch,
+# or with fastcore's legacy typedispatch where that is still available.
+fastcore
 filelock
 huggingface_hub
 hydra-core
 omegaconf
+plum-dispatch
 timm
 torch>=2.5
 transformers>=4.57.6
