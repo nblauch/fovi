@@ -18,6 +18,100 @@ git rev-parse HEAD
 git status --short
 ```
 
+## 2.7.0
+
+Version 2.7.0 makes KNN neighbor tables independent of the device, adds modal
+pooling for label maps, fuses grid pooling for CUDA inference, fixes float16
+grid-pooling overflow, shrinks the base install, and speeds up automatic density
+for square retinas.
+
+### Device-independent KNN neighbors
+
+Sampling coordinates differ between CPU and CUDA by float32 rounding, and
+symmetric sensors such as isotropic rings place several candidates at equal
+distances, so the neighbor chosen at a tied k-th slot used to depend on the
+device. Every KNN search (visual, cortical, geodesic, and the native-grid tree)
+now treats distances within `NEIGHBOR_TIE_TOLERANCE * (|query| + d_k)` as tied
+(`fovi.arch.knn.NEIGHBOR_TIE_TOLERANCE`, a relative 5e-5), fills tied slots by
+candidate index, and orders near-equal neighbors by index. CPU and CUDA now build
+the same tables. Where candidates tie at the k-th distance, a table can differ
+from the one 2.6.0 built on a given device.
+
+### Modal pooling for label maps
+
+`KNNPoolingLayer` and `GridPoolingLayer` accept `mode="modal"`: each output takes
+the most common value among its pooling neighbors, compared bitwise and copied
+in the input's dtype, so integer IDs of any width and colorized label vectors
+come back exactly. Ties go to the earliest neighbor (nearest for KNN, nearest the
+window center for grids). Padding, masked inputs and, optionally, inputs an image
+does not see do not vote. With `pool_mode="modal"`, `PoolingGridSampler` keeps
+the image's dtype, accepts an integer `output_dtype`, and leaves photoreceptors
+outside the source image out of the vote. `GridSampler.sample_visibility`
+reports which samples read the image at a fixation, and nearest sampling accepts
+integer label maps of any dtype.
+
+### Fused grid pooling for CUDA inference
+
+`GridPoolingLayer` average and max pooling of CUDA float32 and uint8 inputs, at
+inference, runs as one Warp kernel that reads strided `(B, C, N)` views directly
+and writes only the pooled result, without full-resolution float, layout,
+padding, or visibility intermediates. On 1,024 strided RGB views of 256x256
+images pooled to 128x128, pooling takes 0.57 ms instead of 15 ms and 373 MiB of
+PyTorch memory instead of 5.2 GiB. Arithmetic grid modes accept `visible=(B, N)`,
+which excludes hidden samples and returns zero for empty neighborhoods; uint8
+output rounds ties to even. Float16 inputs use the fused kernel too, accumulating
+in float32 (0.1 ms instead of 1.3 ms for a batch of 128). Inference under
+`no_grad()` or `inference_mode()` no longer allocates a gradient buffer for
+inputs that require gradients. CPU, other dtypes and modes, autograd (including
+forward-mode AD), `torch.func` transforms, and `torch.compile` keep the Torch
+path. Reproduce the measurements with `benchmarks/benchmark_grid_pooling.py`.
+
+Torch-path average pooling with a visibility mask now accumulates float16 inputs
+in float32 until after normalization. Before, a window of large finite values
+could overflow to infinity. This fallback uses more memory and time during
+autograd.
+
+### A smaller base install
+
+The base no longer requires `scikit-image`, `fastcore`, `plum-dispatch`, or
+`pygeodesic`, so applications that need only sensing, pooling, and KNN layers
+pull in fewer packages:
+
+- `scikit-image` moves to `fovi[training]`. Only `fovi.utils.analyze_rf` uses it,
+  and imports it when called.
+- `fastcore` and `plum-dispatch` move to `fovi[models]`, and so to
+  `fovi[training]` and `fovi[all]`. Only the `fovi.utils.fastaugs` augmentation
+  pipelines use them, which `FoviNet` and the trainer build.
+  `RetinalTransform` imports `fastaugs` only when given `fastaugs`
+  pre-transforms, so it constructs and samples with the base install.
+- `pygeodesic` is replaced by fovi's own exact geodesic solver,
+  `fovi.sensing.mesh_geodesic`, which uses only Warp and NumPy. It solves the
+  same exact problem on the same meshes. Tests check it against `pygeodesic`
+  (now a test-only dependency, in `requirements-test.txt`): distances agree to
+  float64 rounding, and KNN pooling and patch-partition neighbor tables are
+  identical. The solver runs many solves as one Warp launch, on CUDA for the
+  many small local meshes of KNN layers, or concurrently on CPU cores for the
+  shared mesh of omni-isotropic patch geodesics. Building geodesic KNN layers is
+  several times faster, and filling the omni-isotropic patch geodesic cache at
+  resolution 128 takes about 2 s instead of 84 s.
+
+Geodesic neighborhoods are otherwise unchanged. Cached patch geodesics from 2.6.0
+are recomputed once, since cache entries now record the solver.
+
+### Faster automatic density for square retinas
+
+`cmf_a='auto'` with a square isotropic retina is faster to construct. Resource
+matching counts the samples of hundreds of candidate ring counts. Each count
+tested every sample of every ring against the square, which dispatched
+thousands of small torch operations. Rings within the square's half-width now
+count whole, and only the corner rings are tested. Counts and calibrated
+`cmf_a` values are unchanged. A square calibration takes 1.3–1.5 s instead of
+2.3–2.7 s with one torch thread, and 5–13 s instead of 21–28 s with 24 threads
+on a busy machine.
+
+The test suite also runs faster, after trimming two test matrices whose cases
+repeated the same coverage.
+
 ## 2.6.0
 
 Version 2.6.0 adds fixed-count isotropic omni-foveation for DINOv3 with planar
