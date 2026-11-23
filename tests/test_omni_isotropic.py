@@ -133,19 +133,20 @@ def test_cuda_forward_and_gradients(
     assert torch.isfinite(bank.weight.grad).all()
 
 
+# End-to-end wiring, not each setting's geometry: every value of every setting
+# appears, and each field geometry runs both metrics. Position spaces, patch
+# extents and metrics have their own tests in test_omni_positions,
+# test_omni_patch_extent and test_omni_spherical.
 @pytest.mark.parametrize(
-    "sample_cortex,space,reference_side,patch_extent",
+    "field_geometry,sample_cortex,space,reference_side,patch_extent",
     [
-        (True, "cartesian", 16, 1.0),
-        ("geodesic", "cartesian", 16, 1.0),
-        ("geodesic", "cartesian", 24, 1.0),
-        ("geodesic", "cartesian", 16, "auto"),
-        ("geodesic", "cartesian", 24, "auto"),
-        ("geodesic", "cortical_radial_log", 16, 1.0),
-        ("geodesic", "cortical_manifold_3d", 16, 1.0),
+        ("planar", True, "cartesian", 16, 1.0),
+        ("planar", "geodesic", "cortical_radial_log", 24, "auto"),
+        ("planar", "geodesic", "cortical_manifold_3d", 16, 1.0),
+        ("spherical", "geodesic", "cartesian", 24, "auto"),
+        ("spherical", True, "cortical_manifold_3d", 16, 1.0),
     ],
 )
-@pytest.mark.parametrize("field_geometry", ["planar", "spherical"])
 def test_image_to_logits_mixed_levels_and_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
     sample_cortex: bool | str,
