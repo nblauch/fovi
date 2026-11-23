@@ -80,7 +80,9 @@ def pool_forward(
         _kernel(values.dtype, mode),
         dim=tuple(result.shape),
         inputs=[
-            wp.from_torch(values),
+            # Inference may receive requires_grad tensors under no_grad/inference_mode.
+            # Wrapping must not allocate or attach a full-resolution gradient buffer.
+            wp.from_torch(values, requires_grad=False),
             wp.from_torch(neighbors),
             None if visible is None else wp.from_torch(visible),
         ],

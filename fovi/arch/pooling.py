@@ -184,7 +184,8 @@ class GridPoolingLayer(nn.Module):
         out of the reduction; outputs with no visible neighbors are zero. Visibility-normalized Gaussian
         pooling keeps the original spatial weights. Uint8 values retain their dtype with ties-to-even rounding.
 
-        CUDA float32/uint8 average and max inference fuse gathering, masking, normalization and conversion.
+        CUDA float32/float16/uint8 average and max inference fuse gathering, masking,
+        normalization and conversion.
         CPU, other dtypes/modes, autograd and torch.compile use Torch. The fused path needs no full-resolution
         float or layout copy. Warm up before CUDA graph capture, as for the other native samplers.
         """
@@ -206,9 +207,12 @@ class GridPoolingLayer(nn.Module):
         if (
             values.is_cuda
             and self.mode in ("avg", "max")
-            and values.dtype in (torch.uint8, torch.float32)
+            and values.dtype in (torch.uint8, torch.float16, torch.float32)
             and not torch.compiler.is_compiling()
             and not (torch.is_grad_enabled() and values.requires_grad)
+            # Warp has no Torch transform rules and cannot unwrap BatchedTensors.
+            and not torch._C._are_functorch_transforms_active()
+            and torch.autograd.forward_ad.unpack_dual(values).tangent is None
         ):
             from .grid_pool_warp import pool_forward
 
@@ -216,7 +220,12 @@ class GridPoolingLayer(nn.Module):
             self._last_backend = "warp_grid2d"
             return result
         self._last_backend = "torch_grid2d"
-        work = values.float() if values.dtype == torch.uint8 else values
+        # Keep visibility sums and coverage in float32 until after division: a finite
+        # half-precision mean can have a raw sum outside the input dtype's range.
+        promote = (
+            visible is not None and self.mode == "avg" and values.dtype == torch.float16
+        )
+        work = values.float() if values.dtype == torch.uint8 or promote else values
         if visible is None and values.dtype == torch.uint8:
             visible = torch.ones(
                 (values.shape[0], values.shape[-1]),
@@ -240,6 +249,8 @@ class GridPoolingLayer(nn.Module):
             result = torch.where(coverage > 0, result, 0)
         if values.dtype == torch.uint8:
             result = result.round().clamp(0, 255).to(torch.uint8)
+        elif promote:
+            result = result.to(values.dtype)
         return result
 
     def _forward_torch(

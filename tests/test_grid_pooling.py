@@ -304,3 +304,35 @@ def test_visibility_normalization_keeps_uint8_half_ties_at_retina_edge() -> None
     visible[0, inputs] = True
     expected = (torch.arange(128) + 0.5).round().to(torch.uint8)
     assert torch.equal(pool(values, visible)[0, :, output], expected)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="CUDA required"
+            ),
+        ),
+    ],
+)
+def test_low_precision_visibility_normalizes_before_casting(dtype, device) -> None:
+    high, low = grids("uniform_as_grid")
+    pool = GridPoolingLayer(4, high, low, mode="avg").to(device)
+    values = torch.full(
+        (3, 2, len(high)), 40000.0, dtype=dtype, device=device, requires_grad=True
+    )
+    visible = torch.ones(3, len(high), dtype=torch.bool, device=device)
+    visible[0, ::2] = False
+    visible[1] = False
+    reference_values = values.detach().float().requires_grad_()
+    expected = pool(reference_values, visible)
+    actual = pool(values, visible)
+    torch.testing.assert_close(actual, expected.to(dtype))
+    assert torch.isfinite(actual).all()
+    actual.sum().backward()
+    expected.sum().backward()
+    torch.testing.assert_close(values.grad, reference_values.grad.to(dtype))
