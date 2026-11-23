@@ -1022,8 +1022,11 @@ def num_sampling_coords_isotropic(
     if fov_type == 'circular':
         return n_angles.sum().item()
 
-    count = 0
-    for radius_i, n_angles_i in zip(radius, n_angles):
+    # A ring of normalized radius <= 1 lies inside the unit square, so all its
+    # samples count; only the corner rings beyond it need their samples tested.
+    inside = radius <= 1.0
+    count = int(n_angles[inside].sum())
+    for radius_i, n_angles_i in zip(radius[~inside], n_angles[~inside]):
         angles = torch.arange(n_angles_i, device=device) * (2 * torch.pi / n_angles_i)
         ring = torch.stack((
             radius_i * torch.cos(angles),

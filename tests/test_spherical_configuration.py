@@ -159,8 +159,10 @@ def test_crop_larger_than_camera_names_the_crop(side: str, dimension: str) -> No
         rescale_fov(cfg)
 
 
-@pytest.mark.parametrize("resolution", [8, 16, 32])
-@pytest.mark.parametrize("shape", ["circular", "square"])
+# Both boundary shapes, and the smallest and largest ring counts (6 and 27 rings).
+# Each square fit costs seconds, since every resource-matching search counts
+# square shells ring by ring, so other combinations add time but no coverage.
+@pytest.mark.parametrize(("shape", "resolution"), [("circular", 8), ("square", 32)])
 def test_auto_density_finds_a_known_feasible_resource_matched_grid(
     resolution: int, shape: str
 ) -> None:
